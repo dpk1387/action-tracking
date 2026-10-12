@@ -135,7 +135,7 @@ export default function AllInView({
       const idx = hand.players.findIndex((x) => x.id === p.id);
       const posLabel = positions[idx] || positionForSeat(n, buttonIdx, idx) || '';
       const order = POSITION_ORDER[posLabel] ?? 99;
-      const isAtRisk = p.status === 'allin' || p.stack <= 0 || p._wasCapped;
+      const isAtRisk = (p.status === 'allin' || p.stack <= 0) && !nonFolded.some((o) => o.status !== 'folded' && o.status !== 'allin' && (o.initialStack - o.stack) >= (p.initialStack - p.stack));
       return {
         player: p,
         position: posLabel,
@@ -250,6 +250,12 @@ export default function AllInView({
       <div className="relative z-10 flex-1 flex flex-row gap-3 items-stretch mt-2 min-h-0">
         {/* Left: Player tags with outs immediately to the right of each tag */}
         <div className="flex flex-col gap-1.5 flex-1 min-w-0 overflow-y-auto">
+          {computedEquity && computedEquity.split > 0.5 && (
+            <div className="inline-flex items-center gap-2 self-start rounded-lg border border-amber-500/60 bg-amber-950/70 px-3 py-1.5 shadow-lg">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-300">Split</span>
+              <span className="text-sm font-black font-mono text-amber-200">{formatEquity(computedEquity.split)}</span>
+            </div>
+          )}
           {sortedContestants.map((item) => {
             const p = item.player;
             const eqVal = computedEquity?.byId?.[p.id];

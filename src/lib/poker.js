@@ -578,7 +578,7 @@ export function startHand(config, buttonSeat, handNumber) {
   let straddleLevel = 0;
   let straddleOpen = straddleEnabled;
 
-  let currentBet = config.bigBlind;
+  let currentBet = bb;
   let lastRaiseAmount = config.bigBlind;
   let raiseLevel = 1;
   let first = firstActiveAfter(players, bbIndex);
@@ -1047,7 +1047,7 @@ export function postBlinds(hand) {
   }
 
   h.players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
-  h.currentBet = h.bigBlind;
+  h.currentBet = bb;
   h.lastRaiseAmount = h.bigBlind;
   h.raiseLevel = 1;
   h.currentPlayer = firstActiveAfter(h.players, bbIndex);
@@ -1117,7 +1117,8 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
   h.smallBlind = sb;
   h.bigBlind = bb;
   h.anteAmount = ante;
-  h.currentBet = bb;
+  const bbActual = h.players[bbIndex].currentBet || bb;
+  h.currentBet = bbActual;
   h.lastRaiseAmount = bb;
   h.raiseLevel = 1;
   h.currentPlayer = firstActiveAfter(h.players, bbIndex);
@@ -1794,8 +1795,8 @@ export function isAllInSituation(hand, holeCards) {
   if (!hand || !hand.players || hand.phase === 'awarded') return false;
   const nf = hand.players.filter((p) => p.status !== 'folded');
   if (nf.length < 2) return false;
-  const hasAllIn = nf.some((p) => p.status === 'allin') || bettingFrozen(hand);
-  if (!hasAllIn) return false;
+  const allInFrozen = nf.every((p) => p.status === 'allin');
+  if (!allInFrozen && hand.phase !== 'ended') return false;
   if (!holeCards) return false;
   return nf.every((p) => holeCards[p.id] && holeCardsComplete(hand, holeCards[p.id]));
 }
