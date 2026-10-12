@@ -973,7 +973,7 @@ export function dealNextStreet(hand, cards = [], hidden = false) {
   h.message = null;
   h.currentPlayer = firstActiveAfter(h.players, getButtonIndex(h));
   const _active = h.players.filter((p) => p.status === 'active').length;
-  if (_active < 2) h.currentPlayer = -1;
+  if (_active === 0) h.currentPlayer = -1;
   return { hand: h };
 }
 

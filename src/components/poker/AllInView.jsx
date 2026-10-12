@@ -204,7 +204,7 @@ export default function AllInView({
                   }`}
                 >
                   {/* Row 1 (taller): [name] | [hole cards] | [equity] */}
-                  <div className="grid grid-cols-[1.2fr_1.3fr_0.9fr] h-13 border-b border-slate-700/60 divide-x divide-slate-700/60 items-center">
+                  <div className="grid grid-cols-[1fr_2fr_1fr] h-13 border-b border-slate-700/60 divide-x divide-slate-700/60 items-center">
                     {/* Name */}
                     <div className="px-3 truncate">
                       <div className="font-bold text-sm text-white truncate leading-tight">
@@ -228,7 +228,7 @@ export default function AllInView({
                   </div>
 
                   {/* Row 2 (shorter): [stack remaining] | [all in] | [position] */}
-                  <div className="grid grid-cols-[1.2fr_1.3fr_0.9fr] h-7 divide-x divide-slate-700/60 items-center text-xs bg-black/30">
+                  <div className="grid grid-cols-[1fr_2fr_1fr] h-7 divide-x divide-slate-700/60 items-center text-xs bg-black/30">
                     {/* Stack Remaining */}
                     <div className="px-3 font-mono text-slate-400 truncate">
                       {p.status === 'allin' || p.stack <= 0 ? '-' : money(p.stack, cur)}

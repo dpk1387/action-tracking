@@ -133,6 +133,21 @@ export default function PokerTable({ hand, positions, pot, sidePots = [], holeCa
     setShowClassic(false);
   }, [hand?.handNumber]);
 
+  const seenRef = useRef({});
+  const boardLenRef = useRef(-1);
+  const [burnKey, setBurnKey] = useState(0);
+
+  useEffect(() => { seenRef.current = {}; boardLenRef.current = -1; }, [hand.handNumber]);
+
+  useEffect(() => {
+    const total = (hand.communityCards || []).filter((c) => !c.hidden).length +
+      (hand.doubleBoard ? (hand.boardB || []).filter((c) => !c.hidden).length : 0);
+    if (boardLenRef.current >= 0 && total > boardLenRef.current) {
+      setBurnKey((k) => k + 1);
+    }
+    boardLenRef.current = total;
+  }, [hand.communityCards, hand.boardB, hand.doubleBoard]);
+
   const inAllIn = isAllInSituation(hand, holeCards);
 
   const allInOuts = useMemo(() => {
@@ -152,21 +167,6 @@ export default function PokerTable({ hand, positions, pot, sidePots = [], holeCa
       />
     );
   }
-
-  const seenRef = useRef({});
-  const boardLenRef = useRef(-1);
-  const [burnKey, setBurnKey] = useState(0);
-
-  useEffect(() => { seenRef.current = {}; boardLenRef.current = -1; }, [hand.handNumber]);
-
-  useEffect(() => {
-    const total = (hand.communityCards || []).filter((c) => !c.hidden).length +
-      (hand.doubleBoard ? (hand.boardB || []).filter((c) => !c.hidden).length : 0);
-    if (boardLenRef.current >= 0 && total > boardLenRef.current) {
-      setBurnKey((k) => k + 1);
-    }
-    boardLenRef.current = total;
-  }, [hand.communityCards, hand.boardB, hand.doubleBoard]);
 
   const animateKeys = (board) => {
     if (!board) return [];

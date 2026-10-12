@@ -9,7 +9,7 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
   const nonFolded = hand.players.filter((p) => p.status !== 'folded');
   const hasAllin = nonFolded.length >= 2 && nonFolded.some((p) => p.status === 'allin');
   const activeCount = nonFolded.filter((p) => p.status === 'active').length;
-  const noFurtherBetting = hasAllin && activeCount < 2;
+  const noFurtherBetting = hasAllin && activeCount === 0;
   const hiddenA = hand.communityCards.filter((c) => c.hidden).length;
   const hiddenB = hand.doubleBoard ? (hand.boardB || []).filter((c) => c.hidden).length : 0;
   const hiddenCount = hiddenA + hiddenB;
