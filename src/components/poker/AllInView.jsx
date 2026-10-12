@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import {
   money,
   formatSidePotAmount,
@@ -33,12 +33,12 @@ function OutCard({ card }) {
   const red = SUIT_RED[card.suit];
   return (
     <div
-      className={`inline-flex items-center justify-center gap-0.5 px-1.5 py-0.5 min-w-[34px] h-[20px] rounded border border-slate-300 bg-white shadow-sm text-xs font-bold leading-none select-none shrink-0 ${
+      className={`inline-flex items-center justify-center gap-0.5 px-1 py-0.5 min-w-[28px] h-[18px] rounded border border-slate-300 bg-white shadow-sm text-[10px] font-bold leading-none select-none shrink-0 ${
         red ? 'text-rose-600' : 'text-slate-900'
       }`}
     >
       <span>{rankDisplay(card.rank)}</span>
-      <span className="text-[11px] leading-none">{SUIT_SYMBOL[card.suit]}</span>
+      <span className="text-[9px] leading-none">{SUIT_SYMBOL[card.suit]}</span>
     </div>
   );
 }
@@ -48,37 +48,50 @@ function AllInHoleCard({ card }) {
   const red = SUIT_RED[card.suit];
   return (
     <div
-      className={`w-7 h-10 rounded-md bg-white border border-slate-300 shadow-md flex flex-col items-center justify-center select-none shrink-0 ${
+      className={`w-6 h-9 rounded bg-white border border-slate-300 shadow-sm flex flex-col items-center justify-center select-none shrink-0 ${
         red ? 'text-rose-600' : 'text-slate-900'
       }`}
     >
-      <span className="font-bold text-xs leading-none">
+      <span className="font-bold text-[10px] leading-none">
         {rankDisplay(card.rank)}
       </span>
-      <span className="text-xs leading-none mt-0.5">
+      <span className="text-[9px] leading-none mt-0.5">
         {SUIT_SYMBOL[card.suit]}
       </span>
     </div>
   );
 }
 
-function AllInBoardCard({ card }) {
+function AllInBoardCard({ card, anim, delay, style }) {
   if (!card || card.hidden) {
     return (
-      <div className="w-10 h-14 rounded-lg border-2 border-dashed border-slate-700/80 bg-[#171c23]/60 flex items-center justify-center">
-        <span className="text-slate-600 text-xs font-bold">·</span>
+      <div className="w-9 h-12 rounded-lg border-2 border-dashed border-slate-700/80 bg-[#171c23]/60 flex items-center justify-center">
+        <span className="text-slate-600 text-[10px] font-bold">·</span>
       </div>
     );
   }
   const red = SUIT_RED[card.suit];
+  const animClass = anim || '';
   return (
     <div
-      className={`w-10 h-14 rounded-lg bg-white border border-slate-300 flex flex-col items-center justify-center font-bold shadow-lg select-none shrink-0 transition-transform ${
-        red ? 'text-rose-600' : 'text-slate-900'
-      }`}
+      className={`relative w-9 h-12 rounded-lg ${animClass}`}
+      style={{ transformStyle: 'preserve-3d', animationDelay: `${delay || 0}s`, ...style }}
     >
-      <span className="text-sm leading-none">{rankDisplay(card.rank)}</span>
-      <span className="text-base leading-none mt-0.5">{SUIT_SYMBOL[card.suit]}</span>
+      <div
+        className="absolute inset-0 rounded-lg bg-[#3a4a3a] border border-[#4a5a4a] flex items-center justify-center"
+        style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
+      >
+        <span className="text-[#7fae7f] text-[10px]">?</span>
+      </div>
+      <div
+        className={`absolute inset-0 rounded-lg bg-white border border-slate-300 flex flex-col items-center justify-center font-bold shadow-lg select-none shrink-0 ${
+          red ? 'text-rose-600' : 'text-slate-900'
+        }`}
+        style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+      >
+        <span className="text-[11px] leading-none">{rankDisplay(card.rank)}</span>
+        <span className="text-xs leading-none mt-0.5">{SUIT_SYMBOL[card.suit]}</span>
+      </div>
     </div>
   );
 }
@@ -96,7 +109,6 @@ export default function AllInView({
   const n = hand?.players?.length || 0;
   const buttonIdx = getButtonIndex(hand);
 
-  // Active contestants in all-in showdown (non-folded)
   const contestants = useMemo(() => {
     if (!hand?.players) return [];
     const nonFolded = hand.players.filter((p) => p.status !== 'folded');
@@ -115,18 +127,15 @@ export default function AllInView({
     });
   }, [hand, positions, n, buttonIdx]);
 
-  // Order: earlier positions on top, later positions on the bottom
   const sortedContestants = useMemo(() => {
     return [...contestants].sort((a, b) => a.posOrder - b.posOrder);
   }, [contestants]);
 
-  // Total Pot
   const totalPot = useMemo(() => {
     if (pot > 0) return pot;
     return (hand?.players || []).reduce((s, p) => s + (p.totalBet || 0), 0);
   }, [pot, hand]);
 
-  // Local fallback equity if not yet computed by parent
   const computedEquity = useMemo(() => {
     if (equity?.byId) return equity;
     if (!hand || !holeCards) return null;
@@ -146,208 +155,206 @@ export default function AllInView({
     }
   }, [equity, hand, holeCards, contestants]);
 
-  // Live outs for trailing players (updates whenever board cards change)
   const allInOuts = useMemo(() => {
     return calculateAllInOuts(hand, holeCards);
   }, [hand, holeCards]);
 
   const boardLen = (hand?.communityCards || []).filter((c) => c && !c.hidden).length;
 
+  // Outs per player for quick lookup
+  const outsByPlayerId = useMemo(() => {
+    const map = {};
+    if (allInOuts && allInOuts.length) {
+      allInOuts.forEach((entry) => {
+        map[entry.player.id] = entry.outs;
+      });
+    }
+    return map;
+  }, [allInOuts]);
+
+  // Dealing animation for board cards
+  const seenRef = useRef({});
+  const boardLenRef = useRef(-1);
+  const [animKey, setAnimKey] = useState(0);
+
+  useEffect(() => { seenRef.current = {}; boardLenRef.current = -1; }, [hand?.handNumber]);
+
+  useEffect(() => {
+    const total = (hand?.communityCards || []).filter((c) => c && !c.hidden).length;
+    if (boardLenRef.current >= 0 && total > boardLenRef.current) {
+      setAnimKey((k) => k + 1);
+    }
+    boardLenRef.current = total;
+  }, [hand?.communityCards, hand?.boardB, hand?.doubleBoard]);
+
+  const animateBoard = (board) => {
+    if (!board) return [];
+    return board.map((c, i) => {
+      const key = c && !c.hidden ? (c.rank + c.suit) : `slot-${i}`;
+      if (!key || seenRef.current[key]) return null;
+      seenRef.current[key] = true;
+      if (i < 3) {
+        const offsets = ['-18%', '0%', '18%'];
+        return { anim: 'deal-flop-full', delay: 0.3 + i * 0.18, style: { '--flop-offset': offsets[i] } };
+      }
+      return { anim: 'deal-turn-river-full', delay: 0.3 };
+    });
+  };
+
+  const boardAnim = animateBoard(hand?.communityCards || []);
+
   return (
-    <div className="relative w-full min-h-[490px] h-[520px] rounded-[2rem] border-2 border-[#364536] bg-gradient-to-b from-[#14181e] via-[#111419] to-[#0c0f13] overflow-hidden p-5 flex flex-col justify-between shadow-2xl select-none">
-      {/* Subtle table background watermark/glow */}
+    <div className="relative w-full min-h-[490px] h-[520px] rounded-[2rem] border-2 border-[#364536] bg-gradient-to-b from-[#14181e] via-[#111419] to-[#0c0f13] overflow-hidden p-4 flex flex-col justify-between shadow-2xl select-none">
       <div className="absolute inset-4 rounded-[1.6rem] border border-[#273229]/50 pointer-events-none bg-[#182318]/10" />
 
-      {/* Top Bar: Title & Status */}
+      {/* Top Bar */}
       <div className="relative z-10 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-950/80 border border-rose-600/80 text-rose-300 font-extrabold text-xs uppercase tracking-wider shadow-[0_0_12px_rgba(244,63,94,0.3)] animate-pulse">
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-950/80 border border-rose-600/80 text-rose-300 font-extrabold text-[11px] uppercase tracking-wider shadow-[0_0_12px_rgba(244,63,94,0.3)] animate-pulse">
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
             All-In Showdown
           </span>
-          <span className="text-xs font-semibold text-slate-400">
+          <span className="text-[11px] font-semibold text-slate-400">
             Street: <span className="text-emerald-400 font-bold">{STREET_LABEL[hand?.street] || 'Preflop'}</span>
           </span>
         </div>
-
         {onToggleClassic && (
           <button
             type="button"
             onClick={onToggleClassic}
-            className="text-[11px] font-semibold text-slate-400 hover:text-white bg-[#202630] border border-[#2d3644] px-2.5 py-1 rounded-md transition-colors cursor-pointer"
+            className="text-[10px] font-semibold text-slate-400 hover:text-white bg-[#202630] border border-[#2d3644] px-2 py-0.5 rounded-md transition-colors cursor-pointer"
           >
             Classic Table
           </button>
         )}
       </div>
 
-      {/* Main Content Area: Left (Tags + Outs beside them) & Bottom-Right (Board + Pot) */}
-      <div className="relative z-10 flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch mt-3">
-        {/* Left Side: Player tags stacked (earlier on top, later on bottom) + Outs beside them */}
-        <div className="flex flex-col lg:flex-row gap-4 items-start">
-          {/* Player tags column: earlier on top, later on bottom */}
-          <div className="flex flex-col gap-2.5 w-full max-w-[340px]">
-            {sortedContestants.map((item) => {
-              const p = item.player;
-              const eqVal = computedEquity?.byId?.[p.id];
-              const eqPct = eqVal != null ? Math.round(eqVal) : null;
-              const isAtRisk = item.isAtRisk;
-              const cards = holeCards[p.id] || [];
+      {/* Main Content */}
+      <div className="relative z-10 flex-1 flex flex-row gap-3 items-stretch mt-2 min-h-0">
+        {/* Left: Player tags with outs immediately to the right of each tag */}
+        <div className="flex flex-col gap-1.5 flex-1 min-w-0 overflow-y-auto">
+          {sortedContestants.map((item) => {
+            const p = item.player;
+            const eqVal = computedEquity?.byId?.[p.id];
+            const eqPct = eqVal != null ? Math.round(eqVal) : null;
+            const isAtRisk = item.isAtRisk;
+            const cards = holeCards[p.id] || [];
+            const myOuts = outsByPlayerId[p.id];
 
-              return (
+            return (
+              <div key={p.id} className="flex items-stretch gap-2">
+                {/* Compact player tag */}
                 <div
-                  key={p.id}
-                  className={`w-full rounded-xl border-2 overflow-hidden shadow-xl transition-all ${
+                  className={`rounded-lg border-2 overflow-hidden shadow-lg transition-all shrink-0 ${
                     isAtRisk
-                      ? 'border-rose-500 bg-[#2d1215] shadow-[0_0_18px_rgba(244,63,94,0.35)]'
+                      ? 'border-rose-500/80 bg-[#2d1215]/90 shadow-[0_0_12px_rgba(244,63,94,0.25)]'
                       : 'border-[#2f3846] bg-[#161a22]'
                   }`}
                 >
-                  {/* Row 1 (taller): [name] | [hole cards] | [equity] */}
-                  <div className="grid grid-cols-[1fr_2fr_1fr] h-13 border-b border-slate-700/60 divide-x divide-slate-700/60 items-center">
-                    {/* Name */}
-                    <div className="px-3 truncate">
-                      <div className="font-bold text-sm text-white truncate leading-tight">
+                  {/* Row 1: name | hole cards | equity */}
+                  <div className="grid grid-cols-[1fr_2fr_1fr] h-10 divide-x divide-slate-700/50 items-center">
+                    <div className="px-2 truncate">
+                      <div className="font-bold text-[11px] text-white truncate leading-tight">
                         {p.name}
                       </div>
                     </div>
-
-                    {/* Hole Cards */}
-                    <div className="px-2 flex items-center justify-center gap-1.5 h-full">
+                    <div className="px-1 flex items-center justify-center gap-1 h-full">
                       {cards.map((c, j) => (
                         <AllInHoleCard key={j} card={c} />
                       ))}
                     </div>
-
-                    {/* Equity */}
-                    <div className="px-2.5 flex items-center justify-end h-full">
-                      <span className="font-black font-mono text-xl text-emerald-400 drop-shadow">
+                    <div className="px-1.5 flex items-center justify-end h-full">
+                      <span className="font-black font-mono text-base text-emerald-400 drop-shadow">
                         {eqPct != null ? `${eqPct}%` : '—'}
                       </span>
                     </div>
                   </div>
-
-                  {/* Row 2 (shorter): [stack remaining] | [all in] | [position] */}
-                  <div className="grid grid-cols-[1fr_2fr_1fr] h-7 divide-x divide-slate-700/60 items-center text-xs bg-black/30">
-                    {/* Stack Remaining */}
-                    <div className="px-3 font-mono text-slate-400 truncate">
+                  {/* Row 2: stack | all in | position */}
+                  <div className="grid grid-cols-[1fr_2fr_1fr] h-5 divide-x divide-slate-700/50 items-center bg-black/30">
+                    <div className="px-2 font-mono text-[10px] text-slate-400 truncate">
                       {p.status === 'allin' || p.stack <= 0 ? '-' : money(p.stack, cur)}
                     </div>
-
-                    {/* Action / All In */}
-                    <div className="px-2 flex items-center justify-center font-bold text-[10px] uppercase tracking-wider">
+                    <div className="px-1 flex items-center justify-center font-bold text-[9px] uppercase tracking-wider">
                       {p.status === 'allin' ? (
-                        <span className="text-rose-400 font-extrabold tracking-wider">
-                          All In
-                        </span>
+                        <span className="text-rose-400 font-extrabold">All In</span>
                       ) : null}
                     </div>
-
-                    {/* Position */}
-                    <div className="px-2.5 flex items-center justify-end font-bold text-slate-300 text-xs tracking-wider">
+                    <div className="px-1.5 flex items-center justify-end font-bold text-slate-300 text-[10px] tracking-wider">
                       {item.position || ''}
                     </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
 
-          {/* Outs section: near top left going down, next to the player tags */}
-          <div className="flex-1 w-full max-w-[340px] flex flex-col gap-2">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <span>Showdown Outs</span>
-              {boardLen >= 5 ? (
-                <span className="text-[10px] text-amber-300 font-normal">(River complete)</span>
-              ) : boardLen >= 3 ? (
-                <span className="text-[10px] text-emerald-300 font-normal">
-                  (Live for next card)
-                </span>
-              ) : (
-                <span className="text-[10px] text-slate-500 font-normal">(Preflop)</span>
-              )}
-            </div>
-
-            {boardLen >= 5 ? (
-              <div className="p-2.5 rounded-lg border border-slate-700/70 bg-[#161a22]/70 text-xs text-slate-400">
-                All 5 community cards dealt. Showdown complete.
-              </div>
-            ) : allInOuts.length === 0 ? (
-              <div className="p-2.5 rounded-lg border border-slate-700/70 bg-[#161a22]/70 text-xs text-slate-400">
-                {boardLen < 3
-                  ? 'Outs update once the flop is dealt.'
-                  : 'Hands currently tied or drawing to same outs.'}
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto pr-1">
-                {allInOuts.map((entry) => (
-                  <div
-                    key={entry.player.id}
-                    className="p-2.5 rounded-lg border border-slate-700/70 bg-[#161a22]/90 shadow-md flex flex-col gap-1.5"
-                  >
-                    <div className="flex items-center justify-between text-xs font-semibold">
-                      <span className="text-white truncate">{entry.player.name}</span>
-                      <span className="font-mono text-amber-300 font-bold ml-2 shrink-0">
-                        {entry.outs.length} out{entry.outs.length === 1 ? '' : 's'}
+                {/* Outs immediately right of the player tag */}
+                <div className="flex-1 min-w-0 rounded-lg border border-slate-700/50 bg-[#161a22]/80 px-2 py-1 flex flex-col justify-center overflow-hidden">
+                  {boardLen >= 5 ? (
+                    <span className="text-[10px] text-slate-500">River complete</span>
+                  ) : !myOuts ? (
+                    <span className="text-[10px] text-slate-500">
+                      {boardLen < 3 ? 'Waiting for flop' : 'Tied or drawing dead'}
+                    </span>
+                  ) : myOuts.length === 0 ? (
+                    <span className="text-[10px] text-rose-400 font-medium">Drawing dead (0 outs)</span>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-0.5 overflow-hidden">
+                      <span className="text-[10px] font-bold text-amber-300 mr-1 shrink-0">
+                        {myOuts.length}
                       </span>
+                      {myOuts.slice(0, 16).map((card) => (
+                        <OutCard key={card.rank + card.suit} card={card} />
+                      ))}
+                      {myOuts.length > 16 && (
+                        <span className="text-[10px] text-slate-400">+{myOuts.length - 16}</span>
+                      )}
                     </div>
-
-                    {entry.outs.length === 0 ? (
-                      <span className="text-[11px] text-rose-400 italic">
-                        Drawing dead (0 outs)
-                      </span>
-                    ) : (
-                      <div className="flex flex-wrap items-center gap-1">
-                        {entry.outs.map((card) => (
-                          <OutCard key={card.rank + card.suit} card={card} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  )}
+                </div>
               </div>
-            )}
-          </div>
+            );
+          })}
         </div>
 
-        {/* Right Side: Bottom Right (Community cards right above pot sizes, Pot sizes bottom right) */}
-        <div className="flex flex-col justify-end items-end gap-3 self-end mt-auto">
-          {/* Community Cards: right above pot sizes */}
-          <div className="flex flex-col items-end gap-1.5">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Board
-              </span>
-              <span className="text-xs font-bold text-emerald-400">
+        {/* Right: Board + Pot */}
+        <div className="flex flex-col justify-end items-end gap-2 shrink-0">
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Board</span>
+              <span className="text-[11px] font-bold text-emerald-400">
                 {STREET_LABEL[hand?.street] || 'Preflop'}
               </span>
             </div>
-
-            <div className="flex gap-2">
+            <div className="relative flex gap-1.5">
+              {animKey > 0 && (
+                <div
+                  key={`burn-${animKey}`}
+                  className="burn-card absolute left-0 top-0 w-9 h-12 rounded-lg bg-[#3a4a3a] border border-[#4a5a4a] flex items-center justify-center pointer-events-none z-10"
+                >
+                  <span className="text-[#7fae7f] text-[10px]">?</span>
+                </div>
+              )}
               {[0, 1, 2, 3, 4].map((i) => (
-                <AllInBoardCard key={i} card={hand?.communityCards?.[i]} />
+                <AllInBoardCard
+                  key={i}
+                  card={hand?.communityCards?.[i]}
+                  anim={boardAnim[i]?.anim}
+                  delay={boardAnim[i]?.delay}
+                  style={boardAnim[i]?.style}
+                />
               ))}
             </div>
-
             {hand?.doubleBoard && (
-              <div className="flex gap-2 mt-1">
+              <div className="flex gap-1.5 mt-0.5">
                 {[0, 1, 2, 3, 4].map((i) => (
                   <AllInBoardCard key={`b${i}`} card={(hand?.boardB || [])[i]} />
                 ))}
               </div>
             )}
           </div>
-
-          {/* Pot (and side pots) sizes: bottom right */}
-          <div className="flex flex-col items-end rounded-2xl border border-[#2a3442] bg-[#161d26]/95 px-5 py-3 shadow-2xl min-w-[220px]">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              Total Pot
-            </div>
-            <div className="text-3xl font-black text-white font-mono drop-shadow">
-              {money(totalPot, cur)}
-            </div>
+          <div className="flex flex-col items-end rounded-xl border border-[#2a3442] bg-[#161d26]/95 px-4 py-2 shadow-xl min-w-[180px]">
+            <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Total Pot</div>
+            <div className="text-2xl font-black text-white font-mono drop-shadow">{money(totalPot, cur)}</div>
             {sidePots.length > 0 && (
-              <div className="text-xs text-amber-300 font-semibold mt-1">
+              <div className="text-[11px] text-amber-300 font-semibold mt-0.5">
                 Side pots: {sidePots.map((sp) => formatSidePotAmount(sp.amount, cur)).join(' / ')}
               </div>
             )}
