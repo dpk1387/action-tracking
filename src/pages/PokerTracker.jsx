@@ -32,7 +32,7 @@ import {
 } from '@/lib/liveSync';
 import {
   startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots,
-  positionForSeat, getButtonIndex, money, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen,
+  positionForSeat, getButtonIndex, money, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown,
 } from '@/lib/poker';
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
@@ -847,7 +847,7 @@ export default function PokerTracker() {
     setBonusApplied(false);
     setSevenTwoFoldWinner(null);
     setFrozenStacks({});
-    setFreezeStacks(false);
+    setFreezeStacks(true);
   };
 
   const handleEndSessionSave = async () => {
@@ -882,7 +882,7 @@ export default function PokerTracker() {
     setResumeChecked(false);
     setShowSetup(false);
     setFrozenStacks({});
-    setFreezeStacks(false);
+    setFreezeStacks(true);
   };
 
   const variant = hand?.variant || 'nlh';
@@ -905,7 +905,7 @@ export default function PokerTracker() {
   const hasAllIn = nonFolded.length >= 2 && nonFolded.some((p) => p.status === 'allin');
   const frozen = hand ? bettingFrozen(hand) : false;
   const allInFrozen = hand && nonFolded.length >= 2 && nonFolded.every((p) => p.status === 'allin' || p.status === 'folded');
-  const showHoleEntry = hand && hand.phase !== 'awarded' && nonFolded.length >= 2 && hand.currentPlayer === -1 && ((hasAllIn && allInFrozen) || hand.phase === 'ended');
+  const showHoleEntry = hand && hand.phase !== 'awarded' && nonFolded.length >= 2 && hand.currentPlayer === -1 && isAllInShowdown(hand);
   const showDiscardStep = hand && hand.variant === 'crazy_pineapple' && hand.cpNeedsDiscard && !hand.cpDiscarded && hand.currentPlayer === -1 && hand.phase !== 'awarded' && hand.communityCards.length >= 3 && nonFolded.length >= 2 && nonFolded.every((p) => holeCards[p.id] && holeCards[p.id].length === 3);
   const isCash = hand?.mode === 'cash';
   const lowGame = variantMeta(variant).group === 'low';

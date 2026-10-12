@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { money, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation } from '@/lib/poker';
+import { money, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown } from '@/lib/poker';
 import AllInView from './AllInView';
 
 function raiseLabelLocal(level) {
@@ -148,7 +148,7 @@ export default function PokerTable({ hand, positions, pot, sidePots = [], holeCa
     boardLenRef.current = total;
   }, [hand.communityCards, hand.boardB, hand.doubleBoard]);
 
-  const inAllIn = isAllInSituation(hand, holeCards);
+  const inAllIn = isAllInShowdown(hand);
 
   const allInOuts = useMemo(() => {
     return calculateAllInOuts(hand, holeCards);

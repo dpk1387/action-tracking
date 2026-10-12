@@ -118,8 +118,8 @@ export function formatPlayerTagAmount(val, currency = '', hand = null) {
   const sym = currency || '';
 
   // Regardless of smallest chip:
-  // <10K: full number
-  if (absN < 10000) {
+  // <100K: full number
+  if (absN < 100000) {
     const hasDec = !Number.isInteger(absN);
     const numStr = absN.toLocaleString('en-US', {
       minimumFractionDigits: 0,
@@ -1799,6 +1799,13 @@ export function isAllInSituation(hand, holeCards) {
   if (!allInFrozen && hand.phase !== 'ended') return false;
   if (!holeCards) return false;
   return nf.every((p) => holeCards[p.id] && holeCardsComplete(hand, holeCards[p.id]));
+}
+
+export function isAllInShowdown(hand) {
+  if (!hand || !hand.players || hand.phase === 'awarded') return false;
+  const nf = hand.players.filter((p) => p.status !== 'folded');
+  if (nf.length < 2) return false;
+  return nf.every((p) => p.status === 'allin') || hand.phase === 'ended';
 }
 
 function best5Of(cards, shortDeck) {

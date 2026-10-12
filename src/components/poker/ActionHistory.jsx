@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { STREET_LABEL } from '@/lib/poker';
 
 export default function ActionHistory({ history = [], hideAmounts }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const rows = history || [];
 
   return (

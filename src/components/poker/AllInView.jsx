@@ -43,14 +43,14 @@ function OutCard({ card }) {
   );
 }
 
-function AllInHoleCard({ card }) {
+function AllInHoleCard({ card, animate }) {
   if (!card) return null;
   const red = SUIT_RED[card.suit];
   return (
     <div
       className={`inline-flex items-center justify-center gap-0.5 px-1 py-0.5 min-w-[34px] h-[22px] rounded bg-white border border-slate-300 shadow-sm select-none shrink-0 ${
         red ? 'text-rose-600' : 'text-slate-900'
-      }`}
+      } ${animate ? 'hole-card-flip' : ''}`}
     >
       <span className="font-bold text-[11px] leading-none">{rankDisplay(card.rank)}</span>
       <span className="text-[10px] leading-none">{SUIT_SYMBOL[card.suit]}</span>
@@ -68,38 +68,15 @@ function AllInBoardCard({ card, anim, delay, style }) {
   }
   const red = SUIT_RED[card.suit];
   const animClass = anim || '';
-  if (!animClass) {
-    return (
-      <div
-        className={`w-9 h-12 rounded-lg bg-white border border-slate-300 flex flex-col items-center justify-center font-bold shadow-lg select-none shrink-0 ${
-          red ? 'text-rose-600' : 'text-slate-900'
-        }`}
-      >
-        <span className="text-[11px] leading-none">{rankDisplay(card.rank)}</span>
-        <span className="text-xs leading-none mt-0.5">{SUIT_SYMBOL[card.suit]}</span>
-      </div>
-    );
-  }
   return (
     <div
-      className={`relative w-9 h-12 rounded-lg ${animClass}`}
-      style={{ transformStyle: 'preserve-3d', animationDelay: `${delay || 0}s`, ...style }}
+      className={`w-9 h-12 rounded-lg bg-white border border-slate-300 flex flex-col items-center justify-center font-bold shadow-lg select-none shrink-0 ${
+        red ? 'text-rose-600' : 'text-slate-900'
+      } ${animClass}`}
+      style={{ animationDelay: `${delay || 0}s`, ...style }}
     >
-      <div
-        className="absolute inset-0 rounded-lg bg-[#3a4a3a] border border-[#4a5a4a] flex items-center justify-center"
-        style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
-      >
-        <span className="text-[#7fae7f] text-[10px]">?</span>
-      </div>
-      <div
-        className={`absolute inset-0 rounded-lg bg-white border border-slate-300 flex flex-col items-center justify-center font-bold shadow-lg select-none shrink-0 ${
-          red ? 'text-rose-600' : 'text-slate-900'
-        }`}
-        style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
-      >
-        <span className="text-[11px] leading-none">{rankDisplay(card.rank)}</span>
-        <span className="text-xs leading-none mt-0.5">{SUIT_SYMBOL[card.suit]}</span>
-      </div>
+      <span className="text-[11px] leading-none">{rankDisplay(card.rank)}</span>
+      <span className="text-xs leading-none mt-0.5">{SUIT_SYMBOL[card.suit]}</span>
     </div>
   );
 }
@@ -210,11 +187,7 @@ export default function AllInView({
       const key = c && !c.hidden ? (c.rank + c.suit) : `slot-${i}`;
       if (!key || seenRef.current[key]) return null;
       seenRef.current[key] = true;
-      if (i < 3) {
-        const offsets = ['-18%', '0%', '18%'];
-        return { anim: 'deal-flop-full', delay: 0.3 + i * 0.18, style: { '--flop-offset': offsets[i] } };
-      }
-      return { anim: 'deal-turn-river-full', delay: 0.3 };
+      return { anim: 'board-slide-in', delay: 0.1 + i * 0.12 };
     });
   };
 
@@ -250,7 +223,7 @@ export default function AllInView({
       <div className="relative z-10 flex-1 flex flex-row gap-3 items-stretch mt-2 min-h-0">
         {/* Left: Player tags with outs immediately to the right of each tag */}
         <div className="flex flex-col gap-1.5 flex-1 min-w-0 overflow-y-auto">
-          {computedEquity && computedEquity.split > 0.5 && (
+          {computedEquity && computedEquity.split > 0 && (
             <div className="inline-flex items-center gap-2 self-start rounded-lg border border-amber-500/60 bg-amber-950/70 px-3 py-1.5 shadow-lg">
               <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-300">Split</span>
               <span className="text-sm font-black font-mono text-amber-200">{formatEquity(computedEquity.split)}</span>
@@ -283,7 +256,7 @@ export default function AllInView({
                     </div>
                     <div className="px-1 flex items-center justify-center gap-1 h-full">
                       {cards.map((c, j) => (
-                        <AllInHoleCard key={j} card={c} />
+                        <AllInHoleCard key={j} card={c} animate />
                       ))}
                     </div>
                     <div className="px-1.5 flex items-center justify-end h-full">

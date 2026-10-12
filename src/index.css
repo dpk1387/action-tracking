@@ -123,3 +123,18 @@
   100% { transform: translateY(0); opacity: 1; }
 }
 .stack-slide-up { animation: stack-slide-up 0.2s ease-out; }
+
+@keyframes hole-card-flip {
+  0% { opacity: 0; transform: rotateY(180deg) scale(0.8); }
+  50% { opacity: 1; transform: rotateY(90deg) scale(0.9); }
+  100% { opacity: 1; transform: rotateY(0deg) scale(1); }
+}
+.hole-card-flip { animation: hole-card-flip 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; transform-style: preserve-3d; }
+
+@keyframes board-slide-in {
+  0% { opacity: 0; transform: translateY(-120%) translateX(40%) rotate(-12deg) scale(0.6); }
+  30% { opacity: 1; transform: translateY(-30%) translateX(15%) rotate(-6deg) scale(0.85); }
+  60% { opacity: 1; transform: translateY(0) translateX(0) rotate(0deg) scale(1); }
+  100% { opacity: 1; transform: translateY(0) translateX(0) rotate(0deg) scale(1); }
+}
+.board-slide-in { animation: board-slide-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
