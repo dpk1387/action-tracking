@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #121417;
+    color: #ffffff;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+}
+
+/* Community-card deal animations: burn + sequential deal + flip + spread */
+@keyframes burn-card {
+  0% { opacity: 0; transform: translateX(280%) scale(0.7); }
+  18% { opacity: 1; transform: translateX(120%) scale(0.9); }
+  35% { opacity: 1; transform: translateX(60%) scale(1); }
+  55% { opacity: 1; transform: translateX(60%) scale(1); }
+  78% { opacity: 0.3; transform: translateX(-140%) scale(0.8); }
+  100% { opacity: 0; transform: translateX(-260%) scale(0.6); }
+}
+.burn-card { animation: burn-card 0.55s ease-in both; }
+
+@keyframes deal-flop-full {
+  0% { opacity: 0; transform: translateX(280%) translateY(0) rotateY(0deg) scale(0.7); }
+  10% { opacity: 1; transform: translateX(140%) translateY(40%) rotateY(0deg) scale(0.9); }
+  20% { opacity: 1; transform: translateX(60%) translateY(65%) rotateY(0deg) scale(1); }
+  28% { opacity: 1; transform: translateX(var(--flop-offset, 0)) translateY(65%) rotateY(0deg) scale(1); }
+  38% { opacity: 1; transform: translateX(var(--flop-offset, 0)) translateY(65%) rotateY(0deg) scale(1); }
+  50% { opacity: 1; transform: translateX(var(--flop-offset, 0)) translateY(65%) rotateY(180deg) scale(1); }
+  58% { opacity: 1; transform: translateX(var(--flop-offset, 0)) translateY(65%) rotateY(180deg) scale(1); }
+  78% { opacity: 1; transform: translateX(0) translateY(0) rotateY(180deg) scale(1); }
+  100% { opacity: 1; transform: translateX(0) translateY(0) rotateY(180deg) scale(1); }
+}
+.deal-flop-full { animation: deal-flop-full 1.3s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes deal-turn-river-full {
+  0% { opacity: 0; transform: translate(220%, 160%) rotateY(0deg) scale(0.7); }
+  12% { opacity: 1; transform: translate(120%, 80%) rotateY(0deg) scale(0.9); }
+  22% { opacity: 1; transform: translate(40%, 20%) rotateY(0deg) scale(0.95); }
+  32% { opacity: 1; transform: translate(0, 0) rotateY(0deg) scale(1); }
+  46% { opacity: 1; transform: translate(0, 0) rotateY(0deg) scale(1); }
+  62% { opacity: 1; transform: translate(0, 0) rotateY(180deg) scale(1); }
+  100% { opacity: 1; transform: translate(0, 0) rotateY(180deg) scale(1); }
+}
+.deal-turn-river-full { animation: deal-turn-river-full 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes stack-slide-up {
+  0% { transform: translateY(55%); opacity: 0; }
+  55% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.stack-slide-up { animation: stack-slide-up 0.2s ease-out; }

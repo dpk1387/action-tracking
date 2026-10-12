@@ -1,0 +1,6 @@
+{
+  "name": "Poker Action Tracker",
+  "description": "Real-time poker hand action tracker, chip stack manager, blind structures, tournament clock, side games, and TV/spectator displays.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
