@@ -963,7 +963,7 @@ export default function PokerTracker() {
   }
 
   return (
-    <div className={darkMode ? "min-h-screen bg-[#121417] text-white" : "min-h-screen bg-slate-100 text-slate-900"}>
+    <div className={`min-h-screen ${darkMode ? 'bg-[#121417] text-white' : 'light bg-slate-100 text-slate-900'}`}>
       <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">

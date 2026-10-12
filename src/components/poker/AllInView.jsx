@@ -302,8 +302,8 @@ export default function AllInView({
                   </div>
                 </div>
 
-                {/* Outs immediately right of the player tag — hidden when 0 outs */}
-                {hasZeroOuts ? null : (
+                {/* Outs immediately right of the player tag — hidden when ahead or 0 outs */}
+                {hasZeroOuts || !myOuts ? null : (
                   <div className="flex-1 min-w-0 rounded-lg border border-slate-700/50 bg-[#161a22]/80 px-2 py-1 flex flex-col justify-center overflow-hidden">
                     {boardLen >= 5 ? (
                       <span className="text-[10px] text-slate-500">River complete</span>

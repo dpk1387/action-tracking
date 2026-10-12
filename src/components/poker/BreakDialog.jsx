@@ -3,6 +3,9 @@ import { X } from 'lucide-react';
 import { money } from '@/lib/poker';
 import { levelTimerState, formatTimer } from '@/lib/levelTimer';
 
+function gcd(a, b) { a = Math.abs(a); b = Math.abs(b); while (b) { [a, b] = [b, a % b]; } return a; }
+function lcm(a, b) { return (a * b) / gcd(a, b); }
+
 export default function BreakDialog({ hand, onChipRace, onResume, onClose, now, race: raceOverride, dismissOverride }) {
   const brkItem = (hand?.blindSchedule || [])[hand?.tLevel];
   const race = raceOverride || brkItem?.race;
@@ -12,11 +15,12 @@ export default function BreakDialog({ hand, onChipRace, onResume, onClose, now, 
 
   const autoOddChips = useMemo(() => {
     if (!hasRace) return [];
+    const cycle = lcm(retired, replacement);
     return (hand?.players || []).map((p) => {
       const stack = Number(p.stack) || 0;
-      const remainder = stack % replacement;
-      const count = remainder / retired;
-      return Number.isInteger(count) ? count : Math.floor(count);
+      const remainder = stack % cycle;
+      const count = Math.floor(remainder / retired);
+      return count;
     });
   }, [hand?.players, hasRace, retired, replacement]);
 

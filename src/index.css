@@ -21,21 +21,66 @@
 .light .bg-\[\#121417\] { background-color: var(--lm-bg) !important; }
 .light .bg-\[\#1e2227\] { background-color: var(--lm-surface) !important; }
 .light .bg-\[\#15181d\] { background-color: #f8fafc !important; }
+.light .bg-\[\#1a1d22\] { background-color: #f1f5f9 !important; }
 .light .bg-\[\#2a2f37\] { background-color: #e2e8f0 !important; }
 .light .bg-\[\#363c45\] { background-color: #cbd5e1 !important; }
+.light .bg-\[\#202630\] { background-color: #e2e8f0 !important; }
+.light .bg-\[\#2d3644\] { background-color: #cbd5e1 !important; }
+.light .bg-\[\#161a22\] { background-color: #f8fafc !important; }
+.light .bg-\[\#161d26\] { background-color: #f8fafc !important; }
+.light .bg-\[\#171c23\] { background-color: #e2e8f0 !important; }
+.light .bg-\[\#1e2a1e\] { background-color: #ecfdf5 !important; }
+.light .bg-\[\#3a3320\] { background-color: #fef3c7 !important; }
+.light .bg-\[\#3a1f1f\] { background-color: #fef2f2 !important; }
+.light .bg-\[\#2d1215\] { background-color: #fef2f2 !important; }
+.light .bg-\[\#3a4a3a\] { background-color: #d1d5db !important; }
+.light .bg-\[\#4a5a4a\] { background-color: #059669 !important; }
+.light .bg-\[\#5a6a5a\] { background-color: #047857 !important; }
+.light .bg-\[\#c94c4c\] { background-color: #dc2626 !important; }
+.light .bg-\[\#d95959\] { background-color: #b91c1c !important; }
+.light .bg-black\/30 { background-color: rgba(0,0,0,0.05) !important; }
+.light .bg-black\/70 { background-color: rgba(0,0,0,0.3) !important; }
 .light .border-\[\#2a2f37\] { border-color: var(--lm-border) !important; }
+.light .border-\[\#363c45\] { border-color: #cbd5e1 !important; }
+.light .border-\[\#4a5a4a\] { border-color: #059669 !important; }
+.light .border-\[\#3a4a3a\] { border-color: #6ee7b7 !important; }
+.light .border-\[\#c94c4c\] { border-color: #dc2626 !important; }
+.light .border-\[\#6b5a2a\] { border-color: #d97706 !important; }
+.light .border-\[\#8a7a3a\] { border-color: #d97706 !important; }
+.light .border-\[\#2d3644\] { border-color: #cbd5e1 !important; }
+.light .border-\[\#2a3442\] { border-color: #cbd5e1 !important; }
+.light .border-\[\#273229\] { border-color: #d1fae5 !important; }
+.light .border-\[\#364536\] { border-color: #6ee7b7 !important; }
+.light .border-slate-700\/50 { border-color: #e2e8f0 !important; }
+.light .border-slate-700\/80 { border-color: #94a3b8 !important; }
+.light .divide-slate-700\/50 > * { border-color: #e2e8f0 !important; }
+.light .divide-x > * { border-color: #e2e8f0 !important; }
 .light .text-white { color: var(--lm-text) !important; }
 .light .text-slate-300 { color: var(--lm-muted) !important; }
 .light .text-slate-400 { color: #94a3b8 !important; }
 .light .text-slate-500 { color: #94a3b8 !important; }
+.light .text-slate-600 { color: #94a3b8 !important; }
+.light .text-slate-700 { color: #475569 !important; }
 .light .text-emerald-300 { color: #059669 !important; }
+.light .text-emerald-300\/80 { color: #059669 !important; }
+.light .text-emerald-300\/90 { color: #059669 !important; }
 .light .text-emerald-400 { color: #047857 !important; }
+.light .text-emerald-200 { color: #d1fae5 !important; }
 .light .text-rose-300 { color: #e11d48 !important; }
 .light .text-rose-400 { color: #be123c !important; }
+.light .text-rose-200 { color: #fecdd3 !important; }
 .light .text-amber-300 { color: #d97706 !important; }
+.light .text-amber-300\/90 { color: #d97706 !important; }
+.light .text-amber-300\/70 { color: #b45309 !important; }
+.light .text-amber-200 { color: #92400e !important; }
 .light .text-sky-300 { color: #0284c7 !important; }
+.light .text-sky-700 { color: #0369a1 !important; }
 .light .text-cyan-300 { color: #0891b2 !important; }
-.light .divide-slate-700\/50 { border-color: #e2e8f0 !important; }
+.light .text-\[\#7fae7f\] { color: #059669 !important; }
+.light .placeholder\:text-slate-500::placeholder { color: #94a3b8 !important; }
+.light input { background-color: #f8fafc !important; color: var(--lm-text) !important; border-color: var(--lm-border) !important; }
+.light select { background-color: #f8fafc !important; color: var(--lm-text) !important; border-color: var(--lm-border) !important; }
+.light button:disabled { opacity: 0.5; }
 
 /* Community-card deal animations: burn + sequential deal + flip + spread */
 @keyframes burn-card {
