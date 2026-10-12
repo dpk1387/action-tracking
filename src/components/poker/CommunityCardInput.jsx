@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { parseCards, variantRanks } from '@/lib/poker';
+import { parseCards, variantRanks, bettingFrozen } from '@/lib/poker';
 
 export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillBoard, holeCards }) {
   const [textA, setTextA] = useState('');
@@ -9,13 +9,14 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
   const nonFolded = hand.players.filter((p) => p.status !== 'folded');
   const hasAllin = nonFolded.length >= 2 && nonFolded.some((p) => p.status === 'allin');
   const activeCount = nonFolded.filter((p) => p.status === 'active').length;
-  const noFurtherBetting = hasAllin && activeCount === 0;
+  const noFurtherBetting = hasAllin && bettingFrozen(hand);
   const hiddenA = hand.communityCards.filter((c) => c.hidden).length;
   const hiddenB = hand.doubleBoard ? (hand.boardB || []).filter((c) => c.hidden).length : 0;
   const hiddenCount = hiddenA + hiddenB;
   const next = { preflop: 'flop', flop: 'turn', turn: 'river' }[hand.street];
   const isRiver = hand.street === 'river';
   const complete = (hand.currentPlayer === -1 || noFurtherBetting || hand.phase === 'ended') && hand.phase !== 'awarded';
+  const frozen = bettingFrozen(hand);
   const dbl = !!hand.doubleBoard;
 
   const heldKeys = new Set();
@@ -91,7 +92,7 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
   };
 
   const hiddenLabelA = hiddenA >= 5 ? 'flop, turn & river' : hiddenA >= 4 ? 'flop & turn' : hiddenA === 3 ? 'flop' : 'turn';
-  const showdown = (hand.currentPlayer === -1 || noFurtherBetting) && (hasAllin || hand.phase === 'ended');
+  const showdown = (hand.currentPlayer === -1 || noFurtherBetting) && (hasAllin || frozen || hand.phase === 'ended');
   const streetUpper = next ? next.toUpperCase() : '';
   const countHint = next === 'flop' ? '3 cards' : '1 card';
 

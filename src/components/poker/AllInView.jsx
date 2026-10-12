@@ -33,7 +33,7 @@ function OutCard({ card }) {
   const red = SUIT_RED[card.suit];
   return (
     <div
-      className={`inline-flex items-center justify-center gap-0.5 px-1 py-0.5 min-w-[28px] h-[18px] rounded border border-slate-300 bg-white shadow-sm text-[10px] font-bold leading-none select-none shrink-0 ${
+      className={`inline-flex items-center justify-center gap-0.5 px-1 py-0.5 min-w-[26px] h-[17px] rounded border border-slate-300 bg-white shadow-sm text-[10px] font-bold leading-none select-none shrink-0 ${
         red ? 'text-rose-600' : 'text-slate-900'
       }`}
     >
@@ -48,16 +48,12 @@ function AllInHoleCard({ card }) {
   const red = SUIT_RED[card.suit];
   return (
     <div
-      className={`w-6 h-9 rounded bg-white border border-slate-300 shadow-sm flex flex-col items-center justify-center select-none shrink-0 ${
+      className={`inline-flex items-center justify-center gap-0.5 px-1 py-0.5 min-w-[34px] h-[22px] rounded bg-white border border-slate-300 shadow-sm select-none shrink-0 ${
         red ? 'text-rose-600' : 'text-slate-900'
       }`}
     >
-      <span className="font-bold text-[10px] leading-none">
-        {rankDisplay(card.rank)}
-      </span>
-      <span className="text-[9px] leading-none mt-0.5">
-        {SUIT_SYMBOL[card.suit]}
-      </span>
+      <span className="font-bold text-[11px] leading-none">{rankDisplay(card.rank)}</span>
+      <span className="text-[10px] leading-none">{SUIT_SYMBOL[card.suit]}</span>
     </div>
   );
 }
@@ -94,6 +90,16 @@ function AllInBoardCard({ card, anim, delay, style }) {
       </div>
     </div>
   );
+}
+
+function formatEquity(v) {
+  if (v == null) return '—';
+  if (v <= 0) return '0%';
+  if (v < 0.5) return '<1%';
+  if (v < 1) return '<1%';
+  if (v >= 99.5) return '>99%';
+  if (v > 99) return '>99%';
+  return `${Math.round(v)}%`;
 }
 
 export default function AllInView({
@@ -161,7 +167,6 @@ export default function AllInView({
 
   const boardLen = (hand?.communityCards || []).filter((c) => c && !c.hidden).length;
 
-  // Outs per player for quick lookup
   const outsByPlayerId = useMemo(() => {
     const map = {};
     if (allInOuts && allInOuts.length) {
@@ -236,10 +241,10 @@ export default function AllInView({
           {sortedContestants.map((item) => {
             const p = item.player;
             const eqVal = computedEquity?.byId?.[p.id];
-            const eqPct = eqVal != null ? Math.round(eqVal) : null;
             const isAtRisk = item.isAtRisk;
             const cards = holeCards[p.id] || [];
             const myOuts = outsByPlayerId[p.id];
+            const hasZeroOuts = myOuts && myOuts.length === 0;
 
             return (
               <div key={p.id} className="flex items-stretch gap-2">
@@ -252,7 +257,7 @@ export default function AllInView({
                   }`}
                 >
                   {/* Row 1: name | hole cards | equity */}
-                  <div className="grid grid-cols-[1fr_2fr_1fr] h-10 divide-x divide-slate-700/50 items-center">
+                  <div className="grid grid-cols-[1fr_1.5fr_1fr] h-10 divide-x divide-slate-700/50 items-center">
                     <div className="px-2 truncate">
                       <div className="font-bold text-[11px] text-white truncate leading-tight">
                         {p.name}
@@ -265,12 +270,12 @@ export default function AllInView({
                     </div>
                     <div className="px-1.5 flex items-center justify-end h-full">
                       <span className="font-black font-mono text-base text-emerald-400 drop-shadow">
-                        {eqPct != null ? `${eqPct}%` : '—'}
+                        {formatEquity(eqVal)}
                       </span>
                     </div>
                   </div>
                   {/* Row 2: stack | all in | position */}
-                  <div className="grid grid-cols-[1fr_2fr_1fr] h-5 divide-x divide-slate-700/50 items-center bg-black/30">
+                  <div className="grid grid-cols-[1fr_1fr_1fr] h-5 divide-x divide-slate-700/50 items-center bg-black/30">
                     <div className="px-2 font-mono text-[10px] text-slate-400 truncate">
                       {p.status === 'allin' || p.stack <= 0 ? '-' : money(p.stack, cur)}
                     </div>
@@ -285,30 +290,30 @@ export default function AllInView({
                   </div>
                 </div>
 
-                {/* Outs immediately right of the player tag */}
-                <div className="flex-1 min-w-0 rounded-lg border border-slate-700/50 bg-[#161a22]/80 px-2 py-1 flex flex-col justify-center overflow-hidden">
-                  {boardLen >= 5 ? (
-                    <span className="text-[10px] text-slate-500">River complete</span>
-                  ) : !myOuts ? (
-                    <span className="text-[10px] text-slate-500">
-                      {boardLen < 3 ? 'Waiting for flop' : 'Tied or drawing dead'}
-                    </span>
-                  ) : myOuts.length === 0 ? (
-                    <span className="text-[10px] text-rose-400 font-medium">Drawing dead (0 outs)</span>
-                  ) : (
-                    <div className="flex flex-wrap items-center gap-0.5 overflow-hidden">
-                      <span className="text-[10px] font-bold text-amber-300 mr-1 shrink-0">
-                        {myOuts.length}
+                {/* Outs immediately right of the player tag — hidden when 0 outs */}
+                {hasZeroOuts ? null : (
+                  <div className="flex-1 min-w-0 rounded-lg border border-slate-700/50 bg-[#161a22]/80 px-2 py-1 flex flex-col justify-center overflow-hidden">
+                    {boardLen >= 5 ? (
+                      <span className="text-[10px] text-slate-500">River complete</span>
+                    ) : !myOuts ? (
+                      <span className="text-[10px] text-slate-500">
+                        {boardLen < 3 ? 'Waiting for flop' : 'Tied or ahead'}
                       </span>
-                      {myOuts.slice(0, 16).map((card) => (
-                        <OutCard key={card.rank + card.suit} card={card} />
-                      ))}
-                      {myOuts.length > 16 && (
-                        <span className="text-[10px] text-slate-400">+{myOuts.length - 16}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-0.5 overflow-hidden">
+                        <span className="text-[10px] font-bold text-amber-300 mr-1 shrink-0">
+                          {myOuts.length}
+                        </span>
+                        {myOuts.slice(0, 16).map((card) => (
+                          <OutCard key={card.rank + card.suit} card={card} />
+                        ))}
+                        {myOuts.length > 16 && (
+                          <span className="text-[10px] text-slate-400">+{myOuts.length - 16}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

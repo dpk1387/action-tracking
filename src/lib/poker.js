@@ -351,9 +351,20 @@ export function canActPlayers(h) {
   return h.players.filter((p) => p.status === 'active');
 }
 
+export function bettingFrozen(h) {
+  const nf = h.players.filter((p) => p.status !== 'folded');
+  if (nf.length < 2) return true;
+  const activeWithChips = nf.filter((p) => p.status === 'active' && p.stack > 0);
+  return activeWithChips.length <= 1;
+}
+
 export function streetComplete(h) {
   const act = canActPlayers(h);
   if (act.length === 0) return true;
+  if (bettingFrozen(h)) {
+    if (act.some((p) => p.currentBet < h.currentBet)) return false;
+    return true;
+  }
   if (act.some((p) => p.currentBet < h.currentBet)) return false;
   if (h.shortAllinOpen) {
     const unacted = act.filter((p) => !p.hasActed || p.currentBet < h.currentBet);
@@ -857,7 +868,7 @@ export function applyAction(hand, playerId, type, amount) {
   }
 
   const nextPlayer = nextToAct(h.players, playerId, h.killIdx, h.killDeferred, h.shortAllinOpen);
-  if (streetComplete(h) || nextPlayer === -1) {
+  if (streetComplete(h) || nextPlayer === -1 || bettingFrozen(h)) {
     h.currentPlayer = -1;
     if (h.street === 'river') {
       h.phase = 'ended';
@@ -865,7 +876,8 @@ export function applyAction(hand, playerId, type, amount) {
       const next = { preflop: 'flop', flop: 'turn', turn: 'river' }[h.street];
       const nf2 = h.players.filter((pl) => pl.status !== 'folded');
       const hasAllin2 = nf2.length >= 2 && nf2.some((pl) => pl.status === 'allin');
-      if (!hasAllin2) {
+      const frozen = bettingFrozen(h);
+      if (!hasAllin2 && !frozen) {
         const lowGame = variantMeta(h.variant).group === 'low';
         if (!lowGame) {
           const expected = next === 'flop' ? 3 : 1;
@@ -972,8 +984,7 @@ export function dealNextStreet(hand, cards = [], hidden = false) {
   h.street = next;
   h.message = null;
   h.currentPlayer = firstActiveAfter(h.players, getButtonIndex(h));
-  const _active = h.players.filter((p) => p.status === 'active').length;
-  if (_active === 0) h.currentPlayer = -1;
+  if (bettingFrozen(h)) h.currentPlayer = -1;
   return { hand: h };
 }
 
@@ -1775,7 +1786,7 @@ export function isAllInSituation(hand, holeCards) {
   if (!hand || !hand.players || hand.phase === 'awarded') return false;
   const nf = hand.players.filter((p) => p.status !== 'folded');
   if (nf.length < 2) return false;
-  const hasAllIn = nf.some((p) => p.status === 'allin') || hand.currentPlayer === -1;
+  const hasAllIn = nf.some((p) => p.status === 'allin') || bettingFrozen(hand);
   if (!hasAllIn) return false;
   if (!holeCards) return false;
   return nf.every((p) => holeCards[p.id] && holeCardsComplete(hand, holeCards[p.id]));

@@ -32,7 +32,7 @@ import {
 } from '@/lib/liveSync';
 import {
   startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots,
-  positionForSeat, getButtonIndex, money, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds,
+  positionForSeat, getButtonIndex, money, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen,
 } from '@/lib/poker';
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
@@ -55,7 +55,7 @@ export default function PokerTracker() {
   const [showRebuy, setShowRebuy] = useState(false);
   const [showReentry, setShowReentry] = useState(false);
   const [showLateEntry, setShowLateEntry] = useState(false);
-  const [freezeStacks, setFreezeStacks] = useState(false);
+  const [freezeStacks, setFreezeStacks] = useState(true);
   const [helpMode, setHelpMode] = useState(false);
   const [frozenStacks, setFrozenStacks] = useState({});
   const [discards, setDiscards] = useState({});
@@ -896,7 +896,8 @@ export default function PokerTracker() {
   }
 
   const hasAllIn = nonFolded.length >= 2 && nonFolded.some((p) => p.status === 'allin');
-  const showHoleEntry = hand && hand.phase !== 'awarded' && nonFolded.length >= 2 && hand.currentPlayer === -1 && (hasAllIn || hand.phase === 'ended');
+  const frozen = hand ? bettingFrozen(hand) : false;
+  const showHoleEntry = hand && hand.phase !== 'awarded' && nonFolded.length >= 2 && hand.currentPlayer === -1 && (hasAllIn || frozen || hand.phase === 'ended');
   const showDiscardStep = hand && hand.variant === 'crazy_pineapple' && hand.cpNeedsDiscard && !hand.cpDiscarded && hand.currentPlayer === -1 && hand.phase !== 'awarded' && hand.communityCards.length >= 3 && nonFolded.length >= 2 && nonFolded.every((p) => holeCards[p.id] && holeCards[p.id].length === 3);
   const isCash = hand?.mode === 'cash';
   const lowGame = variantMeta(variant).group === 'low';
