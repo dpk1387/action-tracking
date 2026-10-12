@@ -355,7 +355,15 @@ export function bettingFrozen(h) {
   const nf = h.players.filter((p) => p.status !== 'folded');
   if (nf.length < 2) return true;
   const activeWithChips = nf.filter((p) => p.status === 'active' && p.stack > 0);
-  return activeWithChips.length <= 1;
+  if (activeWithChips.length === 0) return true;
+  if (activeWithChips.length === 1) {
+    const p = activeWithChips[0];
+    if (h.currentBet > 0) {
+      return p.currentBet >= h.currentBet && p.hasActed;
+    }
+    return true;
+  }
+  return false;
 }
 
 export function streetComplete(h) {

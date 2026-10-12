@@ -30,7 +30,7 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
       smallBlind: suggestion.smallBlind,
       bigBlind: suggestion.bigBlind,
       ante: isBBA ? suggestion.bigBlind : (isTraditional ? suggestAnte(suggestion.bigBlind) : 0),
-      minutes: 20,
+      minutes: '',
     }]);
   };
 

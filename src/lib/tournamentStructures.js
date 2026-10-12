@@ -32,7 +32,7 @@ export function firstBreakLevelNum(schedule = []) {
   return 4;
 }
 
-const lvl = (sb, bb, min = 20) => ({
+const lvl = (sb, bb, min = '') => ({
   type: 'level',
   smallBlind: sb,
   bigBlind: bb,

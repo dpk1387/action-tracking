@@ -195,7 +195,7 @@ export default function StacksBar({
                   <AnimatedAmount
                     value={stackFor(p)}
                     currency={currency}
-                    animate={freezeStacks}
+                    animate
                     formatter={(val, cur) => (cur ? `${cur}${Number(val || 0).toLocaleString('en-US')}` : Number(val || 0).toLocaleString('en-US'))}
                   />
                 </div>

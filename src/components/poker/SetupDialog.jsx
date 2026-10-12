@@ -291,7 +291,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           smallBlind: parseAmount(l.smallBlind) ?? Number(l.smallBlind),
           bigBlind: parseAmount(l.bigBlind) ?? Number(l.bigBlind),
           ante: isBBA ? (parseAmount(l.bigBlind) ?? Number(l.bigBlind)) : anteType === 'none' ? 0 : anteType === 'traditional' ? (l.ante != null && l.ante !== '' ? (parseAmount(l.ante) ?? Number(l.ante)) : suggestAnte(l.bigBlind)) : (parseAmount(l.ante) ?? Number(l.ante || 0)),
-          minutes: Number(l.minutes) > 0 ? Number(l.minutes) : 20,
+          minutes: l.minutes === '' || l.minutes == null ? '' : (Number(l.minutes) > 0 ? Number(l.minutes) : ''),
         };
       })
     });

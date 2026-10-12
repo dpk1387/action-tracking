@@ -68,6 +68,18 @@ function AllInBoardCard({ card, anim, delay, style }) {
   }
   const red = SUIT_RED[card.suit];
   const animClass = anim || '';
+  if (!animClass) {
+    return (
+      <div
+        className={`w-9 h-12 rounded-lg bg-white border border-slate-300 flex flex-col items-center justify-center font-bold shadow-lg select-none shrink-0 ${
+          red ? 'text-rose-600' : 'text-slate-900'
+        }`}
+      >
+        <span className="text-[11px] leading-none">{rankDisplay(card.rank)}</span>
+        <span className="text-xs leading-none mt-0.5">{SUIT_SYMBOL[card.suit]}</span>
+      </div>
+    );
+  }
   return (
     <div
       className={`relative w-9 h-12 rounded-lg ${animClass}`}

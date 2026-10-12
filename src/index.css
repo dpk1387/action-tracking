@@ -8,6 +8,35 @@
   }
 }
 
+/* Light mode overrides */
+.light {
+  --lm-bg: #f1f5f9;
+  --lm-surface: #ffffff;
+  --lm-border: #cbd5e1;
+  --lm-text: #1e293b;
+  --lm-muted: #64748b;
+  --lm-accent: #059669;
+}
+.light body { background-color: var(--lm-bg); color: var(--lm-text); }
+.light .bg-\[\#121417\] { background-color: var(--lm-bg) !important; }
+.light .bg-\[\#1e2227\] { background-color: var(--lm-surface) !important; }
+.light .bg-\[\#15181d\] { background-color: #f8fafc !important; }
+.light .bg-\[\#2a2f37\] { background-color: #e2e8f0 !important; }
+.light .bg-\[\#363c45\] { background-color: #cbd5e1 !important; }
+.light .border-\[\#2a2f37\] { border-color: var(--lm-border) !important; }
+.light .text-white { color: var(--lm-text) !important; }
+.light .text-slate-300 { color: var(--lm-muted) !important; }
+.light .text-slate-400 { color: #94a3b8 !important; }
+.light .text-slate-500 { color: #94a3b8 !important; }
+.light .text-emerald-300 { color: #059669 !important; }
+.light .text-emerald-400 { color: #047857 !important; }
+.light .text-rose-300 { color: #e11d48 !important; }
+.light .text-rose-400 { color: #be123c !important; }
+.light .text-amber-300 { color: #d97706 !important; }
+.light .text-sky-300 { color: #0284c7 !important; }
+.light .text-cyan-300 { color: #0891b2 !important; }
+.light .divide-slate-700\/50 { border-color: #e2e8f0 !important; }
+
 /* Community-card deal animations: burn + sequential deal + flip + spread */
 @keyframes burn-card {
   0% { opacity: 0; transform: translateX(280%) scale(0.7); }

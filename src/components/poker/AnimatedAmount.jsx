@@ -21,7 +21,7 @@ export default function AnimatedAmount({ value, currency, animate, className, fo
     const len = target.length;
     setRevealed(1);
     setTyping(true);
-    const charDelay = 22;
+    const charDelay = 44;
     let i = 1;
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {

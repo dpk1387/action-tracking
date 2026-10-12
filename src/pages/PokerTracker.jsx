@@ -22,7 +22,7 @@ import BreakDialog from '@/components/poker/BreakDialog';
 import GameOverScreen from '@/components/poker/GameOverScreen';
 import HelpHover from '@/components/HelpHover';
 import SetLevelDialog from '@/components/poker/SetLevelDialog';
-import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, HelpCircle } from 'lucide-react';
+import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, HelpCircle, Sun, Moon } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { sessionStore } from '@/lib/sessionStore';
 import { useAuth } from '@/lib/AuthContext';
@@ -73,6 +73,13 @@ export default function PokerTracker() {
   const [showSetLevel, setShowSetLevel] = useState(false);
   const [bonusApplied, setBonusApplied] = useState(false);
   const [sevenTwoFoldWinner, setSevenTwoFoldWinner] = useState(null);
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem('poker-dark') !== 'light'; } catch { return true; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('poker-dark', darkMode ? 'dark' : 'light'); } catch {}
+  }, [darkMode]);
 
   const offeredRaceRef = useRef(null);
   const recordedHandNumbers = useRef(new Set());
@@ -956,7 +963,7 @@ export default function PokerTracker() {
   }
 
   return (
-    <div className="min-h-screen bg-[#121417] text-white">
+    <div className={darkMode ? "min-h-screen bg-[#121417] text-white" : "min-h-screen bg-slate-100 text-slate-900"}>
       <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1083,6 +1090,14 @@ export default function PokerTracker() {
             </button>
             <button onClick={handleEndHand} className="rounded-lg bg-[#c94c4c] hover:bg-[#d95959] text-sm px-3 py-2 cursor-pointer">
               End hand
+            </button>
+            <button
+              onClick={() => setDarkMode((v) => !v)}
+              className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors ${darkMode ? 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-300' : 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-700'}`}
+              title="Toggle light/dark"
+            >
+              {darkMode ? <Sun size={15} /> : <Moon size={15} />}
+              {darkMode ? 'Light' : 'Dark'}
             </button>
             <button onClick={() => setShowEndSession(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 flex items-center gap-1 cursor-pointer">
               <Power size={16} /> End session
