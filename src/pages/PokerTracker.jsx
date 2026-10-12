@@ -22,7 +22,7 @@ import BreakDialog from '@/components/poker/BreakDialog';
 import GameOverScreen from '@/components/poker/GameOverScreen';
 import HelpHover from '@/components/HelpHover';
 import SetLevelDialog from '@/components/poker/SetLevelDialog';
-import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, HelpCircle, Sun, Moon } from 'lucide-react';
+import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, HelpCircle, Sun, Moon, Clock } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { sessionStore } from '@/lib/sessionStore';
 import { useAuth } from '@/lib/AuthContext';
@@ -76,6 +76,160 @@ export default function PokerTracker() {
   const [darkMode, setDarkMode] = useState(() => {
     try { return localStorage.getItem('poker-dark') !== 'light'; } catch { return true; }
   });
+
+  // Action Clock System
+  const [shotClockEnabled, setShotClockEnabled] = useState(true);
+  const [calledClockActive, setCalledClockActive] = useState(false);
+  const [actionClockSecondsLeft, setActionClockSecondsLeft] = useState(null);
+  const [actionClockTotal, setActionClockTotal] = useState(null);
+  const [actionClockType, setActionClockType] = useState(null); // 'shot_clock' | 'call_clock'
+
+  const getBaseActionSeconds = (h) => {
+    const cfg = h?.clockConfig;
+    if (!cfg) return 30;
+    if (cfg.timeBankMode === 'single') {
+      return Number(cfg.singleSeconds) || 30;
+    }
+    if (h.street === 'preflop') {
+      return Number(cfg.preflopSeconds) || 20;
+    }
+    if (cfg.postflopSplitStreet) {
+      if (h.street === 'flop') return Number(cfg.flopSeconds) || 40;
+      if (h.street === 'turn') return Number(cfg.turnSeconds) || 40;
+      if (h.street === 'river') return Number(cfg.riverSeconds) || 40;
+    }
+    return Number(cfg.postflopSeconds) || 40;
+  };
+
+  const handleCallClock = () => {
+    if (!hand || hand.currentPlayer < 0) return;
+    if (calledClockActive) {
+      setCalledClockActive(false);
+      setActionClockSecondsLeft(null);
+      setActionClockTotal(null);
+      setActionClockType(null);
+      return;
+    }
+    const sec = Number(hand.clockConfig?.callClockSeconds) || 60;
+    setCalledClockActive(true);
+    setActionClockSecondsLeft(sec);
+    setActionClockTotal(sec);
+    setActionClockType('call_clock');
+  };
+
+  const handleUseTimeBank = (playerId) => {
+    if (!hand) return;
+    setHand((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        players: prev.players.map((p) => {
+          if (p.id === playerId) {
+            const banks = p.timeBanks ?? prev.clockConfig?.initialTimeBanks ?? 3;
+            if (banks <= 0) return p;
+            return { ...p, timeBanks: banks - 1, usedBanks: (p.usedBanks || 0) + 1 };
+          }
+          return p;
+        }),
+      };
+    });
+    if (hand.currentPlayer >= 0 && hand.players[hand.currentPlayer]?.id === playerId) {
+      const baseSec = getBaseActionSeconds(hand);
+      setActionClockSecondsLeft(baseSec);
+      setActionClockTotal(baseSec);
+    }
+  };
+
+  const handleAdjustTimeBanks = (playerId, delta) => {
+    if (!hand) return;
+    setHand((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        players: prev.players.map((p) => {
+          if (p.id === playerId) {
+            const banks = Math.max(0, (p.timeBanks ?? prev.clockConfig?.initialTimeBanks ?? 3) + delta);
+            return { ...p, timeBanks: banks };
+          }
+          return p;
+        }),
+      };
+    });
+  };
+
+  const currentActionKey = hand && hand.phase === 'playing' && hand.currentPlayer >= 0
+    ? `${hand.handNumber}-${hand.street}-${hand.currentPlayer}`
+    : null;
+
+  useEffect(() => {
+    setCalledClockActive(false);
+
+    if (!hand || hand.phase !== 'playing' || hand.currentPlayer < 0) {
+      setActionClockSecondsLeft(null);
+      setActionClockTotal(null);
+      setActionClockType(null);
+      return;
+    }
+
+    const clockSys = hand.clockConfig?.clockSystem || 'call_clock';
+    if (clockSys === 'time_banks' && shotClockEnabled) {
+      const baseSec = getBaseActionSeconds(hand);
+      setActionClockSecondsLeft(baseSec);
+      setActionClockTotal(baseSec);
+      setActionClockType('shot_clock');
+    } else {
+      setActionClockSecondsLeft(null);
+      setActionClockTotal(null);
+      setActionClockType(null);
+    }
+  }, [currentActionKey, shotClockEnabled, hand?.clockConfig?.clockSystem]);
+
+  useEffect(() => {
+    if (actionClockSecondsLeft == null) return;
+    if (!hand || hand.phase !== 'playing' || hand.currentPlayer < 0) return;
+
+    if (actionClockSecondsLeft <= 0) {
+      const cp = hand.players[hand.currentPlayer];
+      if (!cp) return;
+
+      if (actionClockType === 'shot_clock') {
+        const banks = cp.timeBanks ?? hand.clockConfig?.initialTimeBanks ?? 3;
+        if (banks > 0) {
+          // Automatically deduct 1 time bank, increment usedBanks, and reset timer
+          setHand((prev) => {
+            if (!prev || prev.currentPlayer < 0) return prev;
+            return {
+              ...prev,
+              players: prev.players.map((p, idx) =>
+                idx === prev.currentPlayer
+                  ? { ...p, timeBanks: Math.max(0, (p.timeBanks ?? 3) - 1), usedBanks: (p.usedBanks || 0) + 1 }
+                  : p
+              ),
+            };
+          });
+          const baseSec = getBaseActionSeconds(hand);
+          setActionClockSecondsLeft(baseSec);
+          setActionClockTotal(baseSec);
+          return;
+        }
+      }
+
+      // If out of time banks or called clock expired: auto-fold if facing a bet, auto-check if facing no bet
+      const toCall = (hand.currentBet || 0) - (cp.currentBet || 0);
+      setCalledClockActive(false);
+      setActionClockSecondsLeft(null);
+      setActionClockTotal(null);
+      setActionClockType(null);
+      handleAction(toCall > 0 ? 'fold' : 'check');
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setActionClockSecondsLeft((prev) => (prev != null && prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [actionClockSecondsLeft, actionClockType, hand]);
 
   useEffect(() => {
     try { localStorage.setItem('poker-dark', darkMode ? 'dark' : 'light'); } catch {}
@@ -233,6 +387,11 @@ export default function PokerTracker() {
         addOnChips: cfg.addOnChips,
         pendingLevelIdx: Math.min(prev.pendingLevelIdx || 0, Math.max(0, newSchedule.length - 1)),
         tLevel: Math.min(prev.tLevel || 0, Math.max(0, newSchedule.length - 1)),
+        clockConfig: cfg.clockConfig || prev.clockConfig,
+        players: prev.players.map((p) => ({
+          ...p,
+          timeBanks: p.timeBanks != null ? p.timeBanks : (cfg.clockConfig?.initialTimeBanks ?? 3),
+        })),
       }));
       setShowSetup(false);
       return;
@@ -259,6 +418,7 @@ export default function PokerTracker() {
   };
 
   const handleAction = (type, amount) => {
+    setCalledClockActive(false);
     const next = applyAction(hand, hand.currentPlayer, type, amount);
     if (next && next.error) { setActionError(next.error); return; }
     setActionError('');
@@ -292,10 +452,12 @@ export default function PokerTracker() {
     const savedTurn = hand.currentPlayer;
     const next = applyAction(hand, playerId, 'fold');
     if (next && next.error) { setActionError(next.error); return; }
-    if (savedTurn >= 0 && next.players[savedTurn] && next.players[savedTurn].status === 'active') {
+    if (bettingFrozen(next)) {
+      next.currentPlayer = -1;
+    } else if (savedTurn >= 0 && next.players[savedTurn] && next.players[savedTurn].status === 'active' && next.players[savedTurn].stack > 0) {
       next.currentPlayer = savedTurn;
     } else {
-      next.currentPlayer = next.players.findIndex((p) => p.status === 'active');
+      next.currentPlayer = next.players.findIndex((p) => p.status === 'active' && p.stack > 0);
     }
     setActionError('');
     pushHistory(hand);
@@ -902,25 +1064,53 @@ export default function PokerTracker() {
     }
   }
 
-  const hasAllIn = nonFolded.length >= 2 && nonFolded.some((p) => p.status === 'allin');
+  const hasAllIn = nonFolded.length >= 2 && nonFolded.some((p) => p.status === 'allin' || p.stack === 0);
   const frozen = hand ? bettingFrozen(hand) : false;
-  const allInFrozen = hand && nonFolded.length >= 2 && nonFolded.every((p) => p.status === 'allin' || p.status === 'folded');
-  const showHoleEntry = hand && hand.phase !== 'awarded' && nonFolded.length >= 2 && hand.currentPlayer === -1 && isAllInShowdown(hand);
+  const allInFrozen = hand && nonFolded.length >= 2 && (nonFolded.every((p) => p.status === 'allin' || p.stack === 0) || (frozen && hand.currentPlayer === -1));
+  const showHoleEntry = hand && hand.phase !== 'awarded' && nonFolded.length >= 2 && hand.currentPlayer === -1 && (hasAllIn || frozen || isAllInShowdown(hand) || hand.phase === 'ended');
   const showDiscardStep = hand && hand.variant === 'crazy_pineapple' && hand.cpNeedsDiscard && !hand.cpDiscarded && hand.currentPlayer === -1 && hand.phase !== 'awarded' && hand.communityCards.length >= 3 && nonFolded.length >= 2 && nonFolded.every((p) => holeCards[p.id] && holeCards[p.id].length === 3);
   const isCash = hand?.mode === 'cash';
   const lowGame = variantMeta(variant).group === 'low';
 
-  const highlightKeys = useMemo(() => {
-    if (!hand || hand.phase !== 'awarded') return null;
-    const set = new Set();
-    hand.winners.forEach((w) => {
-      const hole = holeCards[w.playerId];
-      if (!hole) return;
-      const board = w.board === 'b' ? (hand.boardB || []) : hand.communityCards;
-      const cards = winningHandCards(hole, board, hand.variant);
-      if (cards) cards.forEach((c) => set.add(c.rank + c.suit));
-    });
-    return set.size ? set : null;
+  const { highlightKeys, winningPlayerIds } = useMemo(() => {
+    const keys = new Set();
+    const winIds = new Set();
+    if (!hand) return { highlightKeys: null, winningPlayerIds: winIds };
+
+    if (hand.phase === 'awarded' && hand.winners) {
+      hand.winners.forEach((w) => {
+        winIds.add(w.playerId);
+        const hole = holeCards[w.playerId];
+        if (!hole) return;
+        const board = w.board === 'b' ? (hand.boardB || []) : hand.communityCards;
+        const cards = winningHandCards(hole, board, hand.variant);
+        if (cards) cards.forEach((c) => keys.add(c.rank + c.suit));
+      });
+    } else {
+      const auto = tryAutoWinners(hand, holeCards);
+      if (auto && auto.winnersA) {
+        Object.values(auto.winnersA).flat().forEach((pid) => {
+          winIds.add(pid);
+          const hole = holeCards[pid];
+          if (!hole) return;
+          const cards = winningHandCards(hole, hand.communityCards, hand.variant);
+          if (cards) cards.forEach((c) => keys.add(c.rank + c.suit));
+        });
+        if (auto.winnersB) {
+          Object.values(auto.winnersB).flat().forEach((pid) => {
+            winIds.add(pid);
+            const hole = holeCards[pid];
+            if (!hole) return;
+            const cards = winningHandCards(hole, hand.boardB || [], hand.variant);
+            if (cards) cards.forEach((c) => keys.add(c.rank + c.suit));
+          });
+        }
+      }
+    }
+    return {
+      highlightKeys: keys.size ? keys : null,
+      winningPlayerIds: winIds,
+    };
   }, [hand, holeCards]);
 
   const activeSideGames = (() => {
@@ -1061,6 +1251,35 @@ export default function PokerTracker() {
               <HelpCircle size={15} />
               Help Mode {helpMode ? 'ON' : 'OFF'}
             </button>
+            {/* Clock system control button */}
+            {hand?.clockConfig?.clockSystem === 'time_banks' ? (
+              <button
+                onClick={() => setShotClockEnabled((v) => !v)}
+                className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors ${
+                  shotClockEnabled
+                    ? 'bg-amber-800 border border-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.25)]'
+                    : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-300'
+                }`}
+                title="Turn on/off shot clock"
+              >
+                <Clock size={15} />
+                Shot clock {shotClockEnabled ? 'ON' : 'OFF'}
+              </button>
+            ) : (
+              <button
+                onClick={handleCallClock}
+                disabled={!hand || hand.phase !== 'playing' || hand.currentPlayer < 0}
+                className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  calledClockActive
+                    ? 'bg-rose-800 border border-rose-500 text-white animate-pulse'
+                    : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-300'
+                }`}
+                title="Call clock on active player"
+              >
+                <Clock size={15} />
+                {calledClockActive ? `Clock: ${actionClockSecondsLeft}s` : 'Call clock'}
+              </button>
+            )}
             {!isCash && (
               <button
                 onClick={handleNextLevelClick}
@@ -1197,7 +1416,13 @@ export default function PokerTracker() {
           equity={equity}
           hideAmounts={hideAmounts}
           highlightKeys={highlightKeys}
+          winningPlayerIds={winningPlayerIds}
           helpMode={helpMode}
+          clockSecondsLeft={actionClockSecondsLeft}
+          clockActive={actionClockSecondsLeft != null}
+          clockType={actionClockType}
+          onUseTimeBank={handleUseTimeBank}
+          onAdjustTimeBanks={handleAdjustTimeBanks}
         />
 
         {hand.phase !== 'awarded' ? (
@@ -1213,6 +1438,68 @@ export default function PokerTracker() {
             )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div>
+                {/* Active Action Clock Banner */}
+                {actionClockSecondsLeft != null && hand?.currentPlayer >= 0 && (
+                  <div className="mb-3 rounded-xl border border-slate-700 bg-[#161a22] p-3 shadow-lg flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm ${
+                        actionClockSecondsLeft > 10
+                          ? 'bg-emerald-950/80 border border-emerald-500 text-emerald-300'
+                          : actionClockSecondsLeft > 5
+                          ? 'bg-amber-950/90 border border-amber-500 text-amber-300 animate-pulse'
+                          : 'bg-rose-950 border border-rose-500 text-rose-200 animate-bounce'
+                      }`}>
+                        <Clock size={16} />
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400 font-medium">
+                          {actionClockType === 'call_clock' ? 'Clock Called on' : 'Action on'}{' '}
+                          <span className="text-white font-bold">{hand.players[hand.currentPlayer]?.name}</span>
+                        </div>
+                        {hand.clockConfig?.clockSystem === 'time_banks' && (
+                          <div className="text-[11px] text-slate-400 flex items-center gap-2">
+                            <span>
+                              Time banks: {hand.players[hand.currentPlayer]?.timeBanks ?? hand.clockConfig?.initialTimeBanks ?? 3} left
+                            </span>
+                            {hand.players[hand.currentPlayer]?.usedBanks > 0 && (
+                              <span className="text-amber-300 font-semibold">
+                                ({hand.players[hand.currentPlayer]?.usedBanks} used)
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className={`text-2xl font-black font-mono tracking-tight ${
+                        actionClockSecondsLeft > 10
+                          ? 'text-emerald-400'
+                          : actionClockSecondsLeft > 5
+                          ? 'text-amber-400'
+                          : 'text-rose-400'
+                      }`}>
+                        {actionClockSecondsLeft}s
+                      </div>
+                      {actionClockType === 'call_clock' ? (
+                        <button
+                          onClick={handleCallClock}
+                          className="text-xs px-2.5 py-1 rounded-md bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-700 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleUseTimeBank(hand.players[hand.currentPlayer]?.id)}
+                          disabled={(hand.players[hand.currentPlayer]?.timeBanks ?? 3) <= 0}
+                          className="text-xs px-2.5 py-1 rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-amber-300 border border-amber-500/40 disabled:opacity-40 cursor-pointer"
+                          title="Use a time bank now to extend time"
+                        >
+                          + Use Bank
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <ActionRecorder hand={hand} onAction={handleAction} />
                 <div className="mt-2">
                   <OutOfTurnRecorder hand={hand} onFoldOutOfTurn={handleFoldOutOfTurn} onRecordOutOfTurn={handleRecordOutOfTurn} />

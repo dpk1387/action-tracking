@@ -23,6 +23,23 @@ export default function NextLevelDialog({
 
   useEffect(() => { if (isBBA) setAnte(bb); }, [isBBA, bb]);
 
+function calcOddChips(stack, retired, replacement) {
+  if (retired <= 0 || replacement <= 0 || stack <= 0) return 0;
+  const precision = Math.max(
+    (retired.toString().split('.')[1] || '').length,
+    (replacement.toString().split('.')[1] || '').length,
+    (stack.toString().split('.')[1] || '').length
+  );
+  const factor = Math.pow(10, Math.min(precision, 6));
+  const sInt = Math.round(stack * factor);
+  const repInt = Math.round(replacement * factor);
+  const retInt = Math.round(retired * factor);
+
+  if (repInt <= 0 || retInt <= 0) return 0;
+  const rem = sInt % repInt;
+  return Math.round(rem / retInt);
+}
+
   const rv = parseAmount(retiringValue) ?? (Number(retiringValue) || 0);
   const xv = parseAmount(raceValue) ?? (Number(raceValue) || 0);
 
@@ -30,9 +47,7 @@ export default function NextLevelDialog({
     if (rv <= 0 || xv <= 0) return [];
     return (players || []).map((p) => {
       const stack = Number(p.stack) || 0;
-      const remainder = stack % xv;
-      const count = remainder / rv;
-      return Number.isInteger(count) ? count : Math.floor(count);
+      return calcOddChips(stack, rv, xv);
     });
   }, [players, rv, xv]);
 

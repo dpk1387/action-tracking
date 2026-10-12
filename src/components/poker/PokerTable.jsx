@@ -77,7 +77,11 @@ function MiniCard({ card, highlight }) {
   );
 }
 
-export default function PokerTable({ hand, positions, pot, sidePots = [], holeCards, equity, hideAmounts, highlightKeys, stackVisibleIds, showPot, alwaysShow, helpMode = false }) {
+export default function PokerTable({
+  hand, positions, pot, sidePots = [], holeCards, equity, hideAmounts,
+  highlightKeys, winningPlayerIds, stackVisibleIds, showPot, alwaysShow,
+  helpMode = false, clockSecondsLeft, clockActive, clockType, onUseTimeBank, onAdjustTimeBanks
+}) {
   const n = hand.players.length;
   const tableSize = hand.tableSize || n;
   const cur = hand.currency;
@@ -128,10 +132,16 @@ export default function PokerTable({ hand, positions, pot, sidePots = [], holeCa
     };
   })();
 
-  const [showClassic, setShowClassic] = useState(false);
+  const [viewMode, setViewMode] = useState('classic');
+  const hadAllInRef = useRef(false);
+
+  const inAllIn = isAllInShowdown(hand);
   useEffect(() => {
-    setShowClassic(false);
-  }, [hand?.handNumber]);
+    if (inAllIn && !hadAllInRef.current) {
+      hadAllInRef.current = true;
+      setViewMode('allin');
+    }
+  }, [inAllIn]);
 
   const seenRef = useRef({});
   const boardLenRef = useRef(-1);
@@ -148,13 +158,20 @@ export default function PokerTable({ hand, positions, pot, sidePots = [], holeCa
     boardLenRef.current = total;
   }, [hand.communityCards, hand.boardB, hand.doubleBoard]);
 
-  const inAllIn = isAllInShowdown(hand);
-
   const allInOuts = useMemo(() => {
     return calculateAllInOuts(hand, holeCards);
   }, [hand, holeCards]);
 
-  if (inAllIn && !showClassic) {
+  const resolvedWinningIds = useMemo(() => {
+    if (winningPlayerIds && winningPlayerIds.size) return winningPlayerIds;
+    const set = new Set();
+    if (hand?.winners) {
+      hand.winners.forEach((w) => set.add(w.playerId));
+    }
+    return set;
+  }, [winningPlayerIds, hand?.winners]);
+
+  if (viewMode === 'allin') {
     return (
       <AllInView
         hand={hand}
@@ -163,7 +180,17 @@ export default function PokerTable({ hand, positions, pot, sidePots = [], holeCa
         sidePots={sidePots}
         pot={pot}
         positions={positions}
-        onToggleClassic={() => setShowClassic(true)}
+        highlightKeys={highlightKeys}
+        winningPlayerIds={resolvedWinningIds}
+        onToggleClassic={() => setViewMode('classic')}
+        hideAmounts={hideAmounts}
+        stackVisibleIds={stackVisibleIds}
+        alwaysShow={alwaysShow}
+        showPot={showPot}
+        clockSecondsLeft={clockSecondsLeft}
+        clockActive={clockActive}
+        clockType={clockType}
+        onUseTimeBank={onUseTimeBank}
       />
     );
   }
@@ -187,15 +214,14 @@ export default function PokerTable({ hand, positions, pot, sidePots = [], holeCa
 
   return (
     <div className="relative w-full h-[480px] rounded-[2rem] border-2 border-[#364536] bg-[#1e2227] overflow-hidden">
-      {inAllIn && (
-        <button
-          type="button"
-          onClick={() => setShowClassic(false)}
-          className="absolute top-4 right-4 z-30 px-3 py-1 rounded-md bg-rose-950/90 border border-rose-500 text-rose-300 font-bold text-xs shadow-lg cursor-pointer hover:bg-rose-900 transition-colors animate-pulse"
-        >
-          Switch to All-In View
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => setViewMode('allin')}
+        className="absolute top-4 right-4 z-30 px-3 py-1.5 rounded-lg bg-[#202630] hover:bg-[#2d3644] border border-[#364536] hover:border-emerald-500/50 text-emerald-400 font-bold text-xs shadow-lg cursor-pointer transition-colors flex items-center gap-1.5"
+      >
+        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        All-In View
+      </button>
       <div className="absolute inset-6 rounded-[1.6rem] bg-[#232a23]/40" />
       {Array.from({ length: tableSize }, (_, seatIdx) => {
         const seatNum = seatIdx + 1;
@@ -292,6 +318,53 @@ export default function PokerTable({ hand, positions, pot, sidePots = [], holeCa
               <div className={`text-[10px] mt-0.5 ${atRisk ? 'text-rose-200' : folded ? 'text-slate-500' : 'text-emerald-300/80'}`}>
                 {laText}
               </div>
+              {/* Clock countdown for active player */}
+              {isCurrent && clockSecondsLeft != null && (
+                <div
+                  className={`mt-1 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono tracking-wider flex items-center justify-center gap-1 shadow-sm ${
+                    clockSecondsLeft > 10
+                      ? 'bg-emerald-950/90 border border-emerald-500/80 text-emerald-300'
+                      : clockSecondsLeft > 5
+                      ? 'bg-amber-950/90 border border-amber-500 text-amber-300 animate-pulse'
+                      : 'bg-rose-950 border border-rose-500 text-rose-200 animate-bounce'
+                  }`}
+                >
+                  <span>⏱</span>
+                  <span>{clockSecondsLeft}s</span>
+                </div>
+              )}
+
+              {/* Time banks display and buttons */}
+              {hand.clockConfig?.clockSystem === 'time_banks' && (
+                <div className="flex items-center justify-center gap-1 mt-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onUseTimeBank && onUseTimeBank(p.id);
+                    }}
+                    title={`Time banks left: ${p.timeBanks ?? hand.clockConfig?.initialTimeBanks ?? 3} (Click to use bank)`}
+                    className="px-1.5 py-0.5 rounded bg-black/60 hover:bg-black/90 border border-slate-700 text-[9px] font-mono font-bold text-slate-300 hover:text-white flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <span>⏱</span>
+                    <span>{p.timeBanks ?? hand.clockConfig?.initialTimeBanks ?? 3}</span>
+                  </button>
+                  {p.usedBanks > 0 && Array.from({ length: p.usedBanks }).map((_, bIdx) => (
+                    <button
+                      key={bIdx}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAdjustTimeBanks && onAdjustTimeBanks(p.id, 1);
+                      }}
+                      title={`Used time bank #${bIdx + 1} (Click to refund)`}
+                      className="px-1 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-[8px] font-bold text-amber-300 whitespace-nowrap cursor-pointer"
+                    >
+                      ⏱ Bank {bIdx + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
               {(() => {
                 const oot = Array.isArray(hand.ootActions) && hand.ootActions.find((o) => o.playerId === p.id && o.street === hand.street);
                 if (!oot) return null;

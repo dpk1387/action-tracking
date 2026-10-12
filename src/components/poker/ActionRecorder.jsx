@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { money, parseAmount } from '@/lib/poker';
+import { money, parseAmount, bettingFrozen } from '@/lib/poker';
 
 export default function ActionRecorder({ hand, onAction }) {
   const [amount, setAmount] = useState('');
@@ -26,7 +26,7 @@ export default function ActionRecorder({ hand, onAction }) {
     onAction('fold');
   };
 
-  if (!cp) {
+  if (!cp || bettingFrozen(hand)) {
     return (
       <div className="rounded-xl border border-[#2a2f37] bg-[#1e2227] p-4">
         <div className="text-sm text-slate-400">

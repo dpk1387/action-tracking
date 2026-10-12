@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Minus, FolderOpen } from 'lucide-react';
+import { X, Plus, Minus, FolderOpen, Clock, Trash2 } from 'lucide-react';
 import BlindScheduleEditor from '@/components/poker/BlindScheduleEditor';
 import ChipDenominationPicker from '@/components/poker/ChipDenominationPicker';
 import HelpHover from '@/components/HelpHover';
@@ -93,6 +93,20 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [error, setError] = useState('');
   const [showStructures, setShowStructures] = useState(false);
 
+  // Clock system configuration
+  const [clockSystem, setClockSystem] = useState(initial?.clockConfig?.clockSystem || 'call_clock');
+  const [callClockSeconds, setCallClockSeconds] = useState(initial?.clockConfig?.callClockSeconds ?? 60);
+  const [timeBankMode, setTimeBankMode] = useState(initial?.clockConfig?.timeBankMode || 'split'); // 'single' | 'split'
+  const [singleSeconds, setSingleSeconds] = useState(initial?.clockConfig?.singleSeconds ?? 30);
+  const [preflopSeconds, setPreflopSeconds] = useState(initial?.clockConfig?.preflopSeconds ?? 20);
+  const [postflopSplitStreet, setPostflopSplitStreet] = useState(initial?.clockConfig?.postflopSplitStreet || false);
+  const [postflopSeconds, setPostflopSeconds] = useState(initial?.clockConfig?.postflopSeconds ?? 40);
+  const [flopSeconds, setFlopSeconds] = useState(initial?.clockConfig?.flopSeconds ?? 40);
+  const [turnSeconds, setTurnSeconds] = useState(initial?.clockConfig?.turnSeconds ?? 40);
+  const [riverSeconds, setRiverSeconds] = useState(initial?.clockConfig?.riverSeconds ?? 40);
+  const [initialTimeBanks, setInitialTimeBanks] = useState(initial?.clockConfig?.initialTimeBanks ?? 3);
+  const [addOnRules, setAddOnRules] = useState(() => initial?.clockConfig?.addOnRules || []);
+
   const buildStructureData = () => ({
     mode, variant, gameType, currency, stackInBB, seatCount,
     smallBlind, bigBlind, anteType, anteAmount,
@@ -104,6 +118,20 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     tournamentFormat, maxReEntries, lateRegEnabled, lateRegLevel,
     rebuyPrice, rebuyChips, allowAddOn, addOnPrice, addOnChips,
     schedule,
+    clockConfig: {
+      clockSystem,
+      callClockSeconds: Number(callClockSeconds) || 60,
+      timeBankMode,
+      singleSeconds: Number(singleSeconds) || 30,
+      preflopSeconds: Number(preflopSeconds) || 20,
+      postflopSplitStreet: !!postflopSplitStreet,
+      postflopSeconds: Number(postflopSeconds) || 40,
+      flopSeconds: Number(flopSeconds) || 40,
+      turnSeconds: Number(turnSeconds) || 40,
+      riverSeconds: Number(riverSeconds) || 40,
+      initialTimeBanks: Math.max(0, Number(initialTimeBanks) || 0),
+      addOnRules,
+    },
   });
 
   const applyStructure = (d) => {
@@ -149,6 +177,20 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     if (d.addOnPrice != null) setAddOnPrice(d.addOnPrice);
     if (d.addOnChips != null) setAddOnChips(d.addOnChips);
     if (Array.isArray(d.schedule)) setSchedule(d.schedule);
+    if (d.clockConfig) {
+      if (d.clockConfig.clockSystem) setClockSystem(d.clockConfig.clockSystem);
+      if (d.clockConfig.callClockSeconds != null) setCallClockSeconds(d.clockConfig.callClockSeconds);
+      if (d.clockConfig.timeBankMode) setTimeBankMode(d.clockConfig.timeBankMode);
+      if (d.clockConfig.singleSeconds != null) setSingleSeconds(d.clockConfig.singleSeconds);
+      if (d.clockConfig.preflopSeconds != null) setPreflopSeconds(d.clockConfig.preflopSeconds);
+      if (d.clockConfig.postflopSplitStreet != null) setPostflopSplitStreet(d.clockConfig.postflopSplitStreet);
+      if (d.clockConfig.postflopSeconds != null) setPostflopSeconds(d.clockConfig.postflopSeconds);
+      if (d.clockConfig.flopSeconds != null) setFlopSeconds(d.clockConfig.flopSeconds);
+      if (d.clockConfig.turnSeconds != null) setTurnSeconds(d.clockConfig.turnSeconds);
+      if (d.clockConfig.riverSeconds != null) setRiverSeconds(d.clockConfig.riverSeconds);
+      if (d.clockConfig.initialTimeBanks != null) setInitialTimeBanks(d.clockConfig.initialTimeBanks);
+      if (Array.isArray(d.clockConfig.addOnRules)) setAddOnRules(d.clockConfig.addOnRules);
+    }
     setError('');
   };
 
@@ -293,7 +335,26 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           ante: isBBA ? (parseAmount(l.bigBlind) ?? Number(l.bigBlind)) : anteType === 'none' ? 0 : anteType === 'traditional' ? (l.ante != null && l.ante !== '' ? (parseAmount(l.ante) ?? Number(l.ante)) : suggestAnte(l.bigBlind)) : (parseAmount(l.ante) ?? Number(l.ante || 0)),
           minutes: l.minutes === '' || l.minutes == null ? '' : (Number(l.minutes) > 0 ? Number(l.minutes) : ''),
         };
-      })
+      }),
+      clockConfig: {
+        clockSystem,
+        callClockSeconds: Number(callClockSeconds) || 60,
+        timeBankMode,
+        singleSeconds: Number(singleSeconds) || 30,
+        preflopSeconds: Number(preflopSeconds) || 20,
+        postflopSplitStreet: !!postflopSplitStreet,
+        postflopSeconds: Number(postflopSeconds) || 40,
+        flopSeconds: Number(flopSeconds) || 40,
+        turnSeconds: Number(turnSeconds) || 40,
+        riverSeconds: Number(riverSeconds) || 40,
+        initialTimeBanks: Math.max(0, Number(initialTimeBanks) || 0),
+        addOnRules: addOnRules.map((r) => ({
+          id: r.id || String(Math.random()),
+          triggerType: r.triggerType || 'level',
+          triggerValue: Number(r.triggerValue) || 1,
+          chips: Number(r.chips) || 1,
+        })),
+      },
     });
   };
 
@@ -573,6 +634,272 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             </div>
           </div>
         )}
+        {/* Action Clock System Setup */}
+        <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Clock size={16} className="text-emerald-400" />
+              <span className="text-sm font-semibold text-white">Action Clock System</span>
+            </div>
+            <span className="text-[11px] text-slate-400">
+              {clockSystem === 'call_clock' ? 'Passive Clock' : 'Shot Clock with Time Banks'}
+            </span>
+          </div>
+
+          <div className="mb-3">
+            <label className="text-xs text-slate-400 block mb-1">Clock Mode</label>
+            <select
+              value={clockSystem}
+              onChange={(e) => setClockSystem(e.target.value)}
+              className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+            >
+              <option value="call_clock">Call the clock (default)</option>
+              <option value="time_banks">Time banks (Shot clock)</option>
+            </select>
+          </div>
+
+          {clockSystem === 'call_clock' ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="w-48">
+                <label className="text-xs text-slate-400 block mb-1">Time given when clock is called</label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min="5"
+                    max="300"
+                    value={callClockSeconds}
+                    onChange={(e) => setCallClockSeconds(e.target.value)}
+                    className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                  />
+                  <span className="text-xs text-slate-400">seconds (default 60s)</span>
+                </div>
+              </div>
+              <div className="text-[11px] text-slate-500 max-w-sm mt-1">
+                A "Clock" button appears in the control menu. When pressed, the active player gets {callClockSeconds || 60}s to act before auto fold/check.
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Timing mode selector */}
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Base Action Timing</label>
+                <select
+                  value={timeBankMode}
+                  onChange={(e) => setTimeBankMode(e.target.value)}
+                  className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                >
+                  <option value="single">1. One base time for all actions</option>
+                  <option value="split">2. Separate preflop and postflop times</option>
+                </select>
+              </div>
+
+              {timeBankMode === 'single' ? (
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Base time for all actions</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="5"
+                      max="180"
+                      value={singleSeconds}
+                      onChange={(e) => setSingleSeconds(e.target.value)}
+                      className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                    />
+                    <span className="text-xs text-slate-400">seconds (default 30s)</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 bg-[#181c22] p-2.5 rounded-lg border border-[#252a33]">
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">Preflop time</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="5"
+                        max="180"
+                        value={preflopSeconds}
+                        onChange={(e) => setPreflopSeconds(e.target.value)}
+                        className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                      />
+                      <span className="text-xs text-slate-400">seconds (default 20s)</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">Postflop configuration</label>
+                    <div className="flex flex-wrap items-center gap-4 mb-2">
+                      <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                        <input
+                          type="radio"
+                          name="postflopSplit"
+                          checked={!postflopSplitStreet}
+                          onChange={() => setPostflopSplitStreet(false)}
+                          className="accent-[#4a5a4a]"
+                        />
+                        One time for all postflop streets (default 40s)
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                        <input
+                          type="radio"
+                          name="postflopSplit"
+                          checked={postflopSplitStreet}
+                          onChange={() => setPostflopSplitStreet(true)}
+                          className="accent-[#4a5a4a]"
+                        />
+                        Split postflop by street
+                      </label>
+                    </div>
+
+                    {!postflopSplitStreet ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="5"
+                          max="180"
+                          value={postflopSeconds}
+                          onChange={(e) => setPostflopSeconds(e.target.value)}
+                          className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                        />
+                        <span className="text-xs text-slate-400">seconds for flop, turn, and river</span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[11px] text-slate-400 block mb-1">Flop time (s)</label>
+                          <input
+                            type="number"
+                            min="5"
+                            max="180"
+                            value={flopSeconds}
+                            onChange={(e) => setFlopSeconds(e.target.value)}
+                            className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-slate-400 block mb-1">Turn time (s)</label>
+                          <input
+                            type="number"
+                            min="5"
+                            max="180"
+                            value={turnSeconds}
+                            onChange={(e) => setTurnSeconds(e.target.value)}
+                            className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-slate-400 block mb-1">River time (s)</label>
+                          <input
+                            type="number"
+                            min="5"
+                            max="180"
+                            value={riverSeconds}
+                            onChange={(e) => setRiverSeconds(e.target.value)}
+                            className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Time Banks */}
+              <div className="pt-2 border-t border-[#252a33]">
+                <div className="flex items-center gap-2 mb-2">
+                  <label className="text-xs text-slate-400">Initial time bank chips per player:</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="20"
+                    value={initialTimeBanks}
+                    onChange={(e) => setInitialTimeBanks(e.target.value)}
+                    className="w-16 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm text-center"
+                  />
+                  <span className="text-xs text-slate-500">(default 3 chips)</span>
+                </div>
+
+                {/* Add-on rules schedule */}
+                <div className="mt-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs text-slate-300 font-medium">Scheduled Time Bank Chip Add-ons</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAddOnRules((prev) => [
+                          ...prev,
+                          { id: Date.now().toString(), triggerType: 'level', triggerValue: 4, chips: 1 },
+                        ])
+                      }
+                      className="flex items-center gap-1 rounded bg-[#2a2f37] hover:bg-[#363c45] text-emerald-400 text-xs px-2 py-1 cursor-pointer"
+                    >
+                      <Plus size={13} /> Add chip rule
+                    </button>
+                  </div>
+                  {addOnRules.length === 0 ? (
+                    <div className="text-[11px] text-slate-500 italic">
+                      No chips will be added on later (default). You can schedule chips after certain levels or during breaks.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {addOnRules.map((rule, idx) => (
+                        <div
+                          key={rule.id || idx}
+                          className="flex items-center gap-2 bg-[#1b2027] border border-[#2a2f37] rounded-md px-2.5 py-1.5 text-xs text-white"
+                        >
+                          <span className="text-slate-400">Add</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="10"
+                            value={rule.chips}
+                            onChange={(e) =>
+                              setAddOnRules((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, chips: Number(e.target.value) || 1 } : r))
+                              )
+                            }
+                            className="w-12 rounded bg-[#15181d] border border-[#2a2f37] px-1.5 py-0.5 text-center text-white"
+                          />
+                          <span className="text-slate-400">chip{rule.chips > 1 ? 's' : ''}</span>
+                          <select
+                            value={rule.triggerType}
+                            onChange={(e) =>
+                              setAddOnRules((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, triggerType: e.target.value } : r))
+                              )
+                            }
+                            className="rounded bg-[#15181d] border border-[#2a2f37] px-2 py-0.5 text-white"
+                          >
+                            <option value="level">After level</option>
+                            <option value="break">During break</option>
+                          </select>
+                          <input
+                            type="number"
+                            min="1"
+                            value={rule.triggerValue}
+                            onChange={(e) =>
+                              setAddOnRules((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, triggerValue: Number(e.target.value) || 1 } : r))
+                              )
+                            }
+                            className="w-14 rounded bg-[#15181d] border border-[#2a2f37] px-1.5 py-0.5 text-center text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setAddOnRules((prev) => prev.filter((_, i) => i !== idx))}
+                            className="ml-auto text-rose-400 hover:text-rose-300 p-1 cursor-pointer"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
         {error && <div className="text-sm text-rose-400 mb-3">{error}</div>}
         <button onClick={save} className="w-full rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white font-medium py-2.5 transition-colors cursor-pointer">
           Start hand

@@ -3,8 +3,22 @@ import { X } from 'lucide-react';
 import { money } from '@/lib/poker';
 import { levelTimerState, formatTimer } from '@/lib/levelTimer';
 
-function gcd(a, b) { a = Math.abs(a); b = Math.abs(b); while (b) { [a, b] = [b, a % b]; } return a; }
-function lcm(a, b) { return (a * b) / gcd(a, b); }
+function calcOddChips(stack, retired, replacement) {
+  if (retired <= 0 || replacement <= 0 || stack <= 0) return 0;
+  const precision = Math.max(
+    (retired.toString().split('.')[1] || '').length,
+    (replacement.toString().split('.')[1] || '').length,
+    (stack.toString().split('.')[1] || '').length
+  );
+  const factor = Math.pow(10, Math.min(precision, 6));
+  const sInt = Math.round(stack * factor);
+  const repInt = Math.round(replacement * factor);
+  const retInt = Math.round(retired * factor);
+
+  if (repInt <= 0 || retInt <= 0) return 0;
+  const rem = sInt % repInt;
+  return Math.round(rem / retInt);
+}
 
 export default function BreakDialog({ hand, onChipRace, onResume, onClose, now, race: raceOverride, dismissOverride }) {
   const brkItem = (hand?.blindSchedule || [])[hand?.tLevel];
@@ -15,12 +29,9 @@ export default function BreakDialog({ hand, onChipRace, onResume, onClose, now, 
 
   const autoOddChips = useMemo(() => {
     if (!hasRace) return [];
-    const cycle = lcm(retired, replacement);
     return (hand?.players || []).map((p) => {
       const stack = Number(p.stack) || 0;
-      const remainder = stack % cycle;
-      const count = Math.floor(remainder / retired);
-      return count;
+      return calcOddChips(stack, retired, replacement);
     });
   }, [hand?.players, hasRace, retired, replacement]);
 

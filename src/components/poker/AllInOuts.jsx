@@ -39,7 +39,7 @@ export default function AllInOuts({ hand, nonFolded, holeCards }) {
                     : 'bg-rose-950 border border-rose-500/60 text-rose-300'
                 }`}
               >
-                {count > 0 ? `${count} ${count === 1 ? 'out' : 'outs'}` : 'Drawing dead (0 outs)'}
+                {count > 0 ? `${count} ${count === 1 ? 'out' : 'outs'}` : '0 outs'}
               </span>
             </div>
 
