@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import SetupDialog from '@/components/poker/SetupDialog';
+import MysteryBountyDialog from '@/components/poker/MysteryBountyDialog';
 import StacksBar from '@/components/poker/StacksBar';
 import PokerTable from '@/components/poker/PokerTable';
 import ActionRecorder from '@/components/poker/ActionRecorder';
@@ -20,9 +21,9 @@ import StartScreen from '@/components/poker/StartScreen';
 import EndSessionDialog from '@/components/poker/EndSessionDialog';
 import BreakDialog from '@/components/poker/BreakDialog';
 import GameOverScreen from '@/components/poker/GameOverScreen';
-import HelpHover from '@/components/HelpHover';
 import SetLevelDialog from '@/components/poker/SetLevelDialog';
-import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, HelpCircle, Sun, Moon, Clock } from 'lucide-react';
+import BombPotDialog from '@/components/poker/BombPotDialog';
+import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, Clock, UserPlus } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { sessionStore } from '@/lib/sessionStore';
 import { useAuth } from '@/lib/AuthContext';
@@ -32,7 +33,7 @@ import {
 } from '@/lib/liveSync';
 import {
   startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots,
-  positionForSeat, getButtonIndex, money, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown,
+  positionForSeat, getButtonIndex, money, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone,
 } from '@/lib/poker';
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
@@ -55,8 +56,10 @@ export default function PokerTracker() {
   const [showRebuy, setShowRebuy] = useState(false);
   const [showReentry, setShowReentry] = useState(false);
   const [showLateEntry, setShowLateEntry] = useState(false);
+  const [showBombPotModal, setShowBombPotModal] = useState(false);
+  const [runTimesInput, setRunTimesInput] = useState('2');
+  const [runTimesApplied, setRunTimesApplied] = useState(1);
   const [freezeStacks, setFreezeStacks] = useState(true);
-  const [helpMode, setHelpMode] = useState(false);
   const [frozenStacks, setFrozenStacks] = useState({});
   const [discards, setDiscards] = useState({});
   const [actionError, setActionError] = useState('');
@@ -73,9 +76,6 @@ export default function PokerTracker() {
   const [showSetLevel, setShowSetLevel] = useState(false);
   const [bonusApplied, setBonusApplied] = useState(false);
   const [sevenTwoFoldWinner, setSevenTwoFoldWinner] = useState(null);
-  const [darkMode, setDarkMode] = useState(() => {
-    try { return localStorage.getItem('poker-dark') !== 'light'; } catch { return true; }
-  });
 
   // Action Clock System
   const [shotClockEnabled, setShotClockEnabled] = useState(true);
@@ -134,9 +134,9 @@ export default function PokerTracker() {
       };
     });
     if (hand.currentPlayer >= 0 && hand.players[hand.currentPlayer]?.id === playerId) {
-      const baseSec = getBaseActionSeconds(hand);
-      setActionClockSecondsLeft(baseSec);
-      setActionClockTotal(baseSec);
+      const addSec = Number(hand.clockConfig?.timeBankAddSeconds) || 30;
+      setActionClockSecondsLeft((curr) => (curr != null ? curr + addSec : addSec));
+      setActionClockTotal((curr) => (curr != null ? curr + addSec : addSec));
     }
   };
 
@@ -207,9 +207,9 @@ export default function PokerTracker() {
               ),
             };
           });
-          const baseSec = getBaseActionSeconds(hand);
-          setActionClockSecondsLeft(baseSec);
-          setActionClockTotal(baseSec);
+          const addSec = Number(hand.clockConfig?.timeBankAddSeconds) || 30;
+          setActionClockSecondsLeft(addSec);
+          setActionClockTotal(addSec);
           return;
         }
       }
@@ -240,7 +240,7 @@ export default function PokerTracker() {
   const { isAuthenticated } = useAuth();
   const saveStatus = useSyncExternalStore(subscribeSaveStatus, getSaveStatus, getSaveStatus);
 
-  useEffect(() => { sessionStore.set({ config, hand, gameOver }); }, [config, hand, gameOver]);
+  useEffect(() => { sessionStore.set({ config, hand, gameOver, hideAmounts }); }, [config, hand, gameOver, hideAmounts]);
 
   useEffect(() => {
     if (!hand || hand.mode !== 'tournament') return;
@@ -360,39 +360,72 @@ export default function PokerTracker() {
     setConfig(cfg);
     if (hand) {
       const newSchedule = cfg.blindSchedule || [];
-      setConfig(cfg);
-      setHand((prev) => ({
-        ...prev,
-        blindSchedule: newSchedule,
-        levelConfig: cfg.levelConfig || prev.levelConfig,
-        chipDenominations: cfg.chipDenominations || prev.chipDenominations,
-        currency: cfg.currency || prev.currency,
-        gameType: cfg.gameType || prev.gameType,
-        doubleBoard: !!cfg.doubleBoard,
-        allowStraddle: !!cfg.allowStraddle,
-        allowMultiStraddle: !!cfg.allowMultiStraddle,
-        mandatoryStraddle: !!cfg.mandatoryStraddle,
-        smallBet: Number(cfg.smallBet) || prev.smallBet,
-        bigBet: Number(cfg.bigBet) || prev.bigBet,
-        flMaxRaises: Number(cfg.flMaxRaises) || prev.flMaxRaises,
-        lateRegEnabled: cfg.lateRegEnabled !== false,
-        lateRegLevel: cfg.lateRegLevel || prev.lateRegLevel,
-        tournamentFormat: cfg.tournamentFormat || prev.tournamentFormat,
-        maxReEntries: cfg.maxReEntries ?? prev.maxReEntries,
-        startingStack: cfg.startingStack || prev.startingStack,
-        rebuyPrice: cfg.rebuyPrice,
-        rebuyChips: cfg.rebuyChips,
-        allowAddOn: cfg.allowAddOn,
-        addOnPrice: cfg.addOnPrice,
-        addOnChips: cfg.addOnChips,
-        pendingLevelIdx: Math.min(prev.pendingLevelIdx || 0, Math.max(0, newSchedule.length - 1)),
-        tLevel: Math.min(prev.tLevel || 0, Math.max(0, newSchedule.length - 1)),
-        clockConfig: cfg.clockConfig || prev.clockConfig,
-        players: prev.players.map((p) => ({
-          ...p,
-          timeBanks: p.timeBanks != null ? p.timeBanks : (cfg.clockConfig?.initialTimeBanks ?? 3),
-        })),
-      }));
+      const updatedPlayers = cfg.players.map((cp, idx) => {
+        const existing = hand.players.find((p) => p.seat === cp.seat) || hand.players[idx];
+        return {
+          id: idx,
+          name: cp.name || (existing ? existing.name : `Player ${cp.seat}`),
+          seat: cp.seat,
+          initialStack: cp.stack,
+          stack: cp.stack,
+          currentBet: existing?.currentBet || 0,
+          totalBet: existing?.totalBet || 0,
+          status: existing?.status || 'active',
+          lastAction: existing?.lastAction || null,
+          timeBanks: existing?.timeBanks != null ? existing.timeBanks : (cfg.clockConfig?.initialTimeBanks ?? 3),
+          usedBanks: existing?.usedBanks || 0,
+        };
+      });
+
+      const snap = {};
+      updatedPlayers.forEach((p) => { snap[p.seat] = p.stack; });
+      setFrozenStacks(snap);
+
+      setHand((prev) => {
+        let updated = {
+          ...prev,
+          players: updatedPlayers,
+          blindSchedule: newSchedule,
+          levelConfig: cfg.levelConfig || prev.levelConfig,
+          chipDenominations: cfg.chipDenominations || prev.chipDenominations,
+          currency: cfg.currency || prev.currency,
+          gameType: cfg.gameType || prev.gameType,
+          mode: cfg.mode || prev.mode,
+          variant: cfg.variant || prev.variant,
+          tableSize: cfg.tableSize || prev.tableSize,
+          doubleBoard: !!cfg.doubleBoard,
+          allowStraddle: !!cfg.allowStraddle,
+          allowMultiStraddle: !!cfg.allowMultiStraddle,
+          mandatoryStraddle: !!cfg.mandatoryStraddle,
+          bombPot: !!cfg.bombPot,
+          bombAmount: cfg.bombAmount || prev.bombAmount,
+          smallBlind: cfg.smallBlind || prev.smallBlind,
+          bigBlind: cfg.bigBlind || prev.bigBlind,
+          anteAmount: cfg.anteAmount != null ? cfg.anteAmount : prev.anteAmount,
+          anteType: cfg.anteType || prev.anteType,
+          smallBet: Number(cfg.smallBet) || prev.smallBet,
+          bigBet: Number(cfg.bigBet) || prev.bigBet,
+          flMaxRaises: Number(cfg.flMaxRaises) || prev.flMaxRaises,
+          lateRegEnabled: cfg.lateRegEnabled !== false,
+          lateRegLevel: cfg.lateRegLevel || prev.lateRegLevel,
+          tournamentFormat: cfg.tournamentFormat || prev.tournamentFormat,
+          maxReEntries: cfg.maxReEntries ?? prev.maxReEntries,
+          startingStack: cfg.startingStack || prev.startingStack,
+          rebuyPrice: cfg.rebuyPrice,
+          rebuyChips: cfg.rebuyChips,
+          allowAddOn: cfg.allowAddOn,
+          addOnPrice: cfg.addOnPrice,
+          addOnChips: cfg.addOnChips,
+          bountyConfig: cfg.bountyConfig || prev.bountyConfig,
+          pendingLevelIdx: Math.min(prev.pendingLevelIdx || 0, Math.max(0, newSchedule.length - 1)),
+          tLevel: Math.min(prev.tLevel || 0, Math.max(0, newSchedule.length - 1)),
+          clockConfig: cfg.clockConfig || prev.clockConfig,
+        };
+        if (updated.actionHistory && updated.actionHistory.length === 0 && updated.street === 'preflop') {
+          updated = recomputeBlindsForLevel(updated, updated.smallBlind, updated.bigBlind, updated.anteAmount);
+        }
+        return updated;
+      });
       setShowSetup(false);
       return;
     }
@@ -543,12 +576,63 @@ export default function PokerTracker() {
     setBonusApplied(true);
   };
 
+  const handleConfirmBombPot = ({ variant: bVariant, boardCount, anteAmount, immediate }) => {
+    const patch = {
+      bombPot: true,
+      bombAmount: anteAmount,
+      bombBoards: boardCount,
+      doubleBoard: boardCount >= 2,
+      variant: bVariant || 'plo6',
+    };
+    if (immediate && hand) {
+      const remaining = hand.players.filter((p) => p.status !== 'busted' && p.stack > 0);
+      const bHand = startHand({
+        ...config,
+        players: remaining,
+        ...patch,
+      });
+      setHand(bHand);
+      setHoleCards({});
+      setHistory([]);
+      setRunTimesApplied(1);
+      setRunTimesInput('2');
+    } else {
+      setHand((prev) => (prev ? { ...prev, nextHandBombPot: patch } : null));
+    }
+  };
+
+  const handleApplyRunTimes = () => {
+    const times = Math.max(1, Math.min(3, Number(runTimesInput) || 2));
+    setRunTimesApplied(times);
+    setHand((prev) => {
+      if (!prev) return prev;
+      const h = clone(prev);
+      h.runTimes = times;
+      h.doubleBoard = times >= 2;
+      if (times >= 2 && (!h.boardB || !h.boardB.length)) {
+        h.boardB = [{ hidden: true }, { hidden: true }, { hidden: true }];
+      }
+      if (times >= 3 && (!h.boardC || !h.boardC.length)) {
+        h.boardC = [{ hidden: true }, { hidden: true }, { hidden: true }];
+      }
+      return h;
+    });
+  };
+
   const proceedToNextHand = () => {
     if (hand && hand.phase === 'awarded') {
       updateFrozenStacks(hand);
       recordHand(hand);
     }
-    const res = advanceToNextHand(hand);
+    let currentHand = hand;
+    if (hand && hand.nextHandBombPot) {
+      currentHand = {
+        ...hand,
+        ...hand.nextHandBombPot,
+        nextHandBombPot: null,
+      };
+    }
+    const res = advanceToNextHand(currentHand);
     setHistory([]);
     if (res.gameOver) {
       setGameOver(res.remaining[0]);
@@ -564,6 +648,8 @@ export default function PokerTracker() {
     resetHoleCards();
     setBonusApplied(false);
     setSevenTwoFoldWinner(null);
+    setRunTimesApplied(1);
+    setRunTimesInput('2');
   };
 
   const handleEndHand = () => {
@@ -601,6 +687,62 @@ export default function PokerTracker() {
     setHand(awarded);
     setShowEnd(false);
     advanceAfterAward(awarded);
+  };
+
+  const handleAwardMysteryBounty = (amount) => {
+    if (!hand || !hand.pendingMysteryBounties || !hand.pendingMysteryBounties.length) return;
+    const item = hand.pendingMysteryBounties[0];
+    const amt = Number(amount) || 0;
+    const huntersCount = (item.hunterIds && item.hunterIds.length) || 1;
+    const share = amt / huntersCount;
+
+    setHand((prev) => {
+      if (!prev) return prev;
+      const updatedPlayers = prev.players.map((p) => {
+        if (item.hunterIds && item.hunterIds.includes(p.id)) {
+          return {
+            ...p,
+            bountiesCount: (p.bountiesCount || 0) + 1,
+            bountyEarnings: (p.bountyEarnings || 0) + share,
+          };
+        }
+        return p;
+      });
+
+      const updatedAwards = [
+        ...(prev.bountyAwards || []),
+        ...item.hunterIds.map((hid, idx) => ({
+          victimId: item.victimId,
+          victimName: item.victimName,
+          hunterId: hid,
+          hunterName: item.hunterNames[idx] || `Hunter ${hid}`,
+          amount: share,
+          isMystery: true,
+          potIndex: item.potIndex,
+        })),
+      ];
+
+      const winnerNames = item.hunterNames.join(' & ');
+      const note = `Mystery Bounty: ${winnerNames} drew ${money(amt, prev.currency)} eliminating ${item.victimName}${huntersCount > 1 ? ` (${money(share, prev.currency)} each)` : ''}`;
+
+      return {
+        ...prev,
+        players: updatedPlayers,
+        bountyAwards: updatedAwards,
+        pendingMysteryBounties: (prev.pendingMysteryBounties || []).slice(1),
+        sideNotes: [...(prev.sideNotes || []), note],
+      };
+    });
+  };
+
+  const handleDismissMysteryBounty = () => {
+    setHand((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        pendingMysteryBounties: (prev.pendingMysteryBounties || []).slice(1),
+      };
+    });
   };
 
   const handleUndo = () => {
@@ -685,11 +827,14 @@ export default function PokerTracker() {
     if (idx === (hand.blindLevel || 0)) return;
     const lvl = sched[idx];
     if (!lvl || lvl.type === 'break') return;
+    const bbVal = parseAmount(lvl.bigBlind) ?? Number(lvl.bigBlind) ?? 0;
+    const sbVal = parseAmount(lvl.smallBlind) ?? Number(lvl.smallBlind) ?? 0;
+    const anteVal = parseAmount(lvl.ante) ?? Number(lvl.ante) ?? 0;
     const ante = hand.anteType === 'bba'
-      ? Number(lvl.bigBlind)
-      : (lvl.ante != null && lvl.ante !== '' ? Number(lvl.ante) : 0);
-    const newSB = Number(lvl.smallBlind);
-    const newBB = Number(lvl.bigBlind);
+      ? bbVal
+      : (lvl.ante != null && lvl.ante !== '' ? anteVal : 0);
+    const newSB = sbVal;
+    const newBB = bbVal;
     if (newSB === hand.smallBlind && newBB === hand.bigBlind && ante === hand.anteAmount) return;
     setHand(recomputeBlindsForLevel(hand, newSB, newBB, ante));
   }, [hand]);
@@ -744,7 +889,9 @@ export default function PokerTracker() {
     }
     if (oot.kind === 'aggressive' && oot.amount && Number(oot.amount) > 0) {
       const amt = Number(oot.amount);
-      const minRaise = hand.currentBet === 0 ? hand.bigBlind : hand.currentBet + (hand.lastRaiseAmount || hand.bigBlind);
+      const n = hand.players.length;
+      const buttonIndex = hand.players.findIndex((pl) => pl.seat === hand.buttonSeat);
+      const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
       if (amt >= minRaise && amt <= cp.currentBet + cp.stack) {
         const t = setTimeout(() => {
           pushHistory(hand);
@@ -844,12 +991,15 @@ export default function PokerTracker() {
         pendingRace: null,
       };
       if (nextLevel && nextLevel.type !== 'break') {
+        const nextBB = parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0;
+        const nextSB = parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0;
+        const nextAnte = parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? 0;
         const ante = prev.anteType === 'bba'
-          ? Number(nextLevel.bigBlind)
-          : (nextLevel.ante != null && nextLevel.ante !== '' ? Number(nextLevel.ante) : 0);
-        base.smallBlind = Number(nextLevel.smallBlind);
-        base.bigBlind = Number(nextLevel.bigBlind);
-        base.anteAmount = prev.anteType === 'bba' ? Number(nextLevel.bigBlind) : ante;
+          ? nextBB
+          : (nextLevel.ante != null && nextLevel.ante !== '' ? nextAnte : 0);
+        base.smallBlind = nextSB;
+        base.bigBlind = nextBB;
+        base.anteAmount = prev.anteType === 'bba' ? nextBB : ante;
         base.blindLevel = nextIdx;
       }
       return base.blindsPosted === false ? postBlinds(base) : base;
@@ -907,14 +1057,17 @@ export default function PokerTracker() {
         }
       }
       if (noAction && !inBreak && targetLevel && targetLevel.type !== 'break') {
+        const targetBB = parseAmount(targetLevel.bigBlind) ?? Number(targetLevel.bigBlind) ?? 0;
+        const targetSB = parseAmount(targetLevel.smallBlind) ?? Number(targetLevel.smallBlind) ?? 0;
+        const targetAnte = parseAmount(targetLevel.ante) ?? Number(targetLevel.ante) ?? 0;
         const ante = prev.anteType === 'bba'
-          ? Number(targetLevel.bigBlind)
-          : (targetLevel.ante != null && targetLevel.ante !== '' ? Number(targetLevel.ante) : 0);
-        base.smallBlind = Number(targetLevel.smallBlind);
-        base.bigBlind = Number(targetLevel.bigBlind);
-        base.anteAmount = prev.anteType === 'bba' ? Number(targetLevel.bigBlind) : ante;
+          ? targetBB
+          : (targetLevel.ante != null && targetLevel.ante !== '' ? targetAnte : 0);
+        base.smallBlind = targetSB;
+        base.bigBlind = targetBB;
+        base.anteAmount = prev.anteType === 'bba' ? targetBB : ante;
         base.blindLevel = targetIdx;
-        return recomputeBlindsForLevel(base, Number(targetLevel.smallBlind), Number(targetLevel.bigBlind), ante);
+        return recomputeBlindsForLevel(base, targetSB, targetBB, ante);
       }
       return base;
     });
@@ -995,8 +1148,32 @@ export default function PokerTracker() {
     saveNow({ config, hand, gameOver, equity, hideAmounts, holeCards });
   };
 
+  const handleDismissSavedGuest = async () => {
+    setSavedSession(null);
+    setSavedUpdatedAt(null);
+    setResumeChecked(true);
+    try {
+      await discardSavedSession();
+    } catch {}
+    try {
+      localStorage.removeItem('poker-live-state');
+      localStorage.removeItem('poker-live-share-code');
+      const raw = localStorage.getItem('poker_saved_sessions_store');
+      if (raw) {
+        const store = JSON.parse(raw);
+        const filtered = {};
+        Object.entries(store).forEach(([k, v]) => {
+          if (v && v.hostId) filtered[k] = v;
+        });
+        localStorage.setItem('poker_saved_sessions_store', JSON.stringify(filtered));
+      }
+    } catch {}
+    handleNewSession();
+  };
+
   const handleNewSession = () => {
     setSavedSession(null);
+    setSavedUpdatedAt(null);
     setResumeChecked(true);
     recordedHandNumbers.current.clear();
     sessionStore.reset();
@@ -1064,10 +1241,15 @@ export default function PokerTracker() {
     }
   }
 
-  const hasAllIn = nonFolded.length >= 2 && nonFolded.some((p) => p.status === 'allin' || p.stack === 0);
+  const activeWithChips = nonFolded.filter((p) => p.status !== 'allin' && p.stack > 0).length;
   const frozen = hand ? bettingFrozen(hand) : false;
-  const allInFrozen = hand && nonFolded.length >= 2 && (nonFolded.every((p) => p.status === 'allin' || p.stack === 0) || (frozen && hand.currentPlayer === -1));
-  const showHoleEntry = hand && hand.phase !== 'awarded' && nonFolded.length >= 2 && hand.currentPlayer === -1 && (hasAllIn || frozen || isAllInShowdown(hand) || hand.phase === 'ended');
+  const isAllInAllPlayers = nonFolded.length >= 2 && frozen;
+  const isRiverEnd = hand?.street === 'river' && (hand.currentPlayer === -1 || frozen);
+  const showHoleEntry = hand && hand.phase !== 'awarded' && nonFolded.length >= 2 && (
+    hand.phase === 'ended' ||
+    (hand.currentPlayer === -1 && (isAllInAllPlayers || isRiverEnd)) ||
+    (frozen && isAllInAllPlayers)
+  );
   const showDiscardStep = hand && hand.variant === 'crazy_pineapple' && hand.cpNeedsDiscard && !hand.cpDiscarded && hand.currentPlayer === -1 && hand.phase !== 'awarded' && hand.communityCards.length >= 3 && nonFolded.length >= 2 && nonFolded.every((p) => holeCards[p.id] && holeCards[p.id].length === 3);
   const isCash = hand?.mode === 'cash';
   const lowGame = variantMeta(variant).group === 'low';
@@ -1117,13 +1299,16 @@ export default function PokerTracker() {
     if (!hand) return [];
     const out = [];
     const sg = hand.sideGames || {};
-    if (sg.killPot) out.push('Kill');
-    if (sg.halfKill) out.push('Half-kill');
-    if (hand.bombPot) out.push('Bomb');
-    if (sg.sevenTwo) out.push('7-2');
-    if (sg.bounty) out.push('Bounty');
-    if (sg.mysteryBounty) out.push('Mystery');
-    if (sg.standUp) out.push('Stand up');
+    if (hand.mode === 'cash') {
+      if (sg.killPot) out.push('Kill');
+      if (sg.halfKill) out.push('Half-kill');
+      if (hand.bombPot) out.push('Bomb');
+      if (sg.sevenTwo) out.push('7-2');
+      if (sg.standUp) out.push('Stand up');
+    } else {
+      if (sg.bounty || hand.bountyConfig?.bounty) out.push('Bounty');
+      if (sg.mysteryBounty || hand.bountyConfig?.mysteryBounty) out.push('Mystery');
+    }
     return out;
   })();
 
@@ -1148,24 +1333,18 @@ export default function PokerTracker() {
         savedGuestUpdatedAt={savedUpdatedAt}
         onNewSession={handleNewSession}
         onResumeSession={isAuthenticated ? handleResumeFromCode : () => handleResume()}
-        onDismissGuest={handleNewSession}
+        onDismissGuest={handleDismissSavedGuest}
       />
     );
   }
 
   return (
-    <div className={`min-h-screen ${darkMode ? 'bg-[#121417] text-white' : 'light bg-slate-100 text-slate-900'}`}>
+    <div className="min-h-screen bg-[#121417] text-white">
       <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-semibold">Live Hand #{hand.handNumber}</h1>
-            <HelpHover sections={[
-              { title: 'Timer & levels', body: 'The countdown shows time left in the current blind level. Pause, rewind (–1m), or fast-forward (+1m) with the buttons. Blinds change at the start of the next hand.' },
-              { title: 'Session & sharing', body: '"Save session" stores this game. "Share" opens a spectator link. "TV view" opens a full-screen display for monitors.' },
-              { title: 'Visibility', body: '"Hide amounts" hides all chip stacks and pot totals from the table view.' },
-              { title: 'Side games', body: 'Tags like Kill, Bomb, 7-2, Bounty, Stand up show when side games are active. Configure them on the Variant & side games page.' },
-            ]} />
             <span className="text-xs text-slate-500 uppercase">{VARIANTS[variant]?.label || "Hold'em"} · {GAME_TYPES[hand.gameType] || 'No Limit'}{hand.doubleBoard ? ' · Double board' : ''}{hand.bombPot ? ' · Bomb pot' : ''}</span>
             {hand.blindSchedule?.length > 0 && (
               <span className="text-xs text-slate-400">
@@ -1208,7 +1387,16 @@ export default function PokerTracker() {
             {isCash && (
               <>
                 <button onClick={() => setShowRebuy(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">Rebuy / Cash out</button>
-                <button onClick={() => setShowLateEntry(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">Late entry</button>
+                <button onClick={() => setShowLateEntry(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5">
+                  <UserPlus size={15} className="text-emerald-400" />
+                  Add player
+                </button>
+                <button
+                  onClick={() => setShowBombPotModal(true)}
+                  className="rounded-lg bg-amber-900/60 hover:bg-amber-800 text-amber-200 border border-amber-700/60 font-semibold text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 shadow"
+                >
+                  💣 Bomb pot
+                </button>
               </>
             )}
             {!isCash && hand?.lateRegEnabled && (
@@ -1239,17 +1427,6 @@ export default function PokerTracker() {
             )}
             <button onClick={() => setShowSetup(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">
               Structure setup
-            </button>
-            <button
-              onClick={() => setHelpMode((v) => !v)}
-              className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors ${
-                helpMode
-                  ? 'bg-emerald-800 border border-emerald-500 text-white shadow-[0_0_8px_rgba(16,185,129,0.25)]'
-                  : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-300'
-              }`}
-            >
-              <HelpCircle size={15} />
-              Help Mode {helpMode ? 'ON' : 'OFF'}
             </button>
             {/* Clock system control button */}
             {hand?.clockConfig?.clockSystem === 'time_banks' ? (
@@ -1311,14 +1488,6 @@ export default function PokerTracker() {
             <button onClick={handleEndHand} className="rounded-lg bg-[#c94c4c] hover:bg-[#d95959] text-sm px-3 py-2 cursor-pointer">
               End hand
             </button>
-            <button
-              onClick={() => setDarkMode((v) => !v)}
-              className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors ${darkMode ? 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-300' : 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-700'}`}
-              title="Toggle light/dark"
-            >
-              {darkMode ? <Sun size={15} /> : <Moon size={15} />}
-              {darkMode ? 'Light' : 'Dark'}
-            </button>
             <button onClick={() => setShowEndSession(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 flex items-center gap-1 cursor-pointer">
               <Power size={16} /> End session
             </button>
@@ -1372,17 +1541,6 @@ export default function PokerTracker() {
           <span className="text-xs text-slate-500 uppercase tracking-wider">Stacks</span>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setHelpMode((v) => !v)}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
-                helpMode
-                  ? 'bg-emerald-900/60 border border-emerald-500 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.25)]'
-                  : 'bg-[#2a2f37] border border-[#2a2f37] text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <HelpCircle size={12} />
-              Help Mode: {helpMode ? 'ON' : 'OFF'}
-            </button>
-            <button
               onClick={() => setFreezeStacks((v) => !v)}
               className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
                 freezeStacks
@@ -1417,7 +1575,7 @@ export default function PokerTracker() {
           hideAmounts={hideAmounts}
           highlightKeys={highlightKeys}
           winningPlayerIds={winningPlayerIds}
-          helpMode={helpMode}
+          helpMode={false}
           clockSecondsLeft={actionClockSecondsLeft}
           clockActive={actionClockSecondsLeft != null}
           clockType={actionClockType}
@@ -1427,20 +1585,25 @@ export default function PokerTracker() {
 
         {hand.phase !== 'awarded' ? (
           <>
-            {showHoleEntry && (
-              <AllInEquity hand={hand} nonFolded={nonFolded} holeCards={holeCards} onHoleChange={handleHoleChange} />
-            )}
-            {showDiscardStep && (
-              <DiscardStep players={nonFolded} holeCards={holeCards} discards={discards} onPick={handlePickDiscard} onConfirm={handleConfirmDiscard} />
-            )}
             {!lowGame && (
               <CommunityCardInput hand={hand} onDeal={handleDeal} onDealHidden={handleDealHidden} onFillBoard={handleFillBoard} holeCards={holeCards} />
             )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div>
-                {/* Active Action Clock Banner */}
+              <div className="space-y-3">
+                {/* 1. Hole Cards */}
+                {showHoleEntry && (
+                  <AllInEquity hand={hand} nonFolded={nonFolded} holeCards={holeCards} onHoleChange={handleHoleChange} />
+                )}
+                {showDiscardStep && (
+                  <DiscardStep players={nonFolded} holeCards={holeCards} discards={discards} onPick={handlePickDiscard} onConfirm={handleConfirmDiscard} />
+                )}
+
+                {/* 2. Action */}
+                <ActionRecorder hand={hand} onAction={handleAction} />
+
+                {/* 3. Time Controls: Active Clock Banner & Dedicated Time Banks Bar */}
                 {actionClockSecondsLeft != null && hand?.currentPlayer >= 0 && (
-                  <div className="mb-3 rounded-xl border border-slate-700 bg-[#161a22] p-3 shadow-lg flex items-center justify-between">
+                  <div className="rounded-xl border border-slate-700 bg-[#161a22] p-3 shadow-lg flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                       <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm ${
                         actionClockSecondsLeft > 10
@@ -1500,8 +1663,90 @@ export default function PokerTracker() {
                     </div>
                   </div>
                 )}
-                <ActionRecorder hand={hand} onAction={handleAction} />
-                <div className="mt-2">
+
+                {/* Dedicated Time Banks Tracker Bar */}
+                {hand?.clockConfig?.clockSystem === 'time_banks' && (
+                  <div className="rounded-xl border border-slate-700/80 bg-[#14181f] p-3 shadow-md">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <Clock size={15} className="text-amber-400" />
+                        <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                          Player Time Banks
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          (+{hand.clockConfig?.timeBankAddSeconds || 30}s per chip)
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-500">
+                        Host +/- controls · Use bank during turn
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {hand.players.map((p, idx) => {
+                        const isCurrent = hand.phase === 'playing' && hand.currentPlayer === idx;
+                        const banksLeft = p.timeBanks ?? hand.clockConfig?.initialTimeBanks ?? 3;
+                        const isFolded = p.status === 'folded';
+                        return (
+                          <div
+                            key={p.id}
+                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
+                              isCurrent
+                                ? 'border-emerald-500/80 bg-[#122b1c] shadow-[0_0_12px_rgba(16,185,129,0.3)] ring-1 ring-emerald-400/60'
+                                : isFolded
+                                ? 'border-slate-800 bg-[#161a22]/60 opacity-60'
+                                : 'border-[#2a323f] bg-[#1a202a]'
+                            }`}
+                          >
+                            <span className="font-semibold text-slate-200 truncate max-w-[90px]" title={p.name}>
+                              {p.name}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-black/50 text-amber-300 font-mono font-bold text-[11px] border border-amber-500/30">
+                              {banksLeft} ⏳
+                            </span>
+                            {p.usedBanks > 0 && (
+                              <span className="text-[9px] text-amber-400/80 font-medium">
+                                ({p.usedBanks} used)
+                              </span>
+                            )}
+                            {isCurrent && (
+                              <button
+                                type="button"
+                                onClick={() => handleUseTimeBank(p.id)}
+                                disabled={banksLeft <= 0}
+                                title={`Use 1 time bank (+${hand.clockConfig?.timeBankAddSeconds || 30}s)`}
+                                className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-[10px] font-bold text-white shadow cursor-pointer"
+                              >
+                                Use
+                              </button>
+                            )}
+                            <div className="flex items-center gap-0.5 ml-1 border-l border-slate-700 pl-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleAdjustTimeBanks(p.id, -1)}
+                                disabled={banksLeft <= 0}
+                                title="Host: Deduct 1 time bank"
+                                className="w-5 h-5 flex items-center justify-center rounded bg-[#252b35] hover:bg-[#333b49] text-slate-400 hover:text-white disabled:opacity-30 cursor-pointer font-bold"
+                              >
+                                -
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleAdjustTimeBanks(p.id, 1)}
+                                title="Host: Grant 1 time bank"
+                                className="w-5 h-5 flex items-center justify-center rounded bg-[#252b35] hover:bg-[#333b49] text-slate-400 hover:text-white cursor-pointer font-bold"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. Out of Turn Action */}
+                <div className="pt-1">
                   <OutOfTurnRecorder hand={hand} onFoldOutOfTurn={handleFoldOutOfTurn} onRecordOutOfTurn={handleRecordOutOfTurn} />
                 </div>
                 {actionError && <div className="mt-2 text-sm text-rose-400">{actionError}</div>}
@@ -1670,6 +1915,14 @@ export default function PokerTracker() {
           hand={hand}
           onApply={handleSetLevel}
           onClose={() => setShowSetLevel(false)}
+        />
+      )}
+      {hand?.pendingMysteryBounties && hand.pendingMysteryBounties.length > 0 && (
+        <MysteryBountyDialog
+          item={hand.pendingMysteryBounties[0]}
+          currency={hand.currency}
+          onAward={handleAwardMysteryBounty}
+          onDismiss={handleDismissMysteryBounty}
         />
       )}
     </div>

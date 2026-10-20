@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { X } from 'lucide-react';
+import { formatKM } from '@/lib/poker';
 
 export default function SetLevelDialog({ hand, onApply, onClose }) {
   const schedule = hand?.blindSchedule || [];
@@ -66,7 +67,7 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
           {segments.map((s) => (
             <option key={s.idx} value={String(s.idx)}>
               {s.label}
-              {s.kind === 'level' ? ` — ${s.smallBlind}/${s.bigBlind}` : ` — ${s.minutes} min`}
+              {s.kind === 'level' ? ` — ${formatKM(s.smallBlind)}/${formatKM(s.bigBlind)}` : ` — ${s.minutes} min`}
             </option>
           ))}
         </select>
@@ -95,7 +96,7 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
               <div>This will start a {selected.minutes}-minute break.</div>
             ) : (
               <div>
-                <div>Blinds: {selected.smallBlind} / {selected.bigBlind}</div>
+                <div>Blinds: {formatKM(selected.smallBlind)} / {formatKM(selected.bigBlind)}</div>
                 {!isMinutes && <div className="text-xs text-slate-500 mt-1">Timer method is {cfg.method} – level counter resets.</div>}
               </div>
             )}
@@ -107,7 +108,7 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
               Missed chip race{missedRaces.length > 1 ? 's' : ''}
             </div>
             <div className="text-[11px] text-amber-300/80">
-              {missedRaces.length} race{missedRaces.length > 1 ? 's' : ''} skipped by this jump ({missedRaces.map((r) => `${r.retired}→${r.replacement}`).join(', ')}).
+              {missedRaces.length} race{missedRaces.length > 1 ? 's' : ''} skipped by this jump ({missedRaces.map((r) => `${formatKM(r.retired)}→${formatKM(r.replacement)}`).join(', ')}).
               The timer will pause and the chip race will be offered after the current hand finishes.
             </div>
           </div>

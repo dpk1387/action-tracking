@@ -1,7 +1,7 @@
 import React from 'react';
 import { Plus, X, ChevronUp, ChevronDown, GripVertical, Coffee } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { suggestAnte } from '@/lib/poker';
+import { suggestAnte, formatKM, parseAmount } from '@/lib/poker';
 import { suggestNextBlinds } from '@/lib/tournamentStructures';
 
 export default function BlindScheduleEditor({ schedule, onChange, anteType, chipDenominations }) {
@@ -17,8 +17,8 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
       if (idx !== i) return l;
       const item = ensureType(l);
       const next = { ...item, [field]: value };
-      if (next.type === 'level' && isBBA) next.ante = Number(next.bigBlind);
-      else if (next.type === 'level' && isTraditional && field === 'bigBlind') next.ante = suggestAnte(Number(value));
+      if (next.type === 'level' && isBBA && field === 'bigBlind') next.ante = value;
+      else if (next.type === 'level' && isTraditional && field === 'bigBlind') next.ante = formatKM(suggestAnte(parseAmount(value) ?? Number(value)));
       return next;
     }));
   };
@@ -105,6 +105,10 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
                                 inputMode="decimal"
                                 value={item.race.retired || ''}
                                 onChange={(e) => setRace(i, { ...item.race, retired: e.target.value })}
+                                onBlur={(e) => {
+                                  const p = parseAmount(e.target.value);
+                                  if (p != null) setRace(i, { ...item.race, retired: formatKM(p) });
+                                }}
                                 placeholder="retire"
                                 className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-1.5 py-1 text-white text-xs"
                               />
@@ -114,6 +118,10 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
                                 inputMode="decimal"
                                 value={item.race.replacement || ''}
                                 onChange={(e) => setRace(i, { ...item.race, replacement: e.target.value })}
+                                onBlur={(e) => {
+                                  const p = parseAmount(e.target.value);
+                                  if (p != null) setRace(i, { ...item.race, replacement: formatKM(p) });
+                                }}
                                 placeholder="replace"
                                 className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-1.5 py-1 text-white text-xs"
                               />
@@ -142,9 +150,40 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
                           <GripVertical size={14} />
                         </span>
                         <span className="text-[11px] text-slate-500 w-6 shrink-0">{levelNum}</span>
-                        <input type="text" inputMode="decimal" value={item.smallBlind} onChange={(e) => updateRow(i, 'smallBlind', e.target.value)} className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm" />
-                        <input type="text" inputMode="decimal" value={item.bigBlind} onChange={(e) => updateRow(i, 'bigBlind', e.target.value)} className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm" />
-                        <input type="text" inputMode="decimal" value={isBBA ? item.bigBlind : (isTraditional ? (item.ante != null && item.ante !== '' ? item.ante : suggestAnte(item.bigBlind)) : (item.ante || 0))} disabled={isBBA || isNone} onChange={(e) => updateRow(i, 'ante', e.target.value)} className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm disabled:opacity-40" />
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={item.smallBlind}
+                          onChange={(e) => updateRow(i, 'smallBlind', e.target.value)}
+                          onBlur={(e) => {
+                            const p = parseAmount(e.target.value);
+                            if (p != null) updateRow(i, 'smallBlind', formatKM(p));
+                          }}
+                          className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm"
+                        />
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={item.bigBlind}
+                          onChange={(e) => updateRow(i, 'bigBlind', e.target.value)}
+                          onBlur={(e) => {
+                            const p = parseAmount(e.target.value);
+                            if (p != null) updateRow(i, 'bigBlind', formatKM(p));
+                          }}
+                          className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm"
+                        />
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={isBBA ? item.bigBlind : (isTraditional ? (item.ante != null && item.ante !== '' ? item.ante : suggestAnte(parseAmount(item.bigBlind) ?? Number(item.bigBlind))) : (item.ante || 0))}
+                          disabled={isBBA || isNone}
+                          onChange={(e) => updateRow(i, 'ante', e.target.value)}
+                          onBlur={(e) => {
+                            const p = parseAmount(e.target.value);
+                            if (p != null) updateRow(i, 'ante', formatKM(p));
+                          }}
+                          className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm disabled:opacity-40"
+                        />
                         <input type="number" min="0" value={item.minutes || ''} onChange={(e) => updateRow(i, 'minutes', e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))} placeholder="—" title="Level duration in minutes" className="w-14 rounded bg-[#1e2227] border border-[#2a2f37] px-1.5 py-1 text-white text-xs text-right" />
                         <span className="text-[10px] text-slate-500 shrink-0">min</span>
                         <div className="flex flex-col shrink-0 leading-none">

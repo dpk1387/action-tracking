@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Minus, FolderOpen, Clock, Trash2 } from 'lucide-react';
+import { X, Plus, Minus, FolderOpen, Clock, Trash2, Award } from 'lucide-react';
 import BlindScheduleEditor from '@/components/poker/BlindScheduleEditor';
 import ChipDenominationPicker from '@/components/poker/ChipDenominationPicker';
 import HelpHover from '@/components/HelpHover';
@@ -68,10 +68,14 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [anteAmount, setAnteAmount] = useState(initial?.anteAmount ?? 50);
   const [cashBlindsTouched, setCashBlindsTouched] = useState(false);
   const [allowStraddle, setAllowStraddle] = useState(initial ? !!initial.allowStraddle : false);
+  const [straddleAmount, setStraddleAmount] = useState(initial?.straddleAmount ?? '');
   const [allowMultiStraddle, setAllowMultiStraddle] = useState(initial?.allowMultiStraddle || false);
   const [mandatoryStraddle, setMandatoryStraddle] = useState(initial?.mandatoryStraddle || false);
+  const [mandatoryStraddleAmount, setMandatoryStraddleAmount] = useState(initial?.mandatoryStraddleAmount ?? '');
+  const [mandatoryDoubleStraddle, setMandatoryDoubleStraddle] = useState(initial?.mandatoryDoubleStraddle || false);
+  const [mandatoryDoubleStraddleAmount, setMandatoryDoubleStraddleAmount] = useState(initial?.mandatoryDoubleStraddleAmount ?? '');
   const [bombPot, setBombPot] = useState(initial?.bombPot || false);
-  const [bombAmount, setBombAmount] = useState(initial?.bombAmount ?? 100);
+  const [bombAmount, setBombAmount] = useState(initial?.bombAmount ?? (initial?.bigBlind ? initial.bigBlind * 5 : 10));
   const [doubleBoard, setDoubleBoard] = useState(initial?.doubleBoard || false);
   const [schedule, setSchedule] = useState(() => {
     if (initial?.blindSchedule?.length) return initial.blindSchedule;
@@ -93,6 +97,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [error, setError] = useState('');
   const [showStructures, setShowStructures] = useState(false);
 
+  // Tournament Bounties (tournament mode only)
+  const [tournamentBounty, setTournamentBounty] = useState(initial?.bountyConfig?.bounty ?? initial?.sideGames?.bounty ?? false);
+  const [bountyAmount, setBountyAmount] = useState(initial?.bountyConfig?.bountyAmount ?? initial?.sideGames?.bountyAmount ?? 50);
+  const [mysteryBounty, setMysteryBounty] = useState(initial?.bountyConfig?.mysteryBounty ?? initial?.sideGames?.mysteryBounty ?? false);
+
   // Clock system configuration
   const [clockSystem, setClockSystem] = useState(initial?.clockConfig?.clockSystem || 'call_clock');
   const [callClockSeconds, setCallClockSeconds] = useState(initial?.clockConfig?.callClockSeconds ?? 60);
@@ -105,7 +114,18 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [turnSeconds, setTurnSeconds] = useState(initial?.clockConfig?.turnSeconds ?? 40);
   const [riverSeconds, setRiverSeconds] = useState(initial?.clockConfig?.riverSeconds ?? 40);
   const [initialTimeBanks, setInitialTimeBanks] = useState(initial?.clockConfig?.initialTimeBanks ?? 3);
-  const [addOnRules, setAddOnRules] = useState(() => initial?.clockConfig?.addOnRules || []);
+  const [timeBankAddSeconds, setTimeBankAddSeconds] = useState(initial?.clockConfig?.timeBankAddSeconds ?? 30);
+  const [addOnRules, setAddOnRules] = useState(() => {
+    if (Array.isArray(initial?.clockConfig?.addOnRules)) return initial.clockConfig.addOnRules;
+    return [];
+  });
+  const [levelMethod, setLevelMethod] = useState(initial?.levelConfig?.method || 'minutes');
+  const [levelValue, setLevelValue] = useState(initial?.levelConfig?.value ?? 20);
+  const LEVEL_PRESETS = { minutes: 20, hands: 15, orbits: 2 };
+  const handleLevelMethodChange = (m) => {
+    setLevelMethod(m);
+    setLevelValue(LEVEL_PRESETS[m]);
+  };
 
   const buildStructureData = () => ({
     mode, variant, gameType, currency, stackInBB, seatCount,
@@ -118,6 +138,17 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     tournamentFormat, maxReEntries, lateRegEnabled, lateRegLevel,
     rebuyPrice, rebuyChips, allowAddOn, addOnPrice, addOnChips,
     schedule,
+    bountyConfig: {
+      bounty: !isCash && tournamentBounty,
+      bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
+      mysteryBounty: !isCash && mysteryBounty,
+    },
+    sideGames: {
+      ...(initial?.sideGames || {}),
+      bounty: !isCash && tournamentBounty,
+      bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
+      mysteryBounty: !isCash && mysteryBounty,
+    },
     clockConfig: {
       clockSystem,
       callClockSeconds: Number(callClockSeconds) || 60,
@@ -130,6 +161,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       turnSeconds: Number(turnSeconds) || 40,
       riverSeconds: Number(riverSeconds) || 40,
       initialTimeBanks: Math.max(0, Number(initialTimeBanks) || 0),
+      timeBankAddSeconds: Number(timeBankAddSeconds) || 30,
       addOnRules,
     },
   });
@@ -160,8 +192,12 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     if (d.flMaxRaises != null) setFlMaxRaises(d.flMaxRaises);
     if (d.doubleBoard != null) setDoubleBoard(d.doubleBoard);
     if (d.allowStraddle != null) setAllowStraddle(d.allowStraddle);
+    if (d.straddleAmount != null) setStraddleAmount(d.straddleAmount);
     if (d.allowMultiStraddle != null) setAllowMultiStraddle(d.allowMultiStraddle);
     if (d.mandatoryStraddle != null) setMandatoryStraddle(d.mandatoryStraddle);
+    if (d.mandatoryStraddleAmount != null) setMandatoryStraddleAmount(d.mandatoryStraddleAmount);
+    if (d.mandatoryDoubleStraddle != null) setMandatoryDoubleStraddle(d.mandatoryDoubleStraddle);
+    if (d.mandatoryDoubleStraddleAmount != null) setMandatoryDoubleStraddleAmount(d.mandatoryDoubleStraddleAmount);
     if (d.bombPot != null) setBombPot(d.bombPot);
     if (d.bombAmount != null) setBombAmount(d.bombAmount);
     if (d.levelMethod != null) setLevelMethod(d.levelMethod);
@@ -177,6 +213,15 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     if (d.addOnPrice != null) setAddOnPrice(d.addOnPrice);
     if (d.addOnChips != null) setAddOnChips(d.addOnChips);
     if (Array.isArray(d.schedule)) setSchedule(d.schedule);
+    if (d.bountyConfig) {
+      if (d.bountyConfig.bounty != null) setTournamentBounty(d.bountyConfig.bounty);
+      if (d.bountyConfig.bountyAmount != null) setBountyAmount(d.bountyConfig.bountyAmount);
+      if (d.bountyConfig.mysteryBounty != null) setMysteryBounty(d.bountyConfig.mysteryBounty);
+    } else if (d.sideGames) {
+      if (d.sideGames.bounty != null) setTournamentBounty(d.sideGames.bounty);
+      if (d.sideGames.bountyAmount != null) setBountyAmount(d.sideGames.bountyAmount);
+      if (d.sideGames.mysteryBounty != null) setMysteryBounty(d.sideGames.mysteryBounty);
+    }
     if (d.clockConfig) {
       if (d.clockConfig.clockSystem) setClockSystem(d.clockConfig.clockSystem);
       if (d.clockConfig.callClockSeconds != null) setCallClockSeconds(d.clockConfig.callClockSeconds);
@@ -189,17 +234,10 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       if (d.clockConfig.turnSeconds != null) setTurnSeconds(d.clockConfig.turnSeconds);
       if (d.clockConfig.riverSeconds != null) setRiverSeconds(d.clockConfig.riverSeconds);
       if (d.clockConfig.initialTimeBanks != null) setInitialTimeBanks(d.clockConfig.initialTimeBanks);
+      if (d.clockConfig.timeBankAddSeconds != null) setTimeBankAddSeconds(d.clockConfig.timeBankAddSeconds);
       if (Array.isArray(d.clockConfig.addOnRules)) setAddOnRules(d.clockConfig.addOnRules);
     }
     setError('');
-  };
-
-  const [levelMethod, setLevelMethod] = useState(initial?.levelConfig?.method || 'minutes');
-  const [levelValue, setLevelValue] = useState(initial?.levelConfig?.value ?? 20);
-  const LEVEL_PRESETS = { minutes: 20, hands: 15, orbits: 2 };
-  const handleLevelMethodChange = (m) => {
-    setLevelMethod(m);
-    setLevelValue(LEVEL_PRESETS[m]);
   };
 
   const isBBA = anteType === 'bba';
@@ -230,9 +268,9 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   };
 
   const applyBulk = () => {
-    const v = Number(bulkStack);
+    const v = parseAmount(bulkStack);
     if (!v || v <= 0) return;
-    setPlayers((prev) => prev.map((p) => ({ ...p, stack: v })));
+    setPlayers((prev) => prev.map((p) => ({ ...p, stack: bulkStack })));
   };
 
   const adjustSeats = (delta) => {
@@ -257,20 +295,20 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     const useScheduleBlinds = !isCash && !isFL;
     const schedFirst = schedule[0] || { smallBlind: 25, bigBlind: 50, ante: 0 };
     if (isFL) {
-      if (Number(smallBet) <= 0) return setError('Small bet must be positive.');
-      if (Number(bigBet) <= 0) return setError('Big bet must be positive.');
+      if ((parseAmount(smallBet) ?? Number(smallBet)) <= 0) return setError('Small bet must be positive.');
+      if ((parseAmount(bigBet) ?? Number(bigBet)) <= 0) return setError('Big bet must be positive.');
       if (Number(flMaxRaises) < 1) return setError('Max raises must be at least 1.');
     } else {
       if (useScheduleBlinds) {
-        if (Number(schedFirst.bigBlind) <= 0 || Number(schedFirst.smallBlind) <= 0) return setError('Level 1 blinds must be positive.');
+        if ((parseAmount(schedFirst.bigBlind) ?? Number(schedFirst.bigBlind)) <= 0 || (parseAmount(schedFirst.smallBlind) ?? Number(schedFirst.smallBlind)) <= 0) return setError('Level 1 blinds must be positive.');
       } else {
-        if (Number(bigBlind) <= 0 || Number(smallBlind) <= 0) return setError('Blinds must be positive.');
+        if ((parseAmount(bigBlind) ?? Number(bigBlind)) <= 0 || (parseAmount(smallBlind) ?? Number(smallBlind)) <= 0) return setError('Blinds must be positive.');
       }
     }
-    if (isCash && anteType === 'traditional' && anteAmount !== '' && Number(anteAmount) < 0) return setError('Ante cannot be negative.');
+    if (isCash && anteType === 'traditional' && anteAmount !== '' && (parseAmount(anteAmount) ?? Number(anteAmount)) < 0) return setError('Ante cannot be negative.');
     if (!isCash) {
       for (const l of schedule) {
-        if (l.type !== 'break' && (Number(l.smallBlind) <= 0 || Number(l.bigBlind) <= 0)) return setError('Every blind level must be positive.');
+        if (l.type !== 'break' && ((parseAmount(l.smallBlind) ?? Number(l.smallBlind)) <= 0 || (parseAmount(l.bigBlind) ?? Number(l.bigBlind)) <= 0)) return setError('Every blind level must be positive.');
       }
     }
     const occupiedPlayers = players.filter((p) => p.occupied);
@@ -302,10 +340,14 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       anteAmount: isBBA ? bb : isCash ? (parseAmount(anteAmount) ?? Number(anteAmount)) : anteType === 'traditional' ? (parseAmount(schedFirst.ante) ?? Number(schedFirst.ante)) : 0,
       doubleBoard: !isLow && doubleBoard,
       allowStraddle: isCash && !isFL && allowStraddle,
+      straddleAmount: isCash && !isFL && allowStraddle && straddleAmount ? Number(straddleAmount) : (bb * 2),
       allowMultiStraddle: isCash && !isFL && allowMultiStraddle,
       mandatoryStraddle: isCash && !isFL && mandatoryStraddle,
+      mandatoryStraddleAmount: isCash && !isFL && mandatoryStraddle && mandatoryStraddleAmount ? Number(mandatoryStraddleAmount) : (bb * 2),
+      mandatoryDoubleStraddle: isCash && !isFL && mandatoryStraddle && mandatoryDoubleStraddle,
+      mandatoryDoubleStraddleAmount: isCash && !isFL && mandatoryStraddle && mandatoryDoubleStraddle && mandatoryDoubleStraddleAmount ? Number(mandatoryDoubleStraddleAmount) : (Number(mandatoryStraddleAmount) || (bb * 2)) * 2,
       bombPot: isCash && bombPot,
-      bombAmount: isCash ? (parseAmount(bombAmount) ?? Number(bombAmount)) || bb : 0,
+      bombAmount: isCash ? (parseAmount(bombAmount) ?? Number(bombAmount)) || (bb * 5) : 0,
       levelConfig: isCash ? null : { method: levelMethod, value: Number(levelValue) > 0 ? Number(levelValue) : LEVEL_PRESETS[levelMethod] },
       chipDenominations: isCash ? null : chipDenoms.filter((d) => Number(d) > 0).map((d) => Number(d)).sort((a, b) => a - b),
       tournamentFormat: isCash ? undefined : tournamentFormat,
@@ -323,8 +365,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           return {
             type: 'break',
             minutes: Number(l.minutes) > 0 ? Number(l.minutes) : 10,
-            race: l.race && Number(l.race.retired) > 0 && Number(l.race.replacement) > 0
-              ? { retired: Number(l.race.retired), replacement: Number(l.race.replacement) }
+            race: l.race && (parseAmount(l.race.retired) ?? Number(l.race.retired)) > 0 && (parseAmount(l.race.replacement) ?? Number(l.race.replacement)) > 0
+              ? { retired: parseAmount(l.race.retired) ?? Number(l.race.retired), replacement: parseAmount(l.race.replacement) ?? Number(l.race.replacement) }
               : null,
           };
         }
@@ -336,6 +378,17 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           minutes: l.minutes === '' || l.minutes == null ? '' : (Number(l.minutes) > 0 ? Number(l.minutes) : ''),
         };
       }),
+      bountyConfig: {
+        bounty: !isCash && tournamentBounty,
+        bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
+        mysteryBounty: !isCash && mysteryBounty,
+      },
+      sideGames: {
+        ...(initial?.sideGames || {}),
+        bounty: !isCash && tournamentBounty,
+        bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
+        mysteryBounty: !isCash && mysteryBounty,
+      },
       clockConfig: {
         clockSystem,
         callClockSeconds: Number(callClockSeconds) || 60,
@@ -348,6 +401,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         turnSeconds: Number(turnSeconds) || 40,
         riverSeconds: Number(riverSeconds) || 40,
         initialTimeBanks: Math.max(0, Number(initialTimeBanks) || 0),
+        timeBankAddSeconds: Number(timeBankAddSeconds) || 30,
         addOnRules: addOnRules.map((r) => ({
           id: r.id || String(Math.random()),
           triggerType: r.triggerType || 'level',
@@ -529,11 +583,57 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           </div>
         )}
         {isCash && (
-          <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
-            <div className="text-xs text-slate-400 mb-1">Straddle</div>
+          <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4 space-y-2.5">
+            <div className="text-xs font-semibold text-slate-300">Straddle Settings</div>
             <ToggleRow label="Allow straddle (UTG)" checked={allowStraddle} onChange={setAllowStraddle} />
+            {allowStraddle && (
+              <div className="flex items-center gap-2 pl-4 py-1">
+                <label className="text-xs text-slate-400">Straddle amount:</label>
+                <input
+                  type="number"
+                  value={straddleAmount}
+                  onChange={(e) => setStraddleAmount(e.target.value)}
+                  placeholder={String(bb * 2)}
+                  className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1 text-white text-xs"
+                />
+                <span className="text-[11px] text-slate-500">(Default: 2x BB = {bb * 2})</span>
+              </div>
+            )}
             <ToggleRow label="Allow re-straddle" checked={allowMultiStraddle} onChange={setAllowMultiStraddle} disabled={!allowStraddle && !mandatoryStraddle} />
             <ToggleRow label="Mandatory straddle (third blind)" checked={mandatoryStraddle} onChange={setMandatoryStraddle} />
+            {mandatoryStraddle && (
+              <div className="space-y-2 pl-4 border-l-2 border-emerald-800/40 ml-2 py-1">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-slate-400">Mandatory straddle amount:</label>
+                  <input
+                    type="number"
+                    value={mandatoryStraddleAmount}
+                    onChange={(e) => setMandatoryStraddleAmount(e.target.value)}
+                    placeholder={String(bb * 2)}
+                    className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1 text-white text-xs"
+                  />
+                  <span className="text-[11px] text-slate-500">(Default: 2x BB = {bb * 2})</span>
+                </div>
+                <ToggleRow
+                  label="Mandatory double straddle (fourth blind)"
+                  checked={mandatoryDoubleStraddle}
+                  onChange={setMandatoryDoubleStraddle}
+                />
+                {mandatoryDoubleStraddle && (
+                  <div className="flex items-center gap-2 pl-4">
+                    <label className="text-xs text-slate-400">Double straddle amount:</label>
+                    <input
+                      type="number"
+                      value={mandatoryDoubleStraddleAmount}
+                      onChange={(e) => setMandatoryDoubleStraddleAmount(e.target.value)}
+                      placeholder={String((Number(mandatoryStraddleAmount) || (bb * 2)) * 2)}
+                      className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1 text-white text-xs"
+                    />
+                    <span className="text-[11px] text-slate-500">(Default: 2x mandatory straddle)</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
         {!isCash && (
@@ -544,6 +644,9 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                 <option value="freezeout">Freezeout</option>
                 <option value="reentry">Re-entry</option>
                 <option value="rebuy">Re-buy</option>
+                <option value="bounty">Bounty</option>
+                <option value="mystery bounty">Mystery Bounty</option>
+                <option value="shootout">Shootout</option>
               </select>
               {tournamentFormat === 'reentry' && (
                 <div className="flex items-center gap-2">
@@ -590,6 +693,40 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                 )}
               </div>
             )}
+            {/* Tournament Bounties */}
+            <div className="border-t border-[#2a2f37] pt-3 mt-3">
+              <div className="flex items-center gap-1.5 text-xs text-amber-300 font-medium mb-2">
+                <Award size={14} className="text-amber-400" />
+                <span>Tournament Bounties</span>
+              </div>
+              <div className="space-y-2">
+                <div>
+                  <ToggleRow label="Standard Knockout Bounty" checked={tournamentBounty} onChange={setTournamentBounty} />
+                  {tournamentBounty && (
+                    <div className="flex items-center gap-2 mt-2 ml-1">
+                      <label className="text-xs text-slate-400">Bounty amount:</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={bountyAmount}
+                        onChange={(e) => setBountyAmount(e.target.value)}
+                        placeholder="50"
+                        className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white text-sm"
+                      />
+                      <span className="text-[11px] text-slate-500">Fixed bounty awarded to the covering eliminator</span>
+                    </div>
+                  )}
+                </div>
+                <div className="pt-1">
+                  <ToggleRow label="Mystery Bounty" checked={mysteryBounty} onChange={setMysteryBounty} />
+                  {mysteryBounty && (
+                    <div className="text-[11px] text-slate-400 mt-1 ml-1">
+                      Eliminating a player prompts host to enter the drawn envelope amount after the hand.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
         {!isCash && (
@@ -816,6 +953,19 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                     className="w-16 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm text-center"
                   />
                   <span className="text-xs text-slate-500">(default 3 chips)</span>
+                </div>
+
+                <div className="flex items-center gap-2 mb-2">
+                  <label className="text-xs text-slate-400">Time added per bank chip:</label>
+                  <input
+                    type="number"
+                    min="5"
+                    max="300"
+                    value={timeBankAddSeconds}
+                    onChange={(e) => setTimeBankAddSeconds(e.target.value)}
+                    className="w-16 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm text-center"
+                  />
+                  <span className="text-xs text-slate-500">seconds (default 30s)</span>
                 </div>
 
                 {/* Add-on rules schedule */}

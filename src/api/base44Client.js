@@ -96,31 +96,43 @@ export const db = {
       } catch {}
 
       if (name === 'listSavedSessions') {
-        const list = Object.values(store)
-          .filter((item) => !item.hostId || (user && item.hostId === user.id))
-          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-          .map((r) => {
+        let modified = false;
+        Object.keys(store).forEach((k) => {
+          const item = store[k];
+          if (!item || (!item.resumeState?.hand && !item.state?.hand) || k === 'undefined' || k === 'null' || !k) {
+            delete store[k];
+            modified = true;
+          }
+        });
+        if (modified) saveStoredSessions(store);
+
+        const list = Object.entries(store)
+          .filter(([key, item]) => item && (!item.hostId || (user && item.hostId === user.id)))
+          .map(([key, r]) => {
+            const sc = r.shareCode || key;
             const rs = r.resumeState || {};
-            const h = rs.hand || {};
+            const h = rs.hand || r.state?.hand || {};
             const players = (h.players || []).map((p) => p.name).filter(Boolean);
             return {
-              shareCode: r.shareCode,
-              updatedAt: r.updatedAt,
-              mode: h.mode || rs.config?.mode,
+              shareCode: sc,
+              id: key,
+              updatedAt: r.updatedAt || new Date().toISOString(),
+              mode: h.mode || rs.config?.mode || 'tournament',
               variant: h.variant || rs.config?.variant || 'nlh',
-              handNumber: h.handNumber,
-              smallBlind: h.smallBlind,
-              bigBlind: h.bigBlind,
-              currency: h.currency || rs.config?.currency,
+              handNumber: h.handNumber || 1,
+              smallBlind: h.smallBlind || 25,
+              bigBlind: h.bigBlind || 50,
+              currency: h.currency || rs.config?.currency || '$',
               playerNames: players,
             };
-          });
+          })
+          .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
         return { data: { sessions: list } };
       }
 
       if (name === 'readSavedSession') {
         const { shareCode } = args;
-        const record = store[shareCode];
+        const record = store[shareCode] || Object.values(store).find((s) => s.shareCode === shareCode);
         if (!record || !record.resumeState || !record.resumeState.hand) {
           return { data: { error: 'No saved session' } };
         }
@@ -129,7 +141,7 @@ export const db = {
 
       if (name === 'readLiveSession') {
         const code = args.shareCode || args.code;
-        const record = store[code];
+        const record = store[code] || Object.values(store).find((s) => s.shareCode === code);
         if (!record) return { data: { error: 'No session yet' } };
         return { data: { state: record.state || null, updatedAt: record.updatedAt } };
       }
@@ -150,6 +162,7 @@ export const db = {
           gameOver,
           equity,
           hideAmounts,
+          holeCards,
           _holeCards: holeCards,
         };
         store[shareCode] = {
@@ -164,9 +177,39 @@ export const db = {
       }
 
       if (name === 'discardSavedSession') {
-        const { shareCode } = args;
-        if (store[shareCode]) {
-          delete store[shareCode];
+        const { shareCode, id } = args;
+        const target = shareCode || id;
+        let modified = false;
+
+        if (target === 'all') {
+          Object.keys(store).forEach((k) => {
+            if (!store[k]?.hostId || (user && store[k]?.hostId === user.id)) {
+              delete store[k];
+              modified = true;
+            }
+          });
+        } else if (target) {
+          if (store[target]) {
+            delete store[target];
+            modified = true;
+          }
+          Object.keys(store).forEach((k) => {
+            if (k === target || store[k]?.shareCode === target || store[k]?.id === target) {
+              delete store[k];
+              modified = true;
+            }
+          });
+        }
+
+        // Clean up any empty, invalid, or corrupted keys
+        Object.keys(store).forEach((k) => {
+          if (!store[k] || k === 'undefined' || k === 'null' || k === '' || (!store[k].resumeState && !store[k].state)) {
+            delete store[k];
+            modified = true;
+          }
+        });
+
+        if (modified) {
           saveStoredSessions(store);
         }
         return { data: { ok: true, deleted: true } };

@@ -1,4 +1,4 @@
-import { nextHand } from './poker';
+import { nextHand, parseAmount } from './poker';
 
 export const LEVEL_METHODS = [
   { id: 'minutes', label: 'Minutes' },
@@ -219,14 +219,17 @@ export function applyNextLevel(hand) {
     return { ...hand, blindLevel: hand.blindLevel };
   }
   const lvl = schedule[target];
+  const bbNum = parseAmount(lvl.bigBlind) ?? Number(lvl.bigBlind) ?? 0;
+  const sbNum = parseAmount(lvl.smallBlind) ?? Number(lvl.smallBlind) ?? 0;
+  const anteNum = parseAmount(lvl.ante) ?? Number(lvl.ante) ?? 0;
   const ante = hand.anteType === 'bba'
-    ? Number(lvl.bigBlind)
-    : (lvl.ante != null && lvl.ante !== '' ? Number(lvl.ante) : 0);
+    ? bbNum
+    : (lvl.ante != null && lvl.ante !== '' ? anteNum : 0);
   return {
     ...hand,
-    smallBlind: Number(lvl.smallBlind),
-    bigBlind: Number(lvl.bigBlind),
-    anteAmount: hand.anteType === 'bba' ? Number(lvl.bigBlind) : ante,
+    smallBlind: sbNum,
+    bigBlind: bbNum,
+    anteAmount: hand.anteType === 'bba' ? bbNum : ante,
     blindLevel: target,
   };
 }

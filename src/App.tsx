@@ -15,6 +15,7 @@ import HandHistory from '@/pages/HandHistory';
 import VariantSetup from '@/pages/VariantSetup';
 import TVView from '@/pages/TVView';
 import Spectator from '@/pages/Spectator';
+import MTTDirector from '@/pages/MTTDirector';
 
 const AuthenticatedApp = () => {
   const auth = useAuth() as {
@@ -50,6 +51,7 @@ const AuthenticatedApp = () => {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/spectator" element={<Spectator />} />
       <Route path="/" element={<PokerTracker />} />
+      <Route path="/director" element={<MTTDirector />} />
       <Route path="/history" element={<HandHistory />} />
       <Route path="/variant" element={<VariantSetup />} />
       <Route path="/tv" element={<TVView />} />

@@ -40,11 +40,14 @@ export default function ActionRecorder({ hand, onAction }) {
     );
   }
 
-  const toCall = hand.currentBet - cp.currentBet;
+  const toCall = Math.max(0, hand.currentBet - cp.currentBet);
   const canCheck = toCall === 0;
   const callAmt = Math.min(toCall, cp.stack);
+  const maxTotalCommitment = cp.currentBet + cp.stack;
+  const otherNonFolded = hand.players.filter((p) => p.id !== cp.id && p.status !== 'folded');
+  const othersHaveChips = otherNonFolded.some((p) => (p.stack || 0) > 0);
   const canReopenRaise = !hand.shortAllinOpen || !cp.hasActed || cp.currentBet < hand.currentBet;
-  const canRaise = cp.stack > toCall && canReopenRaise;
+  const canRaise = cp.stack > toCall && canReopenRaise && othersHaveChips;
   const mustAllinToCall = !canCheck && cp.stack < toCall;
   const minRaise = hand.currentBet === 0 ? hand.bigBlind : hand.currentBet + hand.lastRaiseAmount;
   const isBet = hand.currentBet === 0;
@@ -53,28 +56,43 @@ export default function ActionRecorder({ hand, onAction }) {
   const facingBet = hand.currentBet;
   const potRaiseTo = isBet ? potNow : (potNow - facingBet) + 3 * facingBet;
   const potChips = potRaiseTo - cp.currentBet;
-  const canCoverPot = potChips > 0 && potChips <= cp.stack;
-  const potAction = canCoverPot ? () => onAction(isBet ? 'bet' : 'raise', potRaiseTo) : () => onAction('allin');
-  const potLabel = canCoverPot ? `Pot ${money(potRaiseTo, cur)}` : `All-in ${money(cp.stack, cur)}`;
+  const canCoverPot = potChips > 0 && potChips <= cp.stack && othersHaveChips;
+  const potAction = !othersHaveChips
+    ? () => onAction('call')
+    : canCoverPot
+    ? () => onAction(isBet ? 'bet' : 'raise', potRaiseTo)
+    : () => onAction('allin');
+  const potLabel = !othersHaveChips ? `Call ${money(callAmt, cur)}` : canCoverPot ? `Pot ${money(potRaiseTo, cur)}` : `All-in ${money(maxTotalCommitment, cur)}`;
   const overLimit = isPL && amount !== '' && (parseAmount(amount) ?? 0) > potRaiseTo;
 
   const flSize = (hand.street === 'preflop' || hand.street === 'flop') ? (hand.smallBet || hand.bigBlind) : (hand.bigBet || hand.bigBlind * 2);
   const flRaiseTo = hand.currentBet + flSize;
   const flCap = (hand.raiseLevel || 0) >= ((hand.flMaxRaises || 4) + 1);
   const flRaiseChips = isBet ? flSize : (flRaiseTo - cp.currentBet);
-  const flCanRaise = !flCap && cp.stack > toCall && cp.stack >= flRaiseChips;
+  const flCanRaise = !flCap && cp.stack > toCall && cp.stack >= flRaiseChips && othersHaveChips;
   const flLabel = `Raise ${money(flRaiseTo, cur)}`;
-  const callLabel = cp.stack < toCall ? `All-in ${money(callAmt, cur)}` : `Call ${money(callAmt, cur)}`;
+  const callLabel = cp.stack < toCall ? `All-in ${money(cp.currentBet + callAmt, cur)}` : `Call ${money(callAmt, cur)}`;
   const canStraddle = !isFL && !isPL && hand.street === 'preflop' && hand.straddleOpen
     && (hand.straddleLevel || 0) < (hand.maxStraddles || 0) && !cp.hasActed && cp.status === 'active';
-  const straddleAmt = hand.bigBlind * Math.pow(2, (hand.straddleLevel || 0) + 1);
+  const defaultBaseStraddle = hand.straddleAmount || (hand.bigBlind * 2);
+  const straddleAmt = (hand.straddleLevel || 0) === 0
+    ? defaultBaseStraddle
+    : (defaultBaseStraddle * Math.pow(2, hand.straddleLevel || 0));
+  const straddlePutsAllIn = cp.stack <= (straddleAmt - cp.currentBet);
+  const straddleLabel = straddlePutsAllIn
+    ? `All-in ${money(cp.currentBet + cp.stack, cur)}`
+    : `Straddle ${money(straddleAmt, cur)}`;
 
   const submitRaise = () => {
+    if (!othersHaveChips) {
+      onAction('call');
+      return;
+    }
     const v = parseAmount(amount);
     if (v == null) return;
-    const isAllinAmount = v === cp.currentBet + cp.stack;
+    const isAllinAmount = v === maxTotalCommitment;
     if (v < minRaise && !isAllinAmount) return;
-    if (v > cp.currentBet + cp.stack) return;
+    if (v > maxTotalCommitment) return;
     if (isPL && v > potRaiseTo) return;
     if (isAllinAmount) {
       onAction('allin');
@@ -82,11 +100,21 @@ export default function ActionRecorder({ hand, onAction }) {
       onAction(isBet ? 'bet' : 'raise', v);
     }
   };
-  const submitAllin = () => onAction('allin');
-  const minRaiseVal = Math.min(minRaise, cp.currentBet + cp.stack);
+  const submitAllin = () => {
+    if (!othersHaveChips && toCall > 0) {
+      onAction('call');
+      return;
+    }
+    onAction('allin');
+  };
+  const minRaiseVal = Math.min(minRaise, maxTotalCommitment);
   const minRaiseClamped = isPL ? Math.min(minRaiseVal, potRaiseTo) : minRaiseVal;
   const canMinRaise = canRaise && minRaiseClamped > cp.currentBet;
   const submitMinRaise = () => {
+    if (!othersHaveChips) {
+      onAction('call');
+      return;
+    }
     if (!canMinRaise) return;
     onAction(isBet ? 'bet' : 'raise', minRaiseClamped);
   };
@@ -181,10 +209,12 @@ export default function ActionRecorder({ hand, onAction }) {
             </button>
             {canStraddle && !mustAllinToCall && !ootPassiveBound && (
               <button
-                onClick={() => onAction('straddle')}
-                className="rounded-lg bg-[#6b4a2a] hover:bg-[#7d5934] text-white text-sm px-3 py-2"
+                onClick={() => onAction(straddlePutsAllIn ? 'allin' : 'straddle', straddleAmt)}
+                className={`rounded-lg text-white text-sm px-3 py-2 cursor-pointer transition-colors ${
+                  straddlePutsAllIn ? 'bg-[#c94c4c] hover:bg-[#d95959] font-bold' : 'bg-[#6b4a2a] hover:bg-[#7d5934]'
+                }`}
               >
-                Straddle {money(straddleAmt, cur)}
+                {straddleLabel}
               </button>
             )}
             {isPL ? (
@@ -193,7 +223,7 @@ export default function ActionRecorder({ hand, onAction }) {
                 disabled={!mustAllinToCall && ootPassiveBound}
                 className="rounded-lg bg-[#c94c4c] hover:bg-[#d95959] text-white text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                {mustAllinToCall ? `All-in ${money(cp.stack, cur)}` : potLabel}
+                {mustAllinToCall ? `All-in ${money(maxTotalCommitment, cur)}` : potLabel}
               </button>
             ) : (
               <button
@@ -201,7 +231,7 @@ export default function ActionRecorder({ hand, onAction }) {
                 disabled={!mustAllinToCall && ootPassiveBound}
                 className="rounded-lg bg-[#c94c4c] hover:bg-[#d95959] text-white text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                All-in {money(cp.stack, cur)}
+                All-in {money(maxTotalCommitment, cur)}
               </button>
             )}
           </>

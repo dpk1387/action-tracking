@@ -4,22 +4,22 @@ import { rewardFor } from '@/lib/sevenTwoPatterns';
 export default function SevenTwoAward({ hand, holeCards, onAward, onSkip, foldWinnerId, preselectId }) {
   const sg = hand.sideGames || {};
   const players = hand.players;
-  const tenBB = (Number(hand.bigBlind) || 0) * 10;
+  const defaultReward = Number(sg.sevenTwoRewards?.amount) || 5;
   const sym = hand.currency || '';
 
   const [playerId, setPlayerId] = useState(preselectId != null ? preselectId : null);
   const [amount, setAmount] = useState(() => {
     if (preselectId != null) {
-      const r = rewardFor(sg.sevenTwoRewards, holeCards[preselectId], tenBB, tenBB);
-      return r != null ? String(r) : String(tenBB || '');
+      const r = rewardFor(sg.sevenTwoRewards, holeCards[preselectId], defaultReward);
+      return r != null ? String(r) : String(defaultReward);
     }
-    return String(tenBB || '');
+    return String(defaultReward);
   });
 
   const defaultFor = (pid) => {
     const hole = pid != null ? holeCards[pid] : null;
-    const r = rewardFor(sg.sevenTwoRewards, hole, tenBB, tenBB);
-    return r != null ? String(r) : String(tenBB || '');
+    const r = rewardFor(sg.sevenTwoRewards, hole, defaultReward);
+    return r != null ? String(r) : String(defaultReward);
   };
 
   const select = (pid) => {
@@ -36,7 +36,7 @@ export default function SevenTwoAward({ hand, holeCards, onAward, onSkip, foldWi
   const giveFoldReward = () => {
     const pid = foldWinnerId;
     if (pid == null) return;
-    onAward({ type: 'sevenTwo', playerId: pid, amount: tenBB });
+    onAward({ type: 'sevenTwo', playerId: pid, amount: defaultReward });
   };
 
   if (foldWinnerId != null) {
@@ -45,7 +45,7 @@ export default function SevenTwoAward({ hand, holeCards, onAward, onSkip, foldWi
       <div className="mt-3 rounded-lg border border-[#3a4a3a] bg-[#15181d] p-3">
         <div className="text-sm text-slate-200 mb-1">7-2 game</div>
         <div className="text-[11px] text-slate-500 mb-2">
-          {winner?.name || 'Winner'} won by folding everyone out. Give them the 7-2 reward ({sym}{tenBB || '10bb'} from each other player)?
+          {winner?.name || 'Winner'} won by folding everyone out. Give them the 7-2 reward ({sym}{defaultReward} from each other player)?
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={giveFoldReward} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3 py-1.5 cursor-pointer">
@@ -63,7 +63,7 @@ export default function SevenTwoAward({ hand, holeCards, onAward, onSkip, foldWi
     <div className="mt-3 rounded-lg border border-[#3a4a3a] bg-[#15181d] p-3">
       <div className="text-sm text-slate-200 mb-1">7-2 game</div>
       <div className="text-[11px] text-slate-500 mb-2">
-        Pick the player who won with a 7-2. The reward is collected from every other player. Blank reward defaults to {sym}{tenBB || '10bb'}.
+        Pick the player who won with a 7-2. The reward is collected from every other player. Default reward is {sym}{defaultReward}.
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <select
@@ -78,7 +78,7 @@ export default function SevenTwoAward({ hand, holeCards, onAward, onSkip, foldWi
           type="number"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          placeholder={String(tenBB || '')}
+          placeholder={String(defaultReward)}
           className="w-28 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm focus:outline-none focus:border-[#4a5a4a] placeholder:text-slate-600"
         />
         <button

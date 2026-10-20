@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { money, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown } from '@/lib/poker';
+import { Clock } from 'lucide-react';
+import { money, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown, hasSoleDeepestStack } from '@/lib/poker';
 import AllInView from './AllInView';
 
 function raiseLabelLocal(level) {
@@ -220,7 +221,7 @@ export default function PokerTable({
         className="absolute top-4 right-4 z-30 px-3 py-1.5 rounded-lg bg-[#202630] hover:bg-[#2d3644] border border-[#364536] hover:border-emerald-500/50 text-emerald-400 font-bold text-xs shadow-lg cursor-pointer transition-colors flex items-center gap-1.5"
       >
         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-        All-In View
+        List View
       </button>
       <div className="absolute inset-6 rounded-[1.6rem] bg-[#232a23]/40" />
       {Array.from({ length: tableSize }, (_, seatIdx) => {
@@ -249,9 +250,13 @@ export default function PokerTable({
         const isNit = standUp && !wonSet.has(Number(p.seat));
         const allin = p.status === 'allin';
         const folded = p.status === 'folded';
-        const atRisk = allin || p._wasCapped;
+        const isCapped = p._wasCapped || p._allInCapped;
+        const atRisk = allin || isCapped;
         const la = p.lastAction;
-        const laText = la
+        const isSoleDeepest = hasSoleDeepestStack(hand, p.id);
+        const laText = isCapped
+          ? 'All-in'
+          : la
           ? la.type === 'fold'
             ? 'Fold'
             : la.type === 'check'
@@ -263,14 +268,16 @@ export default function PokerTable({
             : la.type === 'kill'
             ? `Kill ${formatBetAmount(la.amount, cur)}`
             : la.type === 'bet' || la.type === 'raise'
-            ? `${raiseLabelLocal(la.raiseLevel)} ${formatBetAmount(la.amount, cur)}`
+            ? (allin && !isSoleDeepest ? `All-in ${formatBetAmount(la.amount, cur)}` : `${raiseLabelLocal(la.raiseLevel)} ${formatBetAmount(la.amount, cur)}`)
             : la.type === 'call'
-            ? `Call ${formatBetAmount(la.amount, cur)}`
+            ? (allin && !isSoleDeepest ? `All-in ${formatBetAmount(la.amount, cur)}` : `Call ${formatBetAmount(la.amount, cur)}`)
             : la.type === 'sb'
             ? `SB ${formatBetAmount(la.amount, cur)}`
             : la.type === 'bb'
             ? `BB ${formatBetAmount(la.amount, cur)}`
             : ''
+          : allin
+          ? 'All-in'
           : 'Waiting';
 
         return (
@@ -318,51 +325,12 @@ export default function PokerTable({
               <div className={`text-[10px] mt-0.5 ${atRisk ? 'text-rose-200' : folded ? 'text-slate-500' : 'text-emerald-300/80'}`}>
                 {laText}
               </div>
-              {/* Clock countdown for active player */}
-              {isCurrent && clockSecondsLeft != null && (
-                <div
-                  className={`mt-1 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono tracking-wider flex items-center justify-center gap-1 shadow-sm ${
-                    clockSecondsLeft > 10
-                      ? 'bg-emerald-950/90 border border-emerald-500/80 text-emerald-300'
-                      : clockSecondsLeft > 5
-                      ? 'bg-amber-950/90 border border-amber-500 text-amber-300 animate-pulse'
-                      : 'bg-rose-950 border border-rose-500 text-rose-200 animate-bounce'
-                  }`}
-                >
-                  <span>⏱</span>
-                  <span>{clockSecondsLeft}s</span>
-                </div>
-              )}
-
-              {/* Time banks display and buttons */}
-              {hand.clockConfig?.clockSystem === 'time_banks' && (
-                <div className="flex items-center justify-center gap-1 mt-1 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onUseTimeBank && onUseTimeBank(p.id);
-                    }}
-                    title={`Time banks left: ${p.timeBanks ?? hand.clockConfig?.initialTimeBanks ?? 3} (Click to use bank)`}
-                    className="px-1.5 py-0.5 rounded bg-black/60 hover:bg-black/90 border border-slate-700 text-[9px] font-mono font-bold text-slate-300 hover:text-white flex items-center gap-0.5 cursor-pointer"
-                  >
-                    <span>⏱</span>
-                    <span>{p.timeBanks ?? hand.clockConfig?.initialTimeBanks ?? 3}</span>
-                  </button>
-                  {p.usedBanks > 0 && Array.from({ length: p.usedBanks }).map((_, bIdx) => (
-                    <button
-                      key={bIdx}
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAdjustTimeBanks && onAdjustTimeBanks(p.id, 1);
-                      }}
-                      title={`Used time bank #${bIdx + 1} (Click to refund)`}
-                      className="px-1 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-[8px] font-bold text-amber-300 whitespace-nowrap cursor-pointer"
-                    >
-                      ⏱ Bank {bIdx + 1}
-                    </button>
-                  ))}
+              {/* Show TIME badge if player used a time bank */}
+              {p.usedBanks > 0 && (
+                <div className="mt-1 flex items-center justify-center">
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-[9px] font-bold text-amber-300">
+                    TIME{p.usedBanks > 1 ? ` ×${p.usedBanks}` : ''}
+                  </span>
                 </div>
               )}
               {(() => {
@@ -388,6 +356,18 @@ export default function PokerTable({
         );
       })}
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-2 w-[85%] max-w-[440px]">
+        {/* Action Clock Timer in the middle of the screen */}
+        {clockActive && clockSecondsLeft != null && (
+          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#12161c]/95 border border-emerald-500/80 shadow-[0_0_18px_rgba(16,185,129,0.35)] backdrop-blur-md animate-pulse">
+            <Clock size={16} className={clockSecondsLeft > 10 ? 'text-emerald-400' : clockSecondsLeft > 5 ? 'text-amber-400' : 'text-rose-400'} />
+            <span className="text-xs text-slate-300 font-semibold truncate max-w-[120px]">
+              {hand.players[hand.currentPlayer]?.name}
+            </span>
+            <span className={`text-base font-black font-mono tracking-tight ${clockSecondsLeft > 10 ? 'text-emerald-400' : clockSecondsLeft > 5 ? 'text-amber-400' : 'text-rose-400'}`}>
+              {clockSecondsLeft}s
+            </span>
+          </div>
+        )}
         <div className="text-center">
           <div className="text-xs text-slate-400 uppercase tracking-wider">Pot</div>
           <div className="text-3xl font-bold text-white">{potShown ? money(pot, cur) : '—'}</div>

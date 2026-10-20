@@ -62,6 +62,7 @@ function buildPayload(state) {
     equity: state.equity || null,
     hideAmounts: !!state.hideAmounts,
     holeCards: state.holeCards || null,
+    director: state.director || null,
   };
 }
 
@@ -92,7 +93,7 @@ export function publishLive(state) {
   }
 
   const code = getShareCode();
-  if (code && (payload.hand || payload.gameOver)) {
+  if (code && (payload.hand || payload.gameOver || payload.director)) {
     if (publishTimer) clearTimeout(publishTimer);
     publishTimer = setTimeout(() => {
       publishTimer = null;
@@ -131,8 +132,20 @@ export async function loadSavedSession(code) {
 
 export async function discardSavedSession(code) {
   const c = code || getShareCode();
-  if (!c) return { ok: true };
-  await db.functions.invoke('discardSavedSession', { shareCode: c });
+  try {
+    await db.functions.invoke('discardSavedSession', { shareCode: c || '' });
+  } catch (e) {}
+  try {
+    localStorage.removeItem(codeKey);
+    localStorage.removeItem(storageKey);
+  } catch (e) {}
+  return { ok: true };
+}
+
+export async function discardAllSavedSessions() {
+  try {
+    await db.functions.invoke('discardSavedSession', { shareCode: 'all' });
+  } catch (e) {}
   try {
     localStorage.removeItem(codeKey);
     localStorage.removeItem(storageKey);

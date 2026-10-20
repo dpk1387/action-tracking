@@ -79,7 +79,14 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
           {structures.map((s) => (
             <div key={s.id} className="flex items-center gap-2 rounded-lg border border-[#2a2f37] bg-[#15181d] p-3">
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-white truncate">{s.name}</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-white truncate">{s.name}</span>
+                  {s.isDefault && (
+                    <span className="rounded bg-emerald-950/80 border border-emerald-500/50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                      Default
+                    </span>
+                  )}
+                </div>
                 <div className="text-[11px] text-slate-500">
                   {(s.structureData.schedule || []).length} levels
                   {s.structureData.tournamentFormat ? ` · ${s.structureData.tournamentFormat}` : ''}
@@ -92,9 +99,11 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
               <button onClick={() => handleExport(s)} className="rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 p-2 cursor-pointer" title="Export">
                 <Download size={15} />
               </button>
-              <button onClick={() => handleDelete(s.id)} className="rounded-md bg-[#2a2f37] hover:bg-[#c94c4c] hover:text-white text-slate-400 p-2 cursor-pointer" title="Delete">
-                <Trash2 size={15} />
-              </button>
+              {!s.isDefault && (
+                <button onClick={() => handleDelete(s.id)} className="rounded-md bg-[#2a2f37] hover:bg-[#c94c4c] hover:text-white text-slate-400 p-2 cursor-pointer" title="Delete">
+                  <Trash2 size={15} />
+                </button>
+              )}
             </div>
           ))}
         </div>

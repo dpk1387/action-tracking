@@ -7,10 +7,9 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
   const [error, setError] = useState('');
 
   const nonFolded = hand.players.filter((p) => p.status !== 'folded');
-  const hasAllin = nonFolded.length >= 2 && nonFolded.some((p) => p.status === 'allin' || p.stack === 0);
-  const activeCount = nonFolded.filter((p) => p.status === 'active' && p.stack > 0).length;
   const frozen = bettingFrozen(hand);
-  const noFurtherBetting = (hasAllin || frozen) && (hand.currentPlayer === -1 || frozen);
+  const isAllInShowdown = frozen && nonFolded.length >= 2;
+  const noFurtherBetting = isAllInShowdown;
   const hiddenA = hand.communityCards.filter((c) => c.hidden).length;
   const hiddenB = hand.doubleBoard ? (hand.boardB || []).filter((c) => c.hidden).length : 0;
   const hiddenCount = hiddenA + hiddenB;
@@ -92,7 +91,7 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
   };
 
   const hiddenLabelA = hiddenA >= 5 ? 'flop, turn & river' : hiddenA >= 4 ? 'flop & turn' : hiddenA === 3 ? 'flop' : 'turn';
-  const showdown = (hand.currentPlayer === -1 || noFurtherBetting) && (hasAllin || frozen || hand.phase === 'ended');
+  const showdown = (isRiver && (hand.currentPlayer === -1 || noFurtherBetting)) || (noFurtherBetting && isAllInShowdown) || hand.phase === 'ended';
   const streetUpper = next ? next.toUpperCase() : '';
   const countHint = next === 'flop' ? '3 cards' : '1 card';
 
@@ -117,7 +116,7 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
           </div>
           <button onClick={fillHidden} className="mt-2 rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2">Confirm board</button>
         </>
-      ) : (hasAllin || frozen || noFurtherBetting) && complete && next ? (
+      ) : isAllInShowdown && complete && next ? (
         <>
           <div className="text-xs text-slate-400 mb-2">
             All-in – enter the {streetUpper} for board 1{dbl ? ', then board 2' : ''} (rank-suit, e.g. As Kd). Use T for ten.
@@ -136,7 +135,7 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
           </div>
           <button onClick={dealReal} className="mt-2 rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2">Deal {streetUpper}</button>
         </>
-      ) : !(hasAllin || frozen || noFurtherBetting) && complete && next ? (
+      ) : !isAllInShowdown && complete && next ? (
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs text-slate-400">Deal the {streetUpper}{dbl ? ' (both boards)' : ''} – board stays hidden unless there's an all-in.</div>
           <button onClick={dealHidden} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2">Deal {streetUpper}</button>

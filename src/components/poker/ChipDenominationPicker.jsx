@@ -1,10 +1,17 @@
 import React from 'react';
 import { ALL_DENOMINATIONS } from '@/lib/tournamentStructures';
 
+const EXCLUDED_DENOMS = new Set([0.05, 0.1, 0.10, 0.25, 0.5, 0.50]);
+
 export default function ChipDenominationPicker({ selected, onChange }) {
-  const selectedSet = new Set((selected || []).map((d) => Number(d)));
+  const selectedSet = new Set(
+    (selected || [])
+      .map((d) => Number(d))
+      .filter((d) => !EXCLUDED_DENOMS.has(d))
+  );
 
   const toggle = (denom) => {
+    if (EXCLUDED_DENOMS.has(denom)) return;
     const next = new Set(selectedSet);
     if (next.has(denom)) next.delete(denom);
     else next.add(denom);
