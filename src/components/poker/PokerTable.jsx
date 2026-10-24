@@ -210,8 +210,10 @@ export default function PokerTable({
     });
   };
 
+  const hasBoardC = (Number(hand.bombBoards) >= 3) || (hand.boardC && hand.boardC.length > 0) || (Number(hand.runTimes) >= 3);
   const mainAnim = animateKeys(hand.communityCards);
   const bAnim = hand.doubleBoard ? animateKeys(hand.boardB) : [];
+  const cAnim = hasBoardC ? animateKeys(hand.boardC) : [];
 
   return (
     <div className="relative w-full h-[480px] rounded-[2rem] border-2 border-[#364536] bg-[#1e2227] overflow-hidden">
@@ -224,13 +226,29 @@ export default function PokerTable({
         List View
       </button>
       <div className="absolute inset-6 rounded-[1.6rem] bg-[#232a23]/40" />
-      {Array.from({ length: tableSize }, (_, seatIdx) => {
-        const seatNum = seatIdx + 1;
-        const angle = (-90 + (seatIdx * 360) / tableSize) * (Math.PI / 180);
+      {(hand.mode === 'cash'
+        ? hand.players.map((player, idx) => ({
+            p: player,
+            seatNum: player.seat,
+            seatIdx: idx,
+            totalSeats: hand.players.length,
+            playerIndex: idx,
+          }))
+        : Array.from({ length: tableSize }, (_, seatIdx) => {
+            const seatNum = seatIdx + 1;
+            const playerIndex = hand.players.findIndex((p) => p.seat === seatNum);
+            return {
+              p: playerIndex >= 0 ? hand.players[playerIndex] : null,
+              seatNum,
+              seatIdx,
+              totalSeats: tableSize,
+              playerIndex,
+            };
+          })
+      ).map(({ p, seatNum, seatIdx, totalSeats, playerIndex }) => {
+        const angle = (-90 + (seatIdx * 360) / totalSeats) * (Math.PI / 180);
         const x = 50 + 43 * Math.cos(angle);
         const y = 50 + 41 * Math.sin(angle);
-        const playerIndex = hand.players.findIndex((p) => p.seat === seatNum);
-        const p = playerIndex >= 0 ? hand.players[playerIndex] : null;
 
         if (!p) {
           return (
@@ -275,6 +293,8 @@ export default function PokerTable({
             ? `SB ${formatBetAmount(la.amount, cur)}`
             : la.type === 'bb'
             ? `BB ${formatBetAmount(la.amount, cur)}`
+            : la.type === '3b'
+            ? `3B ${formatBetAmount(la.amount, cur)}`
             : ''
           : allin
           ? 'All-in'
@@ -396,6 +416,13 @@ export default function PokerTable({
               <div className="flex gap-1.5">
                 {[0, 1, 2, 3, 4].map((i) => (
                   <Card key={`b${i}`} card={(hand.boardB || [])[i]} highlight={highlightKeys} anim={bAnim[i]?.anim} delay={bAnim[i]?.delay} style={bAnim[i]?.style} />
+                ))}
+              </div>
+            )}
+            {hasBoardC && (
+              <div className="flex gap-1.5">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <Card key={`c${i}`} card={(hand.boardC || [])[i]} highlight={highlightKeys} anim={cAnim[i]?.anim} delay={cAnim[i]?.delay} style={cAnim[i]?.style} />
                 ))}
               </div>
             )}

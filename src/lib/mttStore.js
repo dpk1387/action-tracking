@@ -338,15 +338,6 @@ export const mttStore = {
     emit();
     syncTicker();
   },
-  },
-
-  resumeTimer: () => {
-    state = {
-      ...state,
-      clock: { ...state.clock, isRunning: true },
-    };
-    emit();
-  },
 
   adjustSeconds: (deltaSeconds) => {
     const cur = state.clock.secondsLeft || 0;
@@ -734,6 +725,17 @@ export const mttStore = {
       },
     };
     emit();
+  },
+
+  loadTournament: (savedState) => {
+    if (savedState) {
+      state = {
+        ...defaultMTT(),
+        ...savedState,
+        active: true,
+      };
+      emit();
+    }
   },
 
   resetTournament: () => {

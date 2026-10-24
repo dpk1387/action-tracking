@@ -64,8 +64,12 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [stackInBB, setStackInBB] = useState(initial?.stackInBB || false);
   const [smallBlind, setSmallBlind] = useState(initial?.smallBlind ?? 25);
   const [bigBlind, setBigBlind] = useState(initial?.bigBlind ?? 50);
+  const [thirdBlind, setThirdBlind] = useState(initial?.thirdBlind ?? (initial?.bigBlind ? initial.bigBlind * 2 : 5));
+  const [fourthBlind, setFourthBlind] = useState(initial?.fourthBlind ?? (initial?.bigBlind ? initial.bigBlind * 4 : 10));
   const [anteType, setAnteType] = useState(initial?.anteType || 'bba');
   const [anteAmount, setAnteAmount] = useState(initial?.anteAmount ?? 50);
+  const [sbHalfAnteShortHanded, setSbHalfAnteShortHanded] = useState(initial?.sbHalfAnteShortHanded ?? true);
+  const [shortHandedThreshold, setShortHandedThreshold] = useState(initial?.shortHandedThreshold ?? 5);
   const [cashBlindsTouched, setCashBlindsTouched] = useState(false);
   const [allowStraddle, setAllowStraddle] = useState(initial ? !!initial.allowStraddle : false);
   const [straddleAmount, setStraddleAmount] = useState(initial?.straddleAmount ?? '');
@@ -120,8 +124,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     return [];
   });
   const [levelMethod, setLevelMethod] = useState(initial?.levelConfig?.method || 'minutes');
-  const [levelValue, setLevelValue] = useState(initial?.levelConfig?.value ?? 20);
-  const LEVEL_PRESETS = { minutes: 20, hands: 15, orbits: 2 };
+  const [levelValue, setLevelValue] = useState(initial?.levelConfig?.value ?? 15);
+  const LEVEL_PRESETS = { minutes: 15, hands: 15, orbits: 2 };
   const handleLevelMethodChange = (m) => {
     setLevelMethod(m);
     setLevelValue(LEVEL_PRESETS[m]);
@@ -129,7 +133,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
 
   const buildStructureData = () => ({
     mode, variant, gameType, currency, stackInBB, seatCount,
-    smallBlind, bigBlind, anteType, anteAmount,
+    smallBlind, bigBlind, thirdBlind, fourthBlind, anteType, anteAmount,
+    sbHalfAnteShortHanded, shortHandedThreshold,
     smallBet, bigBet, flMaxRaises,
     doubleBoard, allowStraddle, allowMultiStraddle, mandatoryStraddle,
     bombPot, bombAmount,
@@ -185,8 +190,12 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     }
     if (d.smallBlind != null) setSmallBlind(d.smallBlind);
     if (d.bigBlind != null) { setBigBlind(d.bigBlind); setCashBlindsTouched(true); }
+    if (d.thirdBlind != null) setThirdBlind(d.thirdBlind);
+    if (d.fourthBlind != null) setFourthBlind(d.fourthBlind);
     if (d.anteType != null) setAnteType(d.anteType);
     if (d.anteAmount != null) setAnteAmount(d.anteAmount);
+    if (d.sbHalfAnteShortHanded != null) setSbHalfAnteShortHanded(d.sbHalfAnteShortHanded);
+    if (d.shortHandedThreshold != null) setShortHandedThreshold(d.shortHandedThreshold);
     if (d.smallBet != null) setSmallBet(d.smallBet);
     if (d.bigBet != null) setBigBet(d.bigBet);
     if (d.flMaxRaises != null) setFlMaxRaises(d.flMaxRaises);
@@ -240,15 +249,22 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     setError('');
   };
 
-  const isBBA = anteType === 'bba';
   const isCash = mode === 'cash';
+  const isBBA = anteType === 'bba';
+  const isBtnAnte = anteType === 'btn_ante';
+  const isSBHalfAnte = anteType === 'sb_half_ante';
+  const isThreeBlinds = isCash && anteType === 'three_blinds';
   const sym = isCash ? currency || '$' : '';
   const stackUnit = !isCash && stackInBB ? 'bb' : sym;
   const isLow = variant === 'ace_to_five' || variant === 'deuce_to_seven';
   const effBB = isCash ? Number(bigBlind || 0) : Number(schedule[0]?.bigBlind || bigBlind || 0);
+  const bb = effBB || (isCash ? 2 : 50);
   const smallestChip = !isCash && chipDenoms.length ? Math.min(...chipDenoms.map(Number).filter((d) => d > 0)) : effBB;
 
-  useEffect(() => { if (isBBA) setAnteAmount(Number(bigBlind)); }, [isBBA, bigBlind]);
+  useEffect(() => {
+    if (isBBA || isBtnAnte) setAnteAmount(Number(bigBlind));
+    else if (isSBHalfAnte) setAnteAmount(Math.max(1, Math.round(Number(bigBlind) * 0.5)));
+  }, [isBBA, isBtnAnte, isSBHalfAnte, bigBlind]);
 
   const handleModeChange = (newMode) => {
     if (newMode === mode) return;
@@ -284,6 +300,15 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     });
   };
 
+  const removePlayer = (i) => {
+    if (players.length <= 2) return;
+    setPlayers((prev) => {
+      const next = prev.filter((_, idx) => idx !== i).map((p, idx) => ({ ...p, seat: idx + 1 }));
+      setSeatCount(next.length);
+      return next;
+    });
+  };
+
   const toggleSeatOccupied = (i) => {
     setPlayers((prev) => prev.map((p, idx) => idx === i ? { ...p, occupied: !p.occupied } : p));
   };
@@ -305,14 +330,24 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         if ((parseAmount(bigBlind) ?? Number(bigBlind)) <= 0 || (parseAmount(smallBlind) ?? Number(smallBlind)) <= 0) return setError('Blinds must be positive.');
       }
     }
+    if (anteType === 'three_blinds' || anteType === 'four_blinds') {
+      const tbVal = parseAmount(thirdBlind) ?? Number(thirdBlind);
+      if (tbVal <= 0) return setError('Third blind must be positive.');
+    }
+    if (anteType === 'four_blinds') {
+      const fbVal = parseAmount(fourthBlind) ?? Number(fourthBlind);
+      if (fbVal <= 0) return setError('Fourth blind must be positive.');
+    }
     if (isCash && anteType === 'traditional' && anteAmount !== '' && (parseAmount(anteAmount) ?? Number(anteAmount)) < 0) return setError('Ante cannot be negative.');
     if (!isCash) {
       for (const l of schedule) {
         if (l.type !== 'break' && ((parseAmount(l.smallBlind) ?? Number(l.smallBlind)) <= 0 || (parseAmount(l.bigBlind) ?? Number(l.bigBlind)) <= 0)) return setError('Every blind level must be positive.');
       }
     }
-    const occupiedPlayers = players.filter((p) => p.occupied);
-    if (occupiedPlayers.length < 2) return setError('At least 2 occupied seats are required.');
+    const occupiedPlayers = isCash
+      ? players.map((p, idx) => ({ ...p, seat: idx + 1, occupied: true }))
+      : players.filter((p) => p.occupied);
+    if (occupiedPlayers.length < 2) return setError('At least 2 active players are required.');
     const sb = isFL ? Math.max(1, Math.round((parseAmount(smallBet) ?? Number(smallBet)) / 2)) : useScheduleBlinds ? (parseAmount(schedFirst.smallBlind) ?? Number(schedFirst.smallBlind)) : (parseAmount(smallBlind) ?? Number(smallBlind));
     const bb = isFL ? (parseAmount(smallBet) ?? Number(smallBet)) : useScheduleBlinds ? (parseAmount(schedFirst.bigBlind) ?? Number(schedFirst.bigBlind)) : (parseAmount(bigBlind) ?? Number(bigBlind));
     const toChips = (val) => {
@@ -329,23 +364,35 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       gameType,
       currency: sym,
       stackInBB: !isCash && stackInBB,
-      tableSize: seatCount,
+      tableSize: isCash ? occupiedPlayers.length : seatCount,
       players: occupiedPlayers.map((p) => ({ ...p, name: (p.name || '').trim() || `Player ${p.seat}`, stack: toChips(p.stack) })),
       smallBlind: sb,
       bigBlind: bb,
+      thirdBlind: (anteType === 'three_blinds' || anteType === 'four_blinds') ? (parseAmount(thirdBlind) ?? Number(thirdBlind) ?? (bb * 2)) : undefined,
+      fourthBlind: anteType === 'four_blinds' ? (parseAmount(fourthBlind) ?? Number(fourthBlind) ?? (bb * 4)) : undefined,
       smallBet: isFL ? (parseAmount(smallBet) ?? Number(smallBet)) : undefined,
       bigBet: isFL ? (parseAmount(bigBet) ?? Number(bigBet)) : undefined,
       flMaxRaises: isFL ? Number(flMaxRaises) : undefined,
       anteType,
-      anteAmount: isBBA ? bb : isCash ? (parseAmount(anteAmount) ?? Number(anteAmount)) : anteType === 'traditional' ? (parseAmount(schedFirst.ante) ?? Number(schedFirst.ante)) : 0,
+      sbHalfAnteShortHanded: anteType === 'bba' ? sbHalfAnteShortHanded : false,
+      shortHandedThreshold: Number(shortHandedThreshold) || 5,
+      anteAmount: (anteType === 'bba' || anteType === 'btn_ante')
+        ? bb
+        : anteType === 'sb_half_ante'
+        ? Math.max(1, Math.round(bb * 0.5))
+        : isCash
+        ? (anteType === 'traditional' ? (parseAmount(anteAmount) ?? Number(anteAmount)) : 0)
+        : anteType === 'traditional'
+        ? (parseAmount(schedFirst.ante) ?? Number(schedFirst.ante))
+        : 0,
       doubleBoard: !isLow && doubleBoard,
       allowStraddle: isCash && !isFL && allowStraddle,
       straddleAmount: isCash && !isFL && allowStraddle && straddleAmount ? Number(straddleAmount) : (bb * 2),
       allowMultiStraddle: isCash && !isFL && allowMultiStraddle,
-      mandatoryStraddle: isCash && !isFL && mandatoryStraddle,
-      mandatoryStraddleAmount: isCash && !isFL && mandatoryStraddle && mandatoryStraddleAmount ? Number(mandatoryStraddleAmount) : (bb * 2),
-      mandatoryDoubleStraddle: isCash && !isFL && mandatoryStraddle && mandatoryDoubleStraddle,
-      mandatoryDoubleStraddleAmount: isCash && !isFL && mandatoryStraddle && mandatoryDoubleStraddle && mandatoryDoubleStraddleAmount ? Number(mandatoryDoubleStraddleAmount) : (Number(mandatoryStraddleAmount) || (bb * 2)) * 2,
+      mandatoryStraddle: false,
+      mandatoryStraddleAmount: undefined,
+      mandatoryDoubleStraddle: false,
+      mandatoryDoubleStraddleAmount: undefined,
       bombPot: isCash && bombPot,
       bombAmount: isCash ? (parseAmount(bombAmount) ?? Number(bombAmount)) || (bb * 5) : 0,
       levelConfig: isCash ? null : { method: levelMethod, value: Number(levelValue) > 0 ? Number(levelValue) : LEVEL_PRESETS[levelMethod] },
@@ -474,11 +521,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         </div>
         <div className="flex flex-wrap items-center gap-4 mb-4">
           <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-400">Seats</span>
+            <span className="text-sm text-slate-400">{isCash ? 'Players' : 'Seats'}</span>
             <button onClick={() => adjustSeats(-1)} className="rounded-md bg-[#2a2f37] p-1.5 text-white hover:bg-[#363c45] cursor-pointer"><Minus size={16} /></button>
             <span className="w-8 text-center text-white font-medium">{seatCount}</span>
             <button onClick={() => adjustSeats(1)} className="rounded-md bg-[#2a2f37] p-1.5 text-white hover:bg-[#363c45] cursor-pointer"><Plus size={16} /></button>
-            <span className="text-[11px] text-slate-500">table size – empty seats stay open</span>
+            <span className="text-[11px] text-slate-500">{isCash ? 'active players at table' : 'table size – empty seats stay open'}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400">Set all stacks</span>
@@ -494,19 +541,32 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
           {players.map((p, i) => (
-            <div key={i} className={`rounded-lg border p-3 ${p.occupied ? 'border-[#2a2f37] bg-[#15181d]' : 'border-dashed border-[#2a2f37] bg-[#121417] opacity-50'}`}>
+            <div key={i} className={`rounded-lg border p-3 ${isCash || p.occupied ? 'border-[#2a2f37] bg-[#15181d]' : 'border-dashed border-[#2a2f37] bg-[#121417] opacity-50'}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className="text-xs text-slate-500">Seat {p.seat}</div>
-                <button type="button" onClick={() => toggleSeatOccupied(i)} className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${p.occupied ? 'bg-[#4a5a4a] text-white' : 'bg-[#2a2f37] text-slate-400'}`}>
-                  {p.occupied ? 'Occupied' : 'Empty'}
-                </button>
+                <div className="text-xs text-slate-400 font-medium">{isCash ? `Player ${i + 1}` : `Seat ${p.seat}`}</div>
+                {!isCash ? (
+                  <button type="button" onClick={() => toggleSeatOccupied(i)} className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${p.occupied ? 'bg-[#4a5a4a] text-white' : 'bg-[#2a2f37] text-slate-400'}`}>
+                    {p.occupied ? 'Occupied' : 'Empty'}
+                  </button>
+                ) : (
+                  players.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => removePlayer(i)}
+                      className="text-slate-500 hover:text-rose-400 p-1 rounded cursor-pointer transition-colors"
+                      title="Remove player"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )
+                )}
               </div>
-              {p.occupied && (
+              {(isCash || p.occupied) && (
                 <>
                   <input
                     value={p.name}
                     onChange={(e) => updatePlayer(i, 'name', e.target.value)}
-                    placeholder={`Player ${p.seat}`}
+                    placeholder={`Player ${p.seat || (i + 1)}`}
                     className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm mb-2 focus:outline-none focus:border-[#4a5a4a] placeholder:text-slate-500"
                   />
                   <div className="flex items-center gap-2">
@@ -526,6 +586,17 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             </div>
           ))}
         </div>
+        {isCash && players.length < 10 && (
+          <div className="mb-5">
+            <button
+              type="button"
+              onClick={() => adjustSeats(1)}
+              className="px-3.5 py-2 rounded-lg border border-dashed border-[#2a2f37] hover:border-emerald-500/50 bg-[#15181d] hover:bg-[#1a2027] text-xs font-semibold text-emerald-400 flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Plus size={14} /> Add Player ({players.length + 1} of 10)
+            </button>
+          </div>
+        )}
         {!isCash && gameType !== 'fl' && (
           <div className="text-xs text-slate-500 mb-3">Blinds come from level 1 of the schedule below.</div>
         )}
@@ -544,37 +615,103 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                   else { setBigBlind(v); setCashBlindsTouched(true); if (anteType === 'traditional') setAnteAmount(suggestAnte(v)); }
                 }} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
               </div>
+              {(anteType === 'three_blinds' || anteType === 'four_blinds') && (
+                <div className="flex-1 min-w-[120px]">
+                  <label className="text-xs text-amber-300 font-semibold block mb-1">Third blind</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={thirdBlind}
+                    onChange={(e) => setThirdBlind(e.target.value)}
+                    placeholder={String((Number(bigBlind) || 2) * 2)}
+                    className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
+                  />
+                </div>
+              )}
+              {anteType === 'four_blinds' && (
+                <div className="flex-1 min-w-[120px]">
+                  <label className="text-xs text-amber-300 font-semibold block mb-1">Fourth blind</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={fourthBlind}
+                    onChange={(e) => setFourthBlind(e.target.value)}
+                    placeholder={String((Number(bigBlind) || 2) * 4)}
+                    className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
+                  />
+                </div>
+              )}
             </>
           )}
-          <div className="min-w-[140px]">
-            <label className="text-xs text-slate-400 block mb-1">Ante</label>
-            <select value={anteType} onChange={(e) => {
-              const t = e.target.value;
-              setAnteType(t);
-              if (t === 'traditional') setAnteAmount(suggestAnte(bigBlind));
-              else if (t === 'bba') setAnteAmount(Number(bigBlind));
-              else setAnteAmount(0);
-            }} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm">
+          <div className="min-w-[160px] flex-1">
+            <label className="text-xs text-slate-400 block mb-1">Ante / Blind Structure</label>
+            <select
+              value={anteType}
+              onChange={(e) => {
+                const t = e.target.value;
+                setAnteType(t);
+                if (t === 'traditional') setAnteAmount(suggestAnte(bigBlind));
+                else if (t === 'bba' || t === 'btn_ante') setAnteAmount(Number(bigBlind));
+                else if (t === 'sb_half_ante') setAnteAmount(Math.max(1, Math.round(Number(bigBlind) * 0.5)));
+                else setAnteAmount(0);
+              }}
+              className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+            >
               <option value="none">No ante</option>
-              <option value="traditional">Traditional</option>
-              <option value="bba">Big blind ante</option>
+              <option value="traditional">Traditional ante</option>
+              <option value="bba">Big blind ante (BBA)</option>
+              <option value="sb_half_ante">Small blind half ante (SB 0.5 BB)</option>
+              <option value="btn_ante">Button ante (BTN 1 BB)</option>
+              <option value="three_blinds">3 blinds</option>
+              <option value="four_blinds">4 blinds</option>
             </select>
           </div>
-          {isCash && (
+          {isCash && anteType !== 'three_blinds' && anteType !== 'four_blinds' && (
             <div className="flex-1 min-w-[120px]">
               <label className="text-xs text-slate-400 block mb-1">Ante amount</label>
               <input
                 type="text"
                 inputMode="decimal"
                 value={anteAmount}
-                disabled={anteType === 'none' || isBBA}
+                disabled={anteType === 'none' || isBBA || isBtnAnte || isSBHalfAnte}
                 onChange={(e) => setAnteAmount(e.target.value)}
                 className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40"
               />
-              {isBBA && <div className="text-[10px] text-slate-500 mt-1">= big blind</div>}
+              {isBBA && <div className="text-[10px] text-slate-500 mt-1">= 1 BB ({effBB}) for table</div>}
+              {isBtnAnte && <div className="text-[10px] text-emerald-400/80 mt-1">= 1 BB ({effBB}) paid by BTN</div>}
+              {isSBHalfAnte && <div className="text-[10px] text-amber-400/80 mt-1">= 0.5 BB ({Math.max(1, Math.round(effBB * 0.5))}) paid by SB</div>}
             </div>
           )}
         </div>
+        {anteType === 'bba' && (
+          <div className="rounded-lg border border-[#2a2f37] bg-[#12161c] p-3 mb-4 space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200">
+              <input
+                type="checkbox"
+                checked={sbHalfAnteShortHanded}
+                onChange={(e) => setSbHalfAnteShortHanded(e.target.checked)}
+                className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+              />
+              <span>Small blind half ante when table gets short (SB pays 0.5 BB ante for whole table)</span>
+            </label>
+            {sbHalfAnteShortHanded && (
+              <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
+                <span>When remaining players are fewer than:</span>
+                <input
+                  type="number"
+                  min="2"
+                  max="10"
+                  value={shortHandedThreshold}
+                  onChange={(e) => setShortHandedThreshold(Math.max(2, Math.min(10, Number(e.target.value) || 5)))}
+                  className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
+                />
+                <span className="text-[11px] text-slate-500">
+                  (Default: 5 — if less than {shortHandedThreshold} players remain, SB half ante is used instead of BBA)
+                </span>
+              </div>
+            )}
+          </div>
+        )}
         {gameType === 'fl' && (
           <div className="flex items-center gap-3 mb-4">
             <label className="text-xs text-slate-400 whitespace-nowrap">Max raises / street</label>
@@ -593,47 +730,12 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                   type="number"
                   value={straddleAmount}
                   onChange={(e) => setStraddleAmount(e.target.value)}
-                  placeholder={String(bb * 2)}
+                  placeholder="Amount"
                   className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1 text-white text-xs"
                 />
-                <span className="text-[11px] text-slate-500">(Default: 2x BB = {bb * 2})</span>
               </div>
             )}
-            <ToggleRow label="Allow re-straddle" checked={allowMultiStraddle} onChange={setAllowMultiStraddle} disabled={!allowStraddle && !mandatoryStraddle} />
-            <ToggleRow label="Mandatory straddle (third blind)" checked={mandatoryStraddle} onChange={setMandatoryStraddle} />
-            {mandatoryStraddle && (
-              <div className="space-y-2 pl-4 border-l-2 border-emerald-800/40 ml-2 py-1">
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-slate-400">Mandatory straddle amount:</label>
-                  <input
-                    type="number"
-                    value={mandatoryStraddleAmount}
-                    onChange={(e) => setMandatoryStraddleAmount(e.target.value)}
-                    placeholder={String(bb * 2)}
-                    className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1 text-white text-xs"
-                  />
-                  <span className="text-[11px] text-slate-500">(Default: 2x BB = {bb * 2})</span>
-                </div>
-                <ToggleRow
-                  label="Mandatory double straddle (fourth blind)"
-                  checked={mandatoryDoubleStraddle}
-                  onChange={setMandatoryDoubleStraddle}
-                />
-                {mandatoryDoubleStraddle && (
-                  <div className="flex items-center gap-2 pl-4">
-                    <label className="text-xs text-slate-400">Double straddle amount:</label>
-                    <input
-                      type="number"
-                      value={mandatoryDoubleStraddleAmount}
-                      onChange={(e) => setMandatoryDoubleStraddleAmount(e.target.value)}
-                      placeholder={String((Number(mandatoryStraddleAmount) || (bb * 2)) * 2)}
-                      className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1 text-white text-xs"
-                    />
-                    <span className="text-[11px] text-slate-500">(Default: 2x mandatory straddle)</span>
-                  </div>
-                )}
-              </div>
-            )}
+            <ToggleRow label="Allow re-straddle" checked={allowMultiStraddle} onChange={setAllowMultiStraddle} disabled={!allowStraddle} />
           </div>
         )}
         {!isCash && (
@@ -772,7 +874,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           </div>
         )}
         {/* Action Clock System Setup */}
-        <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
+        {!isCash && (
+          <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <Clock size={16} className="text-emerald-400" />
@@ -1049,6 +1152,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             </div>
           )}
         </div>
+        )}
 
         {error && <div className="text-sm text-rose-400 mb-3">{error}</div>}
         <button onClick={save} className="w-full rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white font-medium py-2.5 transition-colors cursor-pointer">

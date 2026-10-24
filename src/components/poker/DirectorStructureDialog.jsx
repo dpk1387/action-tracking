@@ -20,35 +20,64 @@ import { defaultScheduleFor, defaultDenomsFor, ALL_DENOMINATIONS } from '@/lib/t
 import ChipDenominationPicker from '@/components/poker/ChipDenominationPicker';
 import BlindScheduleEditor from '@/components/poker/BlindScheduleEditor';
 
-export function generateBalancedEnvelopes(targetBountyPool, totalPlayers = 16) {
+export function generateBalancedEnvelopes(targetBountyPool, targetEnvelopesCount = 15) {
+  const count = Math.max(1, Number(targetEnvelopesCount) || 1);
   const pool = Math.max(0, Number(targetBountyPool) || 0);
   if (pool <= 0) {
+    return [{ id: 'env_1', quantity: count, amount: 0 }];
+  }
+  if (count === 1) {
+    return [{ id: 'env_1', quantity: 1, amount: pool }];
+  }
+  if (count === 2) {
+    const top = Math.round(pool * 0.7);
     return [
-      { id: 'env_1', quantity: 1, amount: 100 },
-      { id: 'env_2', quantity: 2, amount: 50 },
+      { id: 'env_1', quantity: 1, amount: top },
+      { id: 'env_2', quantity: 1, amount: pool - top },
     ];
   }
-  const grand = Math.max(10, Math.round((pool * 0.35) / 10) * 10);
-  const major = Math.max(5, Math.round((pool * 0.15) / 5) * 5);
-  const mid = Math.max(5, Math.round((pool * 0.08) / 5) * 5);
-  const allocatedSoFar = grand + major * 2 + mid * 2;
-  const rem = pool - allocatedSoFar;
-  const baseQty = Math.max(2, Math.min(8, Math.round((Number(totalPlayers) || 16) * 0.25)));
-  const baseAmt = rem > 0 ? Math.max(1, Math.floor(rem / baseQty)) : 0;
-  const leftover = pool - (allocatedSoFar + baseAmt * baseQty);
+  if (count <= 4) {
+    const top = Math.round(pool * 0.5);
+    const restQty = count - 1;
+    const baseAmt = Math.floor((pool - top) / restQty);
+    const rem = pool - (top + baseAmt * restQty);
+    return [
+      { id: 'env_1', quantity: 1, amount: top + rem },
+      { id: 'env_2', quantity: restQty, amount: baseAmt },
+    ];
+  }
 
-  const list = [
-    { id: 'env_1', quantity: 1, amount: grand },
-    { id: 'env_2', quantity: 2, amount: major },
-    { id: 'env_3', quantity: 2, amount: mid },
+  // 4 tiers for count >= 5
+  let q1 = 1;
+  let q2 = Math.max(1, Math.round(count * 0.1));
+  let q3 = Math.max(1, Math.round(count * 0.2));
+  let q4 = count - q1 - q2 - q3;
+
+  while (q4 < 1 && q3 > 1) {
+    q3--;
+    q4 = count - q1 - q2 - q3;
+  }
+  while (q4 < 1 && q2 > 1) {
+    q2--;
+    q4 = count - q1 - q2 - q3;
+  }
+
+  const grandAmt = Math.max(10, Math.round((pool * 0.35) / 10) * 10);
+  const majorAmt = Math.max(5, Math.round((pool * 0.20 / q2) / 5) * 5);
+  const midAmt = Math.max(5, Math.round((pool * 0.20 / q3) / 5) * 5);
+  const allocatedSoFar = grandAmt * q1 + majorAmt * q2 + midAmt * q3;
+  const remPool = pool - allocatedSoFar;
+  const baseAmt = remPool > 0 ? Math.max(1, Math.floor(remPool / q4)) : 1;
+
+  const totalAllocated = grandAmt * q1 + majorAmt * q2 + midAmt * q3 + baseAmt * q4;
+  const diff = pool - totalAllocated;
+
+  return [
+    { id: 'env_1', quantity: q1, amount: grandAmt + diff },
+    { id: 'env_2', quantity: q2, amount: majorAmt },
+    { id: 'env_3', quantity: q3, amount: midAmt },
+    { id: 'env_4', quantity: q4, amount: baseAmt },
   ];
-  if (baseAmt > 0) {
-    list.push({ id: 'env_4', quantity: baseQty, amount: baseAmt });
-  }
-  if (leftover !== 0) {
-    list[0].amount += leftover;
-  }
-  return list;
 }
 
 export default function DirectorStructureDialog({
@@ -112,12 +141,10 @@ export default function DirectorStructureDialog({
   const [bountyPercent, setBountyPercent] = useState(
     initialData.bountyPercent != null ? initialData.bountyPercent : 50
   );
-  const [mysteryBountyPhase, setMysteryBountyPhase] = useState(
-    initialData.mysteryBountyConfig?.startPhase || 'itm'
-  );
-  const [mysteryBountyLevel, setMysteryBountyLevel] = useState(
-    initialData.mysteryBountyConfig?.startLevel || 8
-  );
+  const [mysteryBountyPhase, setMysteryBountyPhase] = useState(() => {
+    const p = initialData.mysteryBountyConfig?.startPhase;
+    return p === 'field' ? 'field' : 'itm';
+  });
   const [mysteryBountyField, setMysteryBountyField] = useState(
     initialData.mysteryBountyConfig?.startFieldSize || 18
   );
@@ -127,7 +154,14 @@ export default function DirectorStructureDialog({
     }
     const initPool = (Number(initialData.totalPlayers) || 16) * (Number(initialData.buyIn) || 100);
     const bPool = Math.round((initPool * (initialData.bountyPercent ?? 50)) / 100);
-    return generateBalancedEnvelopes(bPool, initialData.totalPlayers || 16);
+    const phase = initialData.mysteryBountyConfig?.startPhase === 'field' ? 'field' : 'itm';
+    let targetLeft = 16;
+    if (phase === 'field') {
+      targetLeft = Math.max(2, Number(initialData.mysteryBountyConfig?.startFieldSize) || 18);
+    } else {
+      targetLeft = Math.max(2, Math.round((Number(initialData.totalPlayers) || 16) * 0.15));
+    }
+    return generateBalancedEnvelopes(bPool, Math.max(1, targetLeft - 1));
   });
 
   // Level Setup: Denominations, Ante Choice, Schedule
@@ -144,10 +178,13 @@ export default function DirectorStructureDialog({
     return defaultScheduleFor(lowest);
   });
 
-  // Player Names (with auto-filler logic)
+  // Player Names (empty by default, do not preload with fillers)
   const [playerNamesInput, setPlayerNamesInput] = useState(() => {
     if (initialData.players && initialData.players.length > 0) {
-      return initialData.players.map((p) => p.name).join('\n');
+      const real = initialData.players
+        .map((p) => p.name)
+        .filter((n) => n && !n.match(/^Player\s+\d+$/i));
+      if (real.length > 0) return real.join('\n');
     }
     return '';
   });
@@ -269,24 +306,42 @@ export default function DirectorStructureDialog({
   };
 
   const handleAutoBalanceEnvelopes = () => {
-    setMysteryEnvelopes(generateBalancedEnvelopes(bountyPoolAmount, totalPlayers));
+    let targetLeft = 16;
+    if (mysteryBountyPhase === 'field') {
+      targetLeft = Math.max(2, Number(mysteryBountyField) || 18);
+    } else {
+      const itmCount = previewPayouts.length || payoutConfig.length || Math.round((Number(totalPlayers) || 16) * 0.15);
+      targetLeft = Math.max(2, itmCount);
+    }
+    const targetCount = Math.max(1, targetLeft - 1);
+    setMysteryEnvelopes(generateBalancedEnvelopes(bountyPoolAmount, targetCount));
   };
 
-  // Computed Player Roster with "Player X" filler
+  const handlePlayerNamesChange = (val) => {
+    setPlayerNamesInput(val);
+    const names = val
+      .split(/\n|,/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (names.length > 0) {
+      setTotalPlayers(names.length);
+    }
+  };
+
+  // Computed Player Roster
   const parsedPlayerNames = useMemo(() => {
     const rawLines = playerNamesInput
       .split(/\n|,/)
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
 
-    const count = Math.max(rawLines.length, Number(totalPlayers) || 1);
+    if (rawLines.length > 0) {
+      return rawLines;
+    }
+    const count = Number(totalPlayers) || 16;
     const list = [];
     for (let i = 1; i <= count; i++) {
-      if (i - 1 < rawLines.length) {
-        list.push(rawLines[i - 1]);
-      } else {
-        list.push(`Player ${i}`);
-      }
+      list.push(`Player ${i}`);
     }
     return list;
   }, [playerNamesInput, totalPlayers]);
@@ -843,9 +898,7 @@ export default function DirectorStructureDialog({
                       </label>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {[
-                          { id: 'itm', label: 'In the Money', desc: 'When the bubble bursts (ITM)' },
-                          { id: 'freezeout', label: 'Freezeout', desc: 'When late registration closes' },
-                          { id: 'level', label: 'Specific Level', desc: `Starts at Level ${mysteryBountyLevel}` },
+                          { id: 'itm', label: 'In the Money (ITM)', desc: 'Starts when the bubble bursts' },
                           { id: 'field', label: 'Field Size', desc: `Starts at ${mysteryBountyField} players remaining` },
                         ].map((phase) => (
                           <label
@@ -872,21 +925,7 @@ export default function DirectorStructureDialog({
                         ))}
                       </div>
 
-                      {/* Inputs for Specific Level or Field Size */}
-                      {mysteryBountyPhase === 'level' && (
-                        <div className="flex items-center gap-2 p-2.5 bg-[#141922] rounded-lg border border-slate-800 mt-2">
-                          <span className="text-slate-300 text-xs">Start Level:</span>
-                          <input
-                            type="number"
-                            min="1"
-                            value={mysteryBountyLevel}
-                            onChange={(e) => setMysteryBountyLevel(Math.max(1, Number(e.target.value) || 1))}
-                            className="w-20 bg-[#1b202a] border border-slate-700 rounded-lg px-2.5 py-1 text-white text-xs font-mono text-center"
-                          />
-                          <span className="text-slate-400 text-[11px]">(e.g. Level 8)</span>
-                        </div>
-                      )}
-
+                      {/* Input for Field Size */}
                       {mysteryBountyPhase === 'field' && (
                         <div className="flex items-center gap-2 p-2.5 bg-[#141922] rounded-lg border border-slate-800 mt-2">
                           <span className="text-slate-300 text-xs">Field Size (Players Remaining):</span>
@@ -1029,13 +1068,15 @@ export default function DirectorStructureDialog({
               {/* Ante Choice */}
               <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-2">
                 <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                  Ante Format Choice
+                  Ante Structure
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {[
-                    { id: 'bba', label: 'Big Blind Ante (BBA)', desc: '25 / 50 - 50 (BBA)' },
-                    { id: 'traditional', label: 'Traditional Ante', desc: 'SB / BB / ANTE (ANTE)' },
-                    { id: 'none', label: 'No Ante', desc: 'SB / BB' },
+                    { id: 'bba', label: 'Big Blind Ante (BBA)', desc: 'BB posts ante for the entire table' },
+                    { id: 'traditional', label: 'Traditional Ante', desc: 'Every player posts an individual ante each hand' },
+                    { id: 'none', label: 'No Ante', desc: 'Standard blinds only, no ante posted' },
+                    { id: 'sb_half_ante', label: 'Small Blind Half Ante', desc: 'Small blind posts a half-size ante for table' },
+                    { id: 'btn_ante', label: 'Button Ante', desc: 'Button posts the single ante for table' },
                   ].map((opt) => (
                     <button
                       key={opt.id}
@@ -1048,7 +1089,7 @@ export default function DirectorStructureDialog({
                       }`}
                     >
                       <div className="font-bold text-xs">{opt.label}</div>
-                      <div className="text-[10px] text-slate-400 mt-1 font-mono">{opt.desc}</div>
+                      <div className="text-[10px] text-slate-400 mt-1 leading-snug">{opt.desc}</div>
                     </button>
                   ))}
                 </div>
@@ -1091,7 +1132,7 @@ export default function DirectorStructureDialog({
             </div>
           )}
 
-          {/* TAB 3: PLAYERS ROSTER (Enter names, filler Player X) */}
+          {/* TAB 3: PLAYERS ROSTER */}
           {activeTab === 'players' && (
             <div className="space-y-4">
               <div>
@@ -1099,29 +1140,25 @@ export default function DirectorStructureDialog({
                   Player Names Roster
                 </label>
                 <div className="text-xs text-slate-400 mb-2">
-                  Enter player names (one per line or separated by commas). If fewer than {totalPlayers} names are entered, remaining slots will automatically be filled as "Player X".
+                  Enter player names (one per line or separated by commas). The field player count will automatically update based on the number of names entered.
                 </div>
                 <textarea
                   rows={6}
                   value={playerNamesInput}
-                  onChange={(e) => setPlayerNamesInput(e.target.value)}
+                  onChange={(e) => handlePlayerNamesChange(e.target.value)}
                   placeholder="e.g.&#10;Alice&#10;Bob&#10;Charlie&#10;Dave"
                   className="w-full bg-[#181d26] border border-slate-700 rounded-xl p-3 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
-              {/* Live Roster Preview with filler */}
+              {/* Live Roster Preview */}
               <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-2">
                 <div className="flex items-center justify-between text-xs text-slate-300 font-semibold">
-                  <span>Current Field Roster Preview ({parsedPlayerNames.length} Players):</span>
+                  <span>Current Field Roster ({parsedPlayerNames.length} Players):</span>
                   <span className="text-emerald-400 text-[11px]">
-                    {playerNamesInput.split(/\n|,/).filter((s) => s.trim().length > 0).length} named ·{' '}
-                    {Math.max(
-                      0,
-                      parsedPlayerNames.length -
-                        playerNamesInput.split(/\n|,/).filter((s) => s.trim().length > 0).length
-                    )}{' '}
-                    filler slots
+                    {playerNamesInput.split(/\n|,/).filter((s) => s.trim().length > 0).length > 0
+                      ? `${parsedPlayerNames.length} named entries`
+                      : `Using ${parsedPlayerNames.length} default player slots`}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-h-44 overflow-y-auto pr-1">

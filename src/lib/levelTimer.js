@@ -6,7 +6,7 @@ export const LEVEL_METHODS = [
   { id: 'orbits', label: 'Orbits' },
 ];
 
-export const LEVEL_DEFAULTS = { minutes: 20, hands: 15, orbits: 2 };
+export const LEVEL_DEFAULTS = { minutes: 15, hands: 15, orbits: 2 };
 export const BREAK_DEFAULT_MINUTES = 5;
 
 export function defaultLevelConfig() {
@@ -222,14 +222,19 @@ export function applyNextLevel(hand) {
   const bbNum = parseAmount(lvl.bigBlind) ?? Number(lvl.bigBlind) ?? 0;
   const sbNum = parseAmount(lvl.smallBlind) ?? Number(lvl.smallBlind) ?? 0;
   const anteNum = parseAmount(lvl.ante) ?? Number(lvl.ante) ?? 0;
-  const ante = hand.anteType === 'bba'
+  const activeCount = (hand.players || []).filter((p) => p.status !== 'eliminated' && p.status !== 'out' && (p.stack > 0 || p.initialStack > 0)).length;
+  const isShortHandedSB = hand.sbHalfAnteShortHanded && activeCount < (Number(hand.shortHandedThreshold) || 5);
+  const effectiveAnte = hand.anteType === 'bba' && isShortHandedSB ? 'sb_half_ante' : hand.anteType;
+  const ante = (effectiveAnte === 'bba' || effectiveAnte === 'btn_ante')
     ? bbNum
+    : effectiveAnte === 'sb_half_ante'
+    ? Math.round(bbNum * 0.5 * 100) / 100
     : (lvl.ante != null && lvl.ante !== '' ? anteNum : 0);
   return {
     ...hand,
     smallBlind: sbNum,
     bigBlind: bbNum,
-    anteAmount: hand.anteType === 'bba' ? bbNum : ante,
+    anteAmount: ante,
     blindLevel: target,
   };
 }

@@ -6,7 +6,9 @@ import { suggestNextBlinds } from '@/lib/tournamentStructures';
 
 export default function BlindScheduleEditor({ schedule, onChange, anteType, chipDenominations }) {
   const isBBA = anteType === 'bba';
-  const isNone = anteType === 'none';
+  const isBtnAnte = anteType === 'btn_ante';
+  const isSBHalfAnte = anteType === 'sb_half_ante';
+  const isNone = anteType === 'none' || anteType === 'three_blinds';
   const isTraditional = anteType === 'traditional';
 
   const ensureType = (item) =>
@@ -17,7 +19,8 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
       if (idx !== i) return l;
       const item = ensureType(l);
       const next = { ...item, [field]: value };
-      if (next.type === 'level' && isBBA && field === 'bigBlind') next.ante = value;
+      if (next.type === 'level' && (isBBA || isBtnAnte) && field === 'bigBlind') next.ante = value;
+      else if (next.type === 'level' && isSBHalfAnte && field === 'bigBlind') next.ante = formatKM(Math.max(1, Math.round((parseAmount(value) ?? Number(value)) * 0.5)));
       else if (next.type === 'level' && isTraditional && field === 'bigBlind') next.ante = formatKM(suggestAnte(parseAmount(value) ?? Number(value)));
       return next;
     }));
@@ -29,7 +32,11 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
       type: 'level',
       smallBlind: suggestion.smallBlind,
       bigBlind: suggestion.bigBlind,
-      ante: isBBA ? suggestion.bigBlind : (isTraditional ? suggestAnte(suggestion.bigBlind) : 0),
+      ante: (isBBA || isBtnAnte)
+        ? suggestion.bigBlind
+        : isSBHalfAnte
+        ? Math.max(1, Math.round(suggestion.bigBlind * 0.5))
+        : (isTraditional ? suggestAnte(suggestion.bigBlind) : 0),
       minutes: '',
     }]);
   };
@@ -175,8 +182,16 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
                         <input
                           type="text"
                           inputMode="decimal"
-                          value={isBBA ? item.bigBlind : (isTraditional ? (item.ante != null && item.ante !== '' ? item.ante : suggestAnte(parseAmount(item.bigBlind) ?? Number(item.bigBlind))) : (item.ante || 0))}
-                          disabled={isBBA || isNone}
+                          value={
+                            (isBBA || isBtnAnte)
+                              ? item.bigBlind
+                              : isSBHalfAnte
+                              ? formatKM(Math.max(1, Math.round((parseAmount(item.bigBlind) ?? Number(item.bigBlind)) * 0.5)))
+                              : isTraditional
+                              ? (item.ante != null && item.ante !== '' ? item.ante : suggestAnte(parseAmount(item.bigBlind) ?? Number(item.bigBlind)))
+                              : (item.ante || 0)
+                          }
+                          disabled={isBBA || isBtnAnte || isSBHalfAnte || isNone}
                           onChange={(e) => updateRow(i, 'ante', e.target.value)}
                           onBlur={(e) => {
                             const p = parseAmount(e.target.value);

@@ -155,7 +155,7 @@ export default function Spectator() {
             </h1>
           </div>
           <div className="text-right text-xs text-slate-400">
-            <div>Blinds: {formatBlinds(hand)}</div>
+            <div>{hand.bombPot ? formatBlinds(hand) : `Blinds: ${formatBlinds(hand)}`}</div>
           </div>
         </div>
 
@@ -183,7 +183,7 @@ export default function Spectator() {
           </h1>
         </div>
         <div className="text-right text-xs text-slate-400">
-          <div>Blinds: {formatBlinds(hand)}</div>
+          <div>{hand.bombPot ? formatBlinds(hand) : `Blinds: ${formatBlinds(hand)}`}</div>
         </div>
       </div>
 

@@ -17,6 +17,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useMTT, mttStore } from '@/lib/mttStore';
+import { saveNow, ensureSaveCode, loadSavedSession, getShareCode, setShareCode } from '@/lib/liveSync';
 import TournamentClockView from '@/components/poker/TournamentClockView';
 import DirectorControlDock from '@/components/poker/DirectorControlDock';
 import DirectorStructureDialog from '@/components/poker/DirectorStructureDialog';
@@ -32,8 +33,8 @@ export default function MTTDirector() {
   const mtt = useMTT();
   const navigate = useNavigate();
 
-  // Modals state - always show setup screen on enter as requested
-  const [showStructureModal, setShowStructureModal] = useState(true);
+  // Modals state - show setup modal if tournament is not yet active
+  const [showStructureModal, setShowStructureModal] = useState(!mtt.active);
   const [showBustModal, setShowBustModal] = useState(false);
   const [showSetLevelModal, setShowSetLevelModal] = useState(false);
   const [showPreplanModal, setShowPreplanModal] = useState(false);
@@ -44,6 +45,23 @@ export default function MTTDirector() {
   const [showEndSessionModal, setShowEndSessionModal] = useState(false);
 
   const remainingPlayers = mtt.remainingPlayers ?? mtt.totalPlayers ?? 0;
+
+  // Resume / Load saved session from code
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code') || urlParams.get('resume');
+    if (code) {
+      if (code !== getShareCode()) setShareCode(code);
+      loadSavedSession(code).then((res) => {
+        if (res?.saved?.director) {
+          mttStore.loadTournament(res.saved.director);
+          setShowStructureModal(false);
+        }
+      });
+    } else if (mtt.active) {
+      setShowStructureModal(false);
+    }
+  }, []);
 
   // Automatically trigger tournament end dialog when 1 player remains
   useEffect(() => {
@@ -233,7 +251,11 @@ export default function MTTDirector() {
         isOpen={showEndTournamentModal}
         directorState={mtt}
         onClose={() => setShowEndTournamentModal(false)}
-        onContinueHome={() => {
+        onContinueHome={async () => {
+          try {
+            ensureSaveCode();
+            await saveNow({ director: mttStore.get() });
+          } catch (e) {}
           setShowEndTournamentModal(false);
           navigate('/');
         }}
@@ -269,7 +291,11 @@ export default function MTTDirector() {
             <div className="space-y-2.5">
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
+                  try {
+                    ensureSaveCode();
+                    await saveNow({ director: mttStore.get() });
+                  } catch (e) {}
                   setShowEndSessionModal(false);
                   navigate('/');
                 }}

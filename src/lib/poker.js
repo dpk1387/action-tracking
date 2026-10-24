@@ -79,20 +79,68 @@ export function parseAmount(raw) {
   return Math.round(v * mult * 100) / 100;
 }
 
+export function calcAnteForType(anteType, bigBlind, levelAnte) {
+  const bb = parseAmount(bigBlind) ?? Number(bigBlind) ?? 0;
+  const lAnte = parseAmount(levelAnte) ?? Number(levelAnte) ?? 0;
+  if (anteType === 'bba' || anteType === 'btn_ante') return bb;
+  if (anteType === 'sb_half_ante') return Math.round(bb * 0.5 * 100) / 100;
+  if (anteType === 'traditional') return lAnte > 0 ? lAnte : suggestAnte(bb);
+  return 0;
+}
+
 export function formatBlinds(hand) {
   if (!hand) return '';
   const cur = hand.currency || '';
+
+  if (hand.bombPot) {
+    const bombAmt = hand.bombAmount || (hand.bigBlind ? hand.bigBlind * 5 : 0);
+    return `${money(bombAmt, cur)} Ante (Bomb Pot)`;
+  }
+
   const sb = money(hand.smallBlind, cur);
   const bb = money(hand.bigBlind, cur);
-  if (hand.anteType === 'bba') {
+
+  if (hand.anteType === 'four_blinds') {
+    const tbVal = hand.thirdBlind || (hand.bigBlind * 2);
+    const fbVal = hand.fourthBlind || (hand.bigBlind * 4);
+    const tb = money(tbVal, cur);
+    const fb = money(fbVal, cur);
+    return `${sb} / ${bb} / ${tb} / ${fb} (4 BLINDS)`;
+  }
+
+  if (hand.anteType === 'three_blinds') {
+    const tbVal = hand.thirdBlind || (hand.bigBlind * 2);
+    const tb = money(tbVal, cur);
+    return `${sb} / ${bb} / ${tb} (3 BLINDS)`;
+  }
+
+  const activeCount = (hand.players || []).filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
+  const isShortHandedSB = hand.sbHalfAnteShortHanded && activeCount < (Number(hand.shortHandedThreshold) || 5);
+  const effectiveAnte = hand.anteType === 'bba' && isShortHandedSB ? 'sb_half_ante' : hand.anteType;
+
+  if (effectiveAnte === 'sb_half_ante') {
+    const halfAmt = Math.round((Number(hand.bigBlind) || 0) * 0.5 * 100) / 100;
+    const halfStr = money(halfAmt, cur);
+    return `${sb} / ${bb} - ${halfStr} (SB 1/2 ANTE)`;
+  }
+
+  if (effectiveAnte === 'btn_ante') {
+    const btnAmt = hand.anteAmount || hand.bigBlind;
+    const btnStr = money(btnAmt, cur);
+    return `${sb} / ${bb} - ${btnStr} (BTN ANTE)`;
+  }
+
+  if (effectiveAnte === 'bba') {
     const bbaAmt = hand.anteAmount || hand.bigBlind;
     const bba = money(bbaAmt, cur);
     return `${sb} / ${bb} - ${bba} (BBA)`;
   }
-  if (hand.anteType === 'traditional' && (parseAmount(hand.anteAmount) ?? Number(hand.anteAmount)) > 0) {
+
+  if (effectiveAnte === 'traditional' && (parseAmount(hand.anteAmount) ?? Number(hand.anteAmount)) > 0) {
     const ante = money(hand.anteAmount, cur);
     return `${sb} / ${bb} / ${ante} (ANTE)`;
   }
+
   return `${sb} / ${bb}`;
 }
 
@@ -156,7 +204,7 @@ export function formatPlayerTagAmount(val, currency = '', hand = null) {
   if (absN < 100000) {
     const hasDec = !Number.isInteger(absN);
     const numStr = absN.toLocaleString('en-US', {
-      minimumFractionDigits: 0,
+      minimumFractionDigits: hasDec ? 2 : 0,
       maximumFractionDigits: hasDec ? 2 : 0,
     });
     return `${sign}${sym}${numStr}`;
@@ -227,7 +275,12 @@ export function formatSidePotAmount(amt, currency = '') {
 
   // Show full number if under 10,000
   if (absN < 10000) {
-    return `${sign}${sym}${absN.toLocaleString('en-US')}`;
+    const hasDec = !Number.isInteger(absN);
+    const numStr = absN.toLocaleString('en-US', {
+      minimumFractionDigits: hasDec ? 2 : 0,
+      maximumFractionDigits: hasDec ? 2 : 0,
+    });
+    return `${sign}${sym}${numStr}`;
   }
 
   // Only if between 10K-100K and 1M-100M should 1 decimal digit be used
@@ -258,7 +311,7 @@ export function formatBetAmount(val, currency = '') {
   if (absN < 1000) {
     const hasDec = !Number.isInteger(absN);
     const numStr = absN.toLocaleString('en-US', {
-      minimumFractionDigits: 0,
+      minimumFractionDigits: hasDec ? 2 : 0,
       maximumFractionDigits: hasDec ? 2 : 0,
     });
     return `${sign}${sym}${numStr}`;
@@ -288,7 +341,7 @@ export function positionForSeat(n, buttonIndex, seatOrderIndex) {
   const offset = (seatOrderIndex - buttonIndex + n) % n;
   let label = labels[offset];
   if (n === 2 && label === 'BTN') label = 'D/SB';
-  return label;
+  return label || 'P';
 }
 
 export function effectiveHoleSize(hand) {
@@ -450,6 +503,8 @@ export function actionLabel(la) {
   if (la.type === 'allin') return 'All-in';
   if (la.type === 'sb') return 'SB';
   if (la.type === 'bb') return 'BB';
+  if (la.type === '3b') return '3B';
+  if (la.type === '4b') return '4B';
   if (la.type === 'straddle') return 'Straddle';
   if (la.type === 'kill') return 'Kill';
   if (la.type === 'bet' || la.type === 'raise') return raiseLabel(la.raiseLevel);
@@ -474,12 +529,30 @@ export function startHand(config, buttonSeat, handNumber) {
   }));
   const n = players.length;
   const buttonIndex = players.findIndex((p) => p.seat === buttonSeat);
+  const isThreeBlinds = config.anteType === 'three_blinds' && n >= 3;
+  const isFourBlinds = config.anteType === 'four_blinds' && n >= 4;
   const sbIndex = n === 2 ? buttonIndex : (buttonIndex + 1) % n;
   const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
-  const bba = config.anteType === 'bba';
-  const ante = bba ? config.bigBlind : (config.anteAmount || 0);
+  const tbIndex = (isThreeBlinds || isFourBlinds) ? (buttonIndex + 3) % n : -1;
+  const fbIndex = isFourBlinds ? (buttonIndex + 4) % n : -1;
+
+  const activeCount = players.filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
+  const isShortHandedSB = config.sbHalfAnteShortHanded && activeCount < (Number(config.shortHandedThreshold) || 5);
+  let effectiveAnteType = config.anteType;
+  if (config.anteType === 'bba' && isShortHandedSB) {
+    effectiveAnteType = 'sb_half_ante';
+  }
+
+  const bba = effectiveAnteType === 'bba';
+  const isBtnAnte = effectiveAnteType === 'btn_ante';
+  const isSBHalfAnte = effectiveAnteType === 'sb_half_ante';
+  const ante = (bba || isBtnAnte)
+    ? config.bigBlind
+    : isSBHalfAnte
+    ? Math.round((Number(config.bigBlind) || 0) * 0.5 * 100) / 100
+    : (config.anteAmount || 0);
   const variant = config.variant || 'holdem';
-  const bombPot = !!config.bombPot && (config.mode === 'cash');
+  const bombPot = !!config.bombPot;
   const bombAmount = Number(config.bombAmount) || config.bigBlind;
   const wasKill = !!config.killActive && config.killSeat != null;
 
@@ -488,8 +561,17 @@ export function startHand(config, buttonSeat, handNumber) {
     buttonSeat,
     smallBlind: config.smallBlind,
     bigBlind: config.bigBlind,
+    thirdBlind: config.thirdBlind != null ? Number(config.thirdBlind) : (config.bigBlind * 2),
+    fourthBlind: config.fourthBlind != null ? Number(config.fourthBlind) : (config.bigBlind * 4),
     anteType: config.anteType,
-    anteAmount: bba ? config.bigBlind : (config.anteAmount || 0),
+    effectiveAnteType,
+    sbHalfAnteShortHanded: !!config.sbHalfAnteShortHanded,
+    shortHandedThreshold: Number(config.shortHandedThreshold) || 5,
+    anteAmount: (effectiveAnteType === 'bba' || effectiveAnteType === 'btn_ante')
+      ? config.bigBlind
+      : effectiveAnteType === 'sb_half_ante'
+      ? Math.round((Number(config.bigBlind) || 0) * 0.5 * 100) / 100
+      : (config.anteAmount || 0),
     actionHistory: [],
     handNumber,
     phase: 'playing',
@@ -509,6 +591,7 @@ export function startHand(config, buttonSeat, handNumber) {
     pauseStart: config.pauseStart ?? null,
     pendingLevelIdx: config.pendingLevelIdx ?? (config.blindLevel || 0),
     variant,
+    baseVariant: config.baseVariant || (bombPot ? (config.baseVariant || 'holdem') : variant),
     bombPot,
     bombAmount,
     bombBoards: Number(config.bombBoards) || (config.doubleBoard ? 2 : 1),
@@ -522,7 +605,7 @@ export function startHand(config, buttonSeat, handNumber) {
     killIdx: -1,
     killDeferred: false,
     gameType: config.gameType || 'nl',
-    doubleBoard: !!config.doubleBoard || (Number(config.bombBoards) >= 2),
+    doubleBoard: bombPot ? (Number(config.bombBoards) >= 2) : !!config.doubleBoard,
     boardB: [],
     boardC: [],
     straddleAmount: config.straddleAmount != null ? Number(config.straddleAmount) : null,
@@ -576,11 +659,14 @@ export function startHand(config, buttonSeat, handNumber) {
       const a = Math.min(bombAmount, p.stack);
       p.stack -= a;
       p.totalBet += a;
+      p.currentBet = 0;
     });
     players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
     const bCount = Number(config.bombBoards) || (common.doubleBoard ? 2 : 1);
+    const mainPotAmt = players.reduce((s, p) => s + p.totalBet, 0);
     return {
       ...common,
+      pots: [{ amount: mainPotAmt, eligible: players.map((p) => p.id) }],
       street: 'flop',
       currentBet: 0,
       lastRaiseAmount: config.bigBlind,
@@ -602,7 +688,7 @@ export function startHand(config, buttonSeat, handNumber) {
     };
   }
 
-  if (config.anteType === 'traditional' && ante > 0) {
+  if (effectiveAnteType === 'traditional' && ante > 0) {
     players.forEach((p) => {
       const a = Math.min(ante, p.stack);
       p.stack -= a;
@@ -622,11 +708,46 @@ export function startHand(config, buttonSeat, handNumber) {
   players[bbIndex].totalBet += bb;
   players[bbIndex].lastAction = { type: 'bb', amount: bb };
 
+  if (isFourBlinds && tbIndex >= 0 && fbIndex >= 0) {
+    const tbTarget = Number(config.thirdBlind) || (config.bigBlind * 2);
+    const tb = Math.min(tbTarget, players[tbIndex].stack);
+    players[tbIndex].stack -= tb;
+    players[tbIndex].currentBet = tb;
+    players[tbIndex].totalBet += tb;
+    players[tbIndex].lastAction = { type: '3b', amount: tb };
+
+    const fbTarget = Number(config.fourthBlind) || (config.bigBlind * 4);
+    const fb = Math.min(fbTarget, players[fbIndex].stack);
+    players[fbIndex].stack -= fb;
+    players[fbIndex].currentBet = fb;
+    players[fbIndex].totalBet += fb;
+    players[fbIndex].lastAction = { type: '4b', amount: fb };
+  } else if (isThreeBlinds && tbIndex >= 0) {
+    const tbTarget = Number(config.thirdBlind) || (config.bigBlind * 2);
+    const tb = Math.min(tbTarget, players[tbIndex].stack);
+    players[tbIndex].stack -= tb;
+    players[tbIndex].currentBet = tb;
+    players[tbIndex].totalBet += tb;
+    players[tbIndex].lastAction = { type: '3b', amount: tb };
+  }
+
   if (bba && ante > 0) {
     const a = Math.min(ante, players[bbIndex].stack);
     players[bbIndex].stack -= a;
     players[bbIndex].totalBet += a;
   }
+  if (isBtnAnte && ante > 0) {
+    const a = Math.min(ante, players[buttonIndex].stack);
+    players[buttonIndex].stack -= a;
+    players[buttonIndex].totalBet += a;
+  }
+  if (isSBHalfAnte && ante > 0) {
+    const a = Math.min(ante, players[sbIndex].stack);
+    players[sbIndex].stack -= a;
+    players[sbIndex].totalBet += a;
+  }
+
+  players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
 
   const allowStraddle = !!config.allowStraddle;
   const allowMulti = !!config.allowMultiStraddle;
@@ -640,6 +761,18 @@ export function startHand(config, buttonSeat, handNumber) {
   let lastRaiseAmount = config.bigBlind;
   let raiseLevel = 1;
   let first = firstActiveAfter(players, bbIndex);
+
+  if (isFourBlinds && fbIndex >= 0) {
+    currentBet = players[fbIndex].currentBet || (Number(config.fourthBlind) || (config.bigBlind * 4));
+    lastRaiseAmount = Math.max(currentBet - (players[tbIndex]?.currentBet || (config.bigBlind * 2)), config.bigBlind);
+    raiseLevel = 1;
+    first = firstActiveAfter(players, fbIndex);
+  } else if (isThreeBlinds && tbIndex >= 0) {
+    currentBet = players[tbIndex].currentBet || (Number(config.thirdBlind) || (config.bigBlind * 2));
+    lastRaiseAmount = Math.max(currentBet - bb, config.bigBlind);
+    raiseLevel = 1;
+    first = firstActiveAfter(players, tbIndex);
+  }
 
   let killPosted = false;
   let killIdx = -1;
@@ -971,6 +1104,7 @@ export function applyAction(hand, playerId, type, amount) {
     }
   } else if (type === 'straddle') {
     const newLevel = (h.straddleLevel || 0) + 1;
+    const targetAmount = amount;
     let target = targetAmount != null && targetAmount > 0
       ? Number(targetAmount)
       : (newLevel === 1 && h.straddleAmount ? Number(h.straddleAmount) : (h.bigBlind * Math.pow(2, newLevel)));
@@ -1115,17 +1249,24 @@ export function dealNextStreet(hand, cards = [], hidden = false) {
   const next = { preflop: 'flop', flop: 'turn', turn: 'river' }[hand.street];
   if (!next) return { error: 'No more streets to deal.' };
   const expected = next === 'flop' ? 3 : 1;
-  const totalExpected = hand.doubleBoard ? expected * 2 : expected;
+  const boardCount = Number(hand.bombBoards) || (hand.runTimes >= 3 ? 3 : hand.doubleBoard ? 2 : 1);
+  const isTriple = boardCount >= 3;
+  const isDouble = boardCount >= 2;
+  const totalExpected = expected * boardCount;
   const h = clone(hand);
+  if (!Array.isArray(h.boardB)) h.boardB = [];
+  if (!Array.isArray(h.boardC)) h.boardC = [];
   if (hidden) {
     for (let i = 0; i < expected; i++) h.communityCards.push({ hidden: true });
-    if (h.doubleBoard) for (let i = 0; i < expected; i++) h.boardB.push({ hidden: true });
+    if (isDouble) for (let i = 0; i < expected; i++) h.boardB.push({ hidden: true });
+    if (isTriple) for (let i = 0; i < expected; i++) h.boardC.push({ hidden: true });
   } else {
     if (cards.length !== totalExpected) {
       return { error: `Deal exactly ${totalExpected} card(s) for the ${next.toUpperCase()}.` };
     }
     h.communityCards.push(...cards.slice(0, expected));
-    if (h.doubleBoard) h.boardB.push(...cards.slice(expected));
+    if (isDouble) h.boardB.push(...cards.slice(expected, expected * 2));
+    if (isTriple) h.boardC.push(...cards.slice(expected * 2, expected * 3));
   }
   const isFrozen = bettingFrozen(h);
   h.players.forEach((p) => {
@@ -1173,15 +1314,18 @@ export function dealNextStreet(hand, cards = [], hidden = false) {
 }
 
 export function fillBoard(hand, cards) {
-  const hiddenA = hand.communityCards.filter((c) => c.hidden).length;
+  const isTriple = (Number(hand.bombBoards) >= 3) || (hand.boardC && hand.boardC.length > 0) || (hand.runTimes >= 3);
+  const hiddenA = (hand.communityCards || []).filter((c) => c.hidden).length;
   const hiddenB = hand.doubleBoard ? (hand.boardB || []).filter((c) => c.hidden).length : 0;
-  const total = hiddenA + hiddenB;
+  const hiddenC = isTriple ? (hand.boardC || []).filter((c) => c.hidden).length : 0;
+  const total = hiddenA + hiddenB + hiddenC;
   if (total === 0) return { error: 'No hidden board cards to enter.' };
   if (cards.length !== total) return { error: `Enter ${total} card(s) for the board.` };
   const h = clone(hand);
   let ci = 0;
-  h.communityCards = h.communityCards.map((c) => (c.hidden ? cards[ci++] : c));
-  if (h.doubleBoard) h.boardB = h.boardB.map((c) => (c.hidden ? cards[ci++] : c));
+  h.communityCards = (h.communityCards || []).map((c) => (c.hidden ? cards[ci++] : c));
+  if (h.doubleBoard) h.boardB = (h.boardB || []).map((c) => (c.hidden ? cards[ci++] : c));
+  if (isTriple) h.boardC = (h.boardC || []).map((c) => (c.hidden ? cards[ci++] : c));
   return { hand: h };
 }
 
@@ -1191,12 +1335,29 @@ export function postBlinds(hand) {
   const n = h.players.length;
   const buttonIndex = h.players.findIndex((p) => p.seat === h.buttonSeat);
   if (buttonIndex === -1) return h;
+  const isThreeBlinds = h.anteType === 'three_blinds' && n >= 3;
   const sbIndex = n === 2 ? buttonIndex : (buttonIndex + 1) % n;
   const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
-  const bba = h.anteType === 'bba';
-  const ante = bba ? h.bigBlind : (h.anteAmount || 0);
+  const tbIndex = isThreeBlinds ? (buttonIndex + 3) % n : -1;
 
-  if (h.anteType === 'traditional' && ante > 0) {
+  const activeCount = h.players.filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
+  const isShortHandedSB = h.sbHalfAnteShortHanded && activeCount < (Number(h.shortHandedThreshold) || 5);
+  let effectiveAnteType = h.anteType;
+  if (h.anteType === 'bba' && isShortHandedSB) {
+    effectiveAnteType = 'sb_half_ante';
+  }
+  h.effectiveAnteType = effectiveAnteType;
+
+  const bba = effectiveAnteType === 'bba';
+  const isBtnAnte = effectiveAnteType === 'btn_ante';
+  const isSBHalfAnte = effectiveAnteType === 'sb_half_ante';
+  const ante = (bba || isBtnAnte)
+    ? h.bigBlind
+    : isSBHalfAnte
+    ? Math.round((Number(h.bigBlind) || 0) * 0.5 * 100) / 100
+    : (h.anteAmount || 0);
+
+  if (effectiveAnteType === 'traditional' && ante > 0) {
     h.players.forEach((p) => {
       const a = Math.min(ante, p.stack);
       p.stack -= a;
@@ -1216,17 +1377,46 @@ export function postBlinds(hand) {
   h.players[bbIndex].totalBet += bb;
   h.players[bbIndex].lastAction = { type: 'bb', amount: bb };
 
+  if (isThreeBlinds && tbIndex >= 0) {
+    const tbTarget = Number(h.thirdBlind) || (h.bigBlind * 2);
+    const tb = Math.min(tbTarget, h.players[tbIndex].stack);
+    h.players[tbIndex].stack -= tb;
+    h.players[tbIndex].currentBet = tb;
+    h.players[tbIndex].totalBet += tb;
+    h.players[tbIndex].lastAction = { type: '3b', amount: tb };
+  }
+
   if (bba && ante > 0) {
     const a = Math.min(ante, h.players[bbIndex].stack);
     h.players[bbIndex].stack -= a;
     h.players[bbIndex].totalBet += a;
   }
+  if (isBtnAnte && ante > 0) {
+    const a = Math.min(ante, h.players[buttonIndex].stack);
+    h.players[buttonIndex].stack -= a;
+    h.players[buttonIndex].totalBet += a;
+  }
+  if (isSBHalfAnte && ante > 0) {
+    const a = Math.min(ante, h.players[sbIndex].stack);
+    h.players[sbIndex].stack -= a;
+    h.players[sbIndex].totalBet += a;
+  }
 
   h.players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
-  h.currentBet = bb;
-  h.lastRaiseAmount = h.bigBlind;
-  h.raiseLevel = 1;
-  h.currentPlayer = firstActiveAfter(h.players, bbIndex);
+
+  if (isThreeBlinds && tbIndex >= 0) {
+    const tbVal = h.players[tbIndex].currentBet || (Number(h.thirdBlind) || (h.bigBlind * 2));
+    h.currentBet = tbVal;
+    h.lastRaiseAmount = Math.max(tbVal - bb, h.bigBlind);
+    h.raiseLevel = 1;
+    h.currentPlayer = firstActiveAfter(h.players, tbIndex);
+  } else {
+    h.currentBet = bb;
+    h.lastRaiseAmount = h.bigBlind;
+    h.raiseLevel = 1;
+    h.currentPlayer = firstActiveAfter(h.players, bbIndex);
+  }
+
   h.blindsPosted = true;
   h.message = null;
   return h;
@@ -1246,12 +1436,29 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
   if (h.bombPot) return h;
   const sb = newSmallBlind;
   const bb = newBigBlind;
-  const bba = h.anteType === 'bba';
-  const ante = bba ? bb : (newAnte || 0);
   const n = h.players.length;
   const buttonIndex = h.players.findIndex((p) => p.seat === h.buttonSeat);
+  const isThreeBlinds = h.anteType === 'three_blinds' && n >= 3;
   const sbIndex = n === 2 ? buttonIndex : (buttonIndex + 1) % n;
   const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
+  const tbIndex = isThreeBlinds ? (buttonIndex + 3) % n : -1;
+
+  const activeCount = h.players.filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
+  const isShortHandedSB = h.sbHalfAnteShortHanded && activeCount < (Number(h.shortHandedThreshold) || 5);
+  let effectiveAnteType = h.anteType;
+  if (h.anteType === 'bba' && isShortHandedSB) {
+    effectiveAnteType = 'sb_half_ante';
+  }
+  h.effectiveAnteType = effectiveAnteType;
+
+  const bba = effectiveAnteType === 'bba';
+  const isBtnAnte = effectiveAnteType === 'btn_ante';
+  const isSBHalfAnte = effectiveAnteType === 'sb_half_ante';
+  const ante = (bba || isBtnAnte)
+    ? bb
+    : isSBHalfAnte
+    ? Math.round((Number(bb) || 0) * 0.5 * 100) / 100
+    : (newAnte || 0);
 
   h.players.forEach((p) => {
     p.stack = p.initialStack;
@@ -1263,7 +1470,7 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
     p._wasCapped = false;
   });
 
-  if (h.anteType === 'traditional' && ante > 0) {
+  if (effectiveAnteType === 'traditional' && ante > 0) {
     h.players.forEach((p) => {
       const a = Math.min(ante, p.stack);
       p.stack -= a;
@@ -1283,31 +1490,74 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
   h.players[bbIndex].totalBet += bbPay;
   h.players[bbIndex].lastAction = { type: 'bb', amount: bbPay };
 
+  if (isThreeBlinds && tbIndex >= 0) {
+    const tbTarget = Number(h.thirdBlind) || (bb * 2);
+    const tbPay = Math.min(tbTarget, h.players[tbIndex].stack);
+    h.players[tbIndex].stack -= tbPay;
+    h.players[tbIndex].currentBet = tbPay;
+    h.players[tbIndex].totalBet += tbPay;
+    h.players[tbIndex].lastAction = { type: '3b', amount: tbPay };
+  }
+
   if (bba && ante > 0) {
     const a = Math.min(ante, h.players[bbIndex].stack);
     h.players[bbIndex].stack -= a;
     h.players[bbIndex].totalBet += a;
+  }
+  if (isBtnAnte && ante > 0) {
+    const a = Math.min(ante, h.players[buttonIndex].stack);
+    h.players[buttonIndex].stack -= a;
+    h.players[buttonIndex].totalBet += a;
+  }
+  if (isSBHalfAnte && ante > 0) {
+    const a = Math.min(ante, h.players[sbIndex].stack);
+    h.players[sbIndex].stack -= a;
+    h.players[sbIndex].totalBet += a;
   }
 
   h.players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
   h.smallBlind = sb;
   h.bigBlind = bb;
   h.anteAmount = ante;
-  const bbActual = h.players[bbIndex].currentBet || bb;
-  h.currentBet = bbActual;
-  h.lastRaiseAmount = bb;
-  h.raiseLevel = 1;
-  h.currentPlayer = firstActiveAfter(h.players, bbIndex);
+
+  if (isThreeBlinds && tbIndex >= 0) {
+    const tbActual = h.players[tbIndex].currentBet || (Number(h.thirdBlind) || (bb * 2));
+    h.currentBet = tbActual;
+    h.lastRaiseAmount = Math.max(tbActual - bb, bb);
+    h.raiseLevel = 1;
+    h.currentPlayer = firstActiveAfter(h.players, tbIndex);
+  } else {
+    const bbActual = h.players[bbIndex].currentBet || bb;
+    h.currentBet = bbActual;
+    h.lastRaiseAmount = bb;
+    h.raiseLevel = 1;
+    h.currentPlayer = firstActiveAfter(h.players, bbIndex);
+  }
   return h;
 }
 
 export function bbaPotOpts(hand) {
-  if (!hand || hand.anteType !== 'bba') return {};
+  if (!hand) return {};
   const n = hand.players.length;
   const buttonIndex = hand.players.findIndex((p) => p.seat === hand.buttonSeat);
   if (buttonIndex === -1) return {};
-  const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
-  return { bbaAmount: Number(hand.bigBlind) || 0, bbIndex };
+
+  const activeCount = (hand.players || []).filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
+  const isShortHandedSB = hand.sbHalfAnteShortHanded && activeCount < (Number(hand.shortHandedThreshold) || 5);
+  const effectiveAnte = hand.anteType === 'bba' && isShortHandedSB ? 'sb_half_ante' : hand.anteType;
+
+  if (effectiveAnte === 'bba') {
+    const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
+    return { bbaAmount: Number(hand.bigBlind) || 0, bbIndex };
+  }
+  if (effectiveAnte === 'btn_ante') {
+    return { bbaAmount: Number(hand.bigBlind) || 0, bbIndex: buttonIndex };
+  }
+  if (effectiveAnte === 'sb_half_ante') {
+    const sbIndex = n === 2 ? buttonIndex : (buttonIndex + 1) % n;
+    return { bbaAmount: Math.round((Number(hand.bigBlind) || 0) * 0.5 * 100) / 100, bbIndex: sbIndex };
+  }
+  return {};
 }
 
 export function computePots(players, opts = {}) {
@@ -1683,6 +1933,12 @@ export function nextHand(hand) {
     return { gameOver: true, remaining, eliminatedPlayers };
   }
 
+  if (hand.mode === 'cash') {
+    remaining.forEach((p, idx) => {
+      p.seat = idx + 1;
+    });
+  }
+
   const oldButtonIdx = remaining.findIndex((p) => p.seat === hand.buttonSeat);
   const startIdx = oldButtonIdx === -1 ? 0 : (oldButtonIdx + 1) % remaining.length;
   const newButtonSeat = remaining[startIdx].seat;
@@ -1691,8 +1947,12 @@ export function nextHand(hand) {
     players: remaining,
     smallBlind: hand.smallBlind,
     bigBlind: hand.bigBlind,
+    thirdBlind: hand.thirdBlind,
+    fourthBlind: hand.fourthBlind,
     anteType: hand.anteType,
     anteAmount: hand.anteAmount,
+    sbHalfAnteShortHanded: hand.sbHalfAnteShortHanded,
+    shortHandedThreshold: hand.shortHandedThreshold,
     mode: hand.mode,
     currency: hand.currency,
     allowStraddle: hand.allowStraddle,
@@ -1702,7 +1962,6 @@ export function nextHand(hand) {
     straddleAmount: hand.straddleAmount,
     mandatoryStraddleAmount: hand.mandatoryStraddleAmount,
     mandatoryDoubleStraddleAmount: hand.mandatoryDoubleStraddleAmount,
-    bombBoards: hand.bombBoards,
     blindSchedule: hand.blindSchedule,
     blindLevel: hand.blindLevel,
     levelConfig: hand.levelConfig,
@@ -1714,23 +1973,31 @@ export function nextHand(hand) {
     pausedMs: hand.pausedMs,
     pauseStart: hand.pauseStart,
     pendingLevelIdx: hand.pendingLevelIdx,
-    variant: hand.variant,
-    bombPot: hand.bombPot,
-    bombAmount: hand.bombAmount,
-    sideGames: hand.sideGames,
-    wonPots: hand.wonPots,
-    lastWinnerSeat: hand.lastWinnerSeat,
-    consecWins: hand.consecWins,
-    killActive: hand.killActive,
-    killSeat: hand.killSeat,
-    killType: hand.killType,
-    gameType: hand.gameType,
-    doubleBoard: hand.doubleBoard,
+    variant: hand.nextHandBombPot
+      ? (hand.nextHandBombPot.variant || 'plo6')
+      : hand.bombPot
+      ? (hand.baseVariant || 'holdem')
+      : hand.variant,
+    baseVariant: hand.baseVariant || hand.variant,
+    baseDoubleBoard: hand.baseDoubleBoard !== undefined ? hand.baseDoubleBoard : (hand.doubleBoard ?? false),
+    bombPot: !!hand.nextHandBombPot,
+    bombAmount: hand.nextHandBombPot
+      ? (hand.nextHandBombPot.anteAmount || hand.nextHandBombPot.bombAmount || hand.bombAmount || (hand.bigBlind * 5))
+      : hand.bombAmount,
+    bombBoards: hand.nextHandBombPot
+      ? (hand.nextHandBombPot.boardCount || hand.nextHandBombPot.bombBoards || 2)
+      : hand.bombBoards,
+    doubleBoard: hand.nextHandBombPot
+      ? ((hand.nextHandBombPot.boardCount || hand.nextHandBombPot.bombBoards || 2) >= 2)
+      : hand.bombPot
+      ? (hand.baseDoubleBoard ?? false)
+      : hand.doubleBoard,
+    nextHandBombPot: null,
     smallBet: hand.smallBet,
     bigBet: hand.bigBet,
     flMaxRaises: hand.flMaxRaises,
     chipDenominations: hand.chipDenominations,
-    tableSize: hand.tableSize,
+    tableSize: hand.mode === 'cash' ? remaining.length : hand.tableSize,
     tournamentFormat: hand.tournamentFormat,
     maxReEntries: hand.maxReEntries,
     lateRegLevel: hand.lateRegLevel,

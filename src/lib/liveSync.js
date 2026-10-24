@@ -104,7 +104,7 @@ export function publishLive(state) {
 
 export function saveNow(state) {
   const payload = buildPayload(state);
-  if (!payload.hand && !payload.gameOver) return;
+  if (!payload.hand && !payload.gameOver && !payload.director) return;
   try {
     localStorage.setItem(storageKey, JSON.stringify(payload));
   } catch (e) {}
@@ -126,7 +126,7 @@ export async function loadSavedSession(code) {
   if (!c) return null;
   const res = await db.functions.invoke('readSavedSession', { shareCode: c });
   const data = res?.data || res || {};
-  if (!data.resumeState || !data.resumeState.hand) return null;
+  if (!data.resumeState || (!data.resumeState.hand && !data.resumeState.director)) return null;
   return { saved: data.resumeState, updatedAt: data.updatedAt || null };
 }
 

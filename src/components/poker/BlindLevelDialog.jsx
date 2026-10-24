@@ -7,12 +7,18 @@ export default function BlindLevelDialog({ smallBlind, bigBlind, anteAmount, ant
   const [ante, setAnte] = useState(anteAmount);
   const [error, setError] = useState('');
   const isBBA = anteType === 'bba';
+  const isBtnAnte = anteType === 'btn_ante';
+  const isSBHalfAnte = anteType === 'sb_half_ante';
+  const isFixedAnte = isBBA || isBtnAnte || isSBHalfAnte;
 
-  useEffect(() => { if (isBBA) setAnte(Number(bb)); }, [isBBA, bb]);
+  useEffect(() => {
+    if (isBBA || isBtnAnte) setAnte(Number(bb));
+    else if (isSBHalfAnte) setAnte(Math.max(1, Math.round(Number(bb) * 0.5)));
+  }, [isBBA, isBtnAnte, isSBHalfAnte, bb]);
 
   const save = () => {
     if (Number(sb) <= 0 || Number(bb) <= 0) return setError('Blinds must be positive.');
-    if (anteType !== 'none' && Number(ante) <= 0) return setError('Ante must be positive.');
+    if (anteType !== 'none' && !isFixedAnte && Number(ante) <= 0) return setError('Ante must be positive.');
     onSave(Number(sb), Number(bb), Number(ante));
   };
 
@@ -32,10 +38,12 @@ export default function BlindLevelDialog({ smallBlind, bigBlind, anteAmount, ant
             <label className="text-xs text-slate-400 block mb-1">Big blind</label>
             <input type="number" value={bb} onChange={(e) => setBb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
           </div>
-          {anteType !== 'none' && (
+          {anteType !== 'none' && anteType !== 'three_blinds' && (
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Ante amount {isBBA && '(= big blind)'}</label>
-              <input type="number" value={ante} disabled={isBBA} onChange={(e) => setAnte(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40" />
+              <label className="text-xs text-slate-400 block mb-1">
+                Ante amount {isBBA ? '(= big blind)' : isBtnAnte ? '(= button ante 1 BB)' : isSBHalfAnte ? '(= SB half ante 0.5 BB)' : ''}
+              </label>
+              <input type="number" value={ante} disabled={isFixedAnte} onChange={(e) => setAnte(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40" />
             </div>
           )}
         </div>

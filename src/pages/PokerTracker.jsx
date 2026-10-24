@@ -24,16 +24,17 @@ import GameOverScreen from '@/components/poker/GameOverScreen';
 import SetLevelDialog from '@/components/poker/SetLevelDialog';
 import BombPotDialog from '@/components/poker/BombPotDialog';
 import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, Clock, UserPlus } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { sessionStore } from '@/lib/sessionStore';
 import { useAuth } from '@/lib/AuthContext';
+import { mttStore } from '@/lib/mttStore';
 import {
   publishLive, getShareCode, setShareCode, ensureSaveCode, saveNow, loadSavedSession,
   discardSavedSession, getSaveStatus, subscribeSaveStatus,
 } from '@/lib/liveSync';
 import {
   startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots,
-  positionForSeat, getButtonIndex, money, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone,
+  positionForSeat, getButtonIndex, money, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone, calcAnteForType,
 } from '@/lib/poker';
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
@@ -231,10 +232,6 @@ export default function PokerTracker() {
     return () => clearTimeout(timer);
   }, [actionClockSecondsLeft, actionClockType, hand]);
 
-  useEffect(() => {
-    try { localStorage.setItem('poker-dark', darkMode ? 'dark' : 'light'); } catch {}
-  }, [darkMode]);
-
   const offeredRaceRef = useRef(null);
   const recordedHandNumbers = useRef(new Set());
   const { isAuthenticated } = useAuth();
@@ -290,6 +287,7 @@ export default function PokerTracker() {
   }, [hand?.handNumber, hand?.phase]);
 
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -401,8 +399,11 @@ export default function PokerTracker() {
           bombAmount: cfg.bombAmount || prev.bombAmount,
           smallBlind: cfg.smallBlind || prev.smallBlind,
           bigBlind: cfg.bigBlind || prev.bigBlind,
+          thirdBlind: cfg.thirdBlind != null ? cfg.thirdBlind : prev.thirdBlind,
           anteAmount: cfg.anteAmount != null ? cfg.anteAmount : prev.anteAmount,
           anteType: cfg.anteType || prev.anteType,
+          sbHalfAnteShortHanded: cfg.sbHalfAnteShortHanded !== undefined ? cfg.sbHalfAnteShortHanded : prev.sbHalfAnteShortHanded,
+          shortHandedThreshold: cfg.shortHandedThreshold || prev.shortHandedThreshold,
           smallBet: Number(cfg.smallBet) || prev.smallBet,
           bigBet: Number(cfg.bigBet) || prev.bigBet,
           flMaxRaises: Number(cfg.flMaxRaises) || prev.flMaxRaises,
@@ -583,14 +584,38 @@ export default function PokerTracker() {
       bombBoards: boardCount,
       doubleBoard: boardCount >= 2,
       variant: bVariant || 'plo6',
+      baseVariant: hand?.baseVariant || hand?.variant || config?.variant || 'holdem',
+      baseDoubleBoard: hand?.baseDoubleBoard !== undefined ? hand?.baseDoubleBoard : (hand?.doubleBoard ?? false),
     };
     if (immediate && hand) {
-      const remaining = hand.players.filter((p) => p.status !== 'busted' && p.stack > 0);
-      const bHand = startHand({
-        ...config,
-        players: remaining,
-        ...patch,
-      });
+      const remaining = hand.players
+        .filter((p) => p.status !== 'busted')
+        .map((p) => {
+          const restoredStack = p.initialStack != null
+            ? p.initialStack
+            : (Number(p.stack || 0) + Number(p.totalBet || 0));
+          return {
+            ...p,
+            stack: restoredStack,
+            currentBet: 0,
+            totalBet: 0,
+            status: 'active',
+            lastAction: null,
+            hasActed: false,
+          };
+        })
+        .filter((p) => p.stack > 0);
+      const nextButtonSeat = hand.buttonSeat || remaining[0]?.seat || 1;
+      const bHand = startHand(
+        {
+          ...config,
+          ...hand,
+          players: remaining,
+          ...patch,
+        },
+        nextButtonSeat,
+        hand.handNumber || 1
+      );
       setHand(bHand);
       setHoleCards({});
       setHistory([]);
@@ -625,10 +650,24 @@ export default function PokerTracker() {
       recordHand(hand);
     }
     let currentHand = hand;
+    let nextBombPot = null;
     if (hand && hand.nextHandBombPot) {
+      nextBombPot = hand.nextHandBombPot;
+    }
+    if (currentHand && currentHand.bombPot && !nextBombPot) {
       currentHand = {
-        ...hand,
-        ...hand.nextHandBombPot,
+        ...currentHand,
+        bombPot: false,
+        doubleBoard: currentHand.baseDoubleBoard ?? false,
+        boardB: [],
+        boardC: [],
+        bombBoards: 1,
+        variant: currentHand.baseVariant || config?.variant || 'holdem',
+      };
+    } else if (nextBombPot) {
+      currentHand = {
+        ...currentHand,
+        ...nextBombPot,
         nextHandBombPot: null,
       };
     }
@@ -829,10 +868,7 @@ export default function PokerTracker() {
     if (!lvl || lvl.type === 'break') return;
     const bbVal = parseAmount(lvl.bigBlind) ?? Number(lvl.bigBlind) ?? 0;
     const sbVal = parseAmount(lvl.smallBlind) ?? Number(lvl.smallBlind) ?? 0;
-    const anteVal = parseAmount(lvl.ante) ?? Number(lvl.ante) ?? 0;
-    const ante = hand.anteType === 'bba'
-      ? bbVal
-      : (lvl.ante != null && lvl.ante !== '' ? anteVal : 0);
+    const ante = calcAnteForType(hand.anteType, bbVal, lvl.ante);
     const newSB = sbVal;
     const newBB = bbVal;
     if (newSB === hand.smallBlind && newBB === hand.bigBlind && ante === hand.anteAmount) return;
@@ -912,7 +948,7 @@ export default function PokerTracker() {
           type: 'level',
           smallBlind: sb,
           bigBlind: bb,
-          ante: prev.anteType === 'bba' ? bb : ante,
+          ante: calcAnteForType(prev.anteType, bb, ante),
         });
         return { ...prev, blindSchedule: sched };
       }
@@ -993,13 +1029,10 @@ export default function PokerTracker() {
       if (nextLevel && nextLevel.type !== 'break') {
         const nextBB = parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0;
         const nextSB = parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0;
-        const nextAnte = parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? 0;
-        const ante = prev.anteType === 'bba'
-          ? nextBB
-          : (nextLevel.ante != null && nextLevel.ante !== '' ? nextAnte : 0);
+        const ante = calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
         base.smallBlind = nextSB;
         base.bigBlind = nextBB;
-        base.anteAmount = prev.anteType === 'bba' ? nextBB : ante;
+        base.anteAmount = ante;
         base.blindLevel = nextIdx;
       }
       return base.blindsPosted === false ? postBlinds(base) : base;
@@ -1016,14 +1049,14 @@ export default function PokerTracker() {
       setBlindsPrefill({
         smallBlind: lvl.smallBlind,
         bigBlind: lvl.bigBlind,
-        anteAmount: hand.anteType === 'bba' ? lvl.bigBlind : (lvl.ante || 0),
+        anteAmount: calcAnteForType(hand.anteType, lvl.bigBlind, lvl.ante),
       });
     } else {
       const suggestion = suggestNextBlinds(sched || [], hand.chipDenominations || []);
       setBlindsPrefill({
         smallBlind: suggestion.smallBlind,
         bigBlind: suggestion.bigBlind,
-        anteAmount: hand.anteType === 'bba' ? suggestion.bigBlind : (hand.anteType === 'traditional' ? suggestAnte(suggestion.bigBlind) : 0),
+        anteAmount: calcAnteForType(hand.anteType, suggestion.bigBlind, 0),
       });
     }
     setShowBlinds(true);
@@ -1059,13 +1092,10 @@ export default function PokerTracker() {
       if (noAction && !inBreak && targetLevel && targetLevel.type !== 'break') {
         const targetBB = parseAmount(targetLevel.bigBlind) ?? Number(targetLevel.bigBlind) ?? 0;
         const targetSB = parseAmount(targetLevel.smallBlind) ?? Number(targetLevel.smallBlind) ?? 0;
-        const targetAnte = parseAmount(targetLevel.ante) ?? Number(targetLevel.ante) ?? 0;
-        const ante = prev.anteType === 'bba'
-          ? targetBB
-          : (targetLevel.ante != null && targetLevel.ante !== '' ? targetAnte : 0);
+        const ante = calcAnteForType(prev.anteType, targetBB, targetLevel.ante);
         base.smallBlind = targetSB;
         base.bigBlind = targetBB;
-        base.anteAmount = prev.anteType === 'bba' ? targetBB : ante;
+        base.anteAmount = ante;
         base.blindLevel = targetIdx;
         return recomputeBlindsForLevel(base, targetSB, targetBB, ante);
       }
@@ -1081,10 +1111,23 @@ export default function PokerTracker() {
     }));
   };
 
-  const handleLateEntry = (nm, stk, seat) => {
+  const handleLateEntry = (nm, stk, seat, leftOfPlayerId) => {
     setHand((prev) => {
-      const name = nm || `Player ${seat}`;
-      return { ...prev, pendingPlayers: [...(prev.pendingPlayers || []), { name, seat, stack: stk }] };
+      let finalSeat = seat ? Number(seat) : null;
+      if (!finalSeat && leftOfPlayerId != null) {
+        const targetIdx = prev.players.findIndex((p) => p.id === leftOfPlayerId || p.seat === leftOfPlayerId);
+        if (targetIdx >= 0) {
+          finalSeat = prev.players[targetIdx].seat + 0.5;
+        }
+      }
+      if (!finalSeat) {
+        const occupied = new Set(prev.players.map((p) => p.seat));
+        for (let s = 1; s <= 20; s++) {
+          if (!occupied.has(s)) { finalSeat = s; break; }
+        }
+      }
+      const name = nm || `Player ${Math.floor(finalSeat)}`;
+      return { ...prev, pendingPlayers: [...(prev.pendingPlayers || []), { name, seat: finalSeat, stack: stk }] };
     });
     setShowLateEntry(false);
   };
@@ -1104,7 +1147,13 @@ export default function PokerTracker() {
 
   const handleResume = () => {
     const saved = savedSession;
-    if (!saved || !saved.hand) return;
+    if (!saved) return;
+    if (saved.director) {
+      mttStore.loadTournament(saved.director);
+      navigate('/director');
+      return;
+    }
+    if (!saved.hand) return;
     const cfg = saved.config || null;
     setConfig(cfg);
     const restoredHand = saved.hand.levelConfig ? saved.hand : { ...saved.hand, levelConfig: cfg?.levelConfig || undefined, levelStartEpoch: saved.hand.levelStartEpoch || Date.now(), levelHandsCompleted: saved.hand.levelHandsCompleted || 0, levelCount: saved.hand.levelCount || Math.max(1, (saved.hand.players || []).length) };
@@ -1127,9 +1176,14 @@ export default function PokerTracker() {
     try {
       const res = await loadSavedSession(target);
       if (!res) return;
+      if (res.saved?.director) {
+        mttStore.loadTournament(res.saved.director);
+        navigate(`/director?code=${encodeURIComponent(target)}`);
+        return;
+      }
       const cfg = res.saved.config || null;
       setConfig(cfg);
-      const restoredHand = res.saved.hand.levelConfig ? res.saved.hand : { ...res.saved.hand, levelConfig: cfg?.levelConfig || undefined, levelStartEpoch: res.saved.hand.levelStartEpoch || Date.now(), levelHandsCompleted: res.saved.hand.levelHandsCompleted || 0, levelCount: res.saved.hand.levelCount || Math.max(1, (res.saved.hand.players || []).length) };
+      const restoredHand = res.saved.hand?.levelConfig ? res.saved.hand : { ...res.saved.hand, levelConfig: cfg?.levelConfig || undefined, levelStartEpoch: res.saved.hand?.levelStartEpoch || Date.now(), levelHandsCompleted: res.saved.hand?.levelHandsCompleted || 0, levelCount: res.saved.hand?.levelCount || Math.max(1, (res.saved.hand?.players || []).length) };
       setHand(restoredHand);
       setGameOver(res.saved.gameOver || null);
       setHoleCards(res.saved.holeCards || {});
@@ -1429,7 +1483,7 @@ export default function PokerTracker() {
               Structure setup
             </button>
             {/* Clock system control button */}
-            {hand?.clockConfig?.clockSystem === 'time_banks' ? (
+            {!isCash && (hand?.clockConfig?.clockSystem === 'time_banks' ? (
               <button
                 onClick={() => setShotClockEnabled((v) => !v)}
                 className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors ${
@@ -1456,7 +1510,7 @@ export default function PokerTracker() {
                 <Clock size={15} />
                 {calledClockActive ? `Clock: ${actionClockSecondsLeft}s` : 'Call clock'}
               </button>
-            )}
+            ))}
             {!isCash && (
               <button
                 onClick={handleNextLevelClick}
@@ -1470,21 +1524,25 @@ export default function PokerTracker() {
                 Set level
               </button>
             )}
-            {timerPaused ? (
-              <button onClick={handleResumeTimer} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2 cursor-pointer">
-                Resume timer
-              </button>
-            ) : (
-              <button onClick={handlePauseTimer} disabled={hand.levelConfig?.method !== 'minutes'} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
-                Pause timer
-              </button>
+            {!isCash && (
+              <>
+                {timerPaused ? (
+                  <button onClick={handleResumeTimer} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2 cursor-pointer">
+                    Resume timer
+                  </button>
+                ) : (
+                  <button onClick={handlePauseTimer} disabled={hand.levelConfig?.method !== 'minutes'} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+                    Pause timer
+                  </button>
+                )}
+                <button onClick={() => handleNudgeTimer(60000)} disabled={!timerCanNudge} title="Rewind 1m" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 cursor-pointer flex items-center gap-1">
+                  <Rewind size={14} /> 1m
+                </button>
+                <button onClick={() => handleNudgeTimer(-60000)} disabled={!timerCanNudge} title="Forward 1m" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 cursor-pointer flex items-center gap-1">
+                  <FastForward size={14} /> 1m
+                </button>
+              </>
             )}
-            <button onClick={() => handleNudgeTimer(60000)} disabled={!timerCanNudge} title="Rewind 1m" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 cursor-pointer flex items-center gap-1">
-              <Rewind size={14} /> 1m
-            </button>
-            <button onClick={() => handleNudgeTimer(-60000)} disabled={!timerCanNudge} title="Forward 1m" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 cursor-pointer flex items-center gap-1">
-              <FastForward size={14} /> 1m
-            </button>
             <button onClick={handleEndHand} className="rounded-lg bg-[#c94c4c] hover:bg-[#d95959] text-sm px-3 py-2 cursor-pointer">
               End hand
             </button>
@@ -1523,7 +1581,7 @@ export default function PokerTracker() {
 
         {/* Status bar */}
         <div className="flex flex-wrap gap-4 text-sm text-slate-300">
-          <span>Blinds: {formatBlinds(hand)}</span>
+          <span>{hand.bombPot ? formatBlinds(hand) : `Blinds: ${formatBlinds(hand)}`}</span>
           <span>Street: {STREET_LABEL[hand.street]}</span>
           <span className={saveStatus.ok === false ? 'text-rose-300' : 'text-emerald-300/80'}>{saveStatus.saving ? 'Saving…' : saveStatus.ok === false ? 'Save failed' : saveStatus.at ? 'Auto-saved' : 'Auto-save on'}</span>
           <span>{nonFolded.length} players in</span>
@@ -1859,6 +1917,15 @@ export default function PokerTracker() {
           onClose={() => setShowReentry(false)}
         />
       )}
+      {showBombPotModal && hand && (
+        <BombPotDialog
+          isOpen={showBombPotModal}
+          bigBlind={hand.bigBlind || 2}
+          currency={hand.currency || '$'}
+          onConfirm={handleConfirmBombPot}
+          onClose={() => setShowBombPotModal(false)}
+        />
+      )}
       {showLateEntry && (
         <LateEntryDialog
           tableSize={hand.tableSize}
@@ -1867,6 +1934,8 @@ export default function PokerTracker() {
           currency={hand.currency}
           currentLevel={hand.blindLevel || 0}
           lateRegLevel={hand.lateRegLevel}
+          isCash={isCash}
+          seatingMode={isCash ? 'players' : 'seats'}
           onAdd={handleLateEntry}
           onClose={() => setShowLateEntry(false)}
         />

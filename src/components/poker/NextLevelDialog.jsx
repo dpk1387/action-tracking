@@ -12,6 +12,9 @@ export default function NextLevelDialog({
   const [ante, setAnte] = useState(anteAmount);
   const [error, setError] = useState('');
   const isBBA = anteType === 'bba';
+  const isBtnAnte = anteType === 'btn_ante';
+  const isSBHalfAnte = anteType === 'sb_half_ante';
+  const isFixedAnte = isBBA || isBtnAnte || isSBHalfAnte;
   const hasChips = Array.isArray(chipDenominations) && chipDenominations.length > 0;
 
   const [retiringValue, setRetiringValue] = useState('');
@@ -21,7 +24,10 @@ export default function NextLevelDialog({
   const [useRound, setUseRound] = useState(false);
   const [appliedLevel, setAppliedLevel] = useState(false);
 
-  useEffect(() => { if (isBBA) setAnte(bb); }, [isBBA, bb]);
+  useEffect(() => {
+    if (isBBA || isBtnAnte) setAnte(bb);
+    else if (isSBHalfAnte) setAnte(Math.max(1, Math.round((Number(bb) || 0) * 0.5)));
+  }, [isBBA, isBtnAnte, isSBHalfAnte, bb]);
 
 function calcOddChips(stack, retired, replacement) {
   if (retired <= 0 || replacement <= 0 || stack <= 0) return 0;
@@ -158,10 +164,19 @@ function calcOddChips(stack, retired, replacement) {
               <input type="text" inputMode="decimal" value={bb} onChange={(e) => setBb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
             </div>
           </div>
-          {anteType !== 'none' && (
+          {anteType !== 'none' && anteType !== 'three_blinds' && (
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Ante {isBBA && '(= big blind)'}</label>
-              <input type="text" inputMode="decimal" value={ante} disabled={isBBA} onChange={(e) => setAnte(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40" />
+              <label className="text-xs text-slate-400 block mb-1">
+                Ante {isBBA ? '(= big blind)' : isBtnAnte ? '(= button ante 1 BB)' : isSBHalfAnte ? '(= SB half ante 0.5 BB)' : ''}
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={ante}
+                disabled={isFixedAnte}
+                onChange={(e) => setAnte(e.target.value)}
+                className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40"
+              />
             </div>
           )}
           {!appliedLevel ? (

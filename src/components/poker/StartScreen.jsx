@@ -90,7 +90,50 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
         </p>
 
         {/* Saved guest session banner */}
-        {savedGuestSession?.hand && (
+        {savedGuestSession?.director ? (
+          <div className="rounded-xl border border-amber-500/40 bg-[#1e2227] p-4 mb-4 shadow-lg">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-2 text-amber-300">
+                <Trophy size={15} />
+                <span className="text-xs font-bold uppercase tracking-wider">Tournament Director Session In Progress</span>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDismissGuest();
+                }}
+                title="Discard and delete saved session"
+                className="text-slate-400 hover:text-rose-400 p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+            <div className="text-sm font-semibold text-white mb-1">
+              {savedGuestSession.director.name || 'Tournament Director'} – {savedGuestSession.director.remainingPlayers ?? savedGuestSession.director.totalPlayers} Players Remaining
+            </div>
+            {savedGuestUpdatedAt && (
+              <div className="text-xs text-slate-500 mb-3">Last saved {new Date(savedGuestUpdatedAt).toLocaleString()}</div>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => navigate('/director')}
+                className="flex-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm py-2 font-medium cursor-pointer transition-colors shadow"
+              >
+                Resume Tournament Director
+              </button>
+              <button
+                type="button"
+                onClick={onDismissGuest}
+                className="rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-rose-300 text-sm px-3.5 py-2 cursor-pointer font-medium flex items-center gap-1.5 transition-colors"
+                title="Discard this session permanently and start fresh"
+              >
+                <Trash2 size={14} /> Discard & Start New
+              </button>
+            </div>
+          </div>
+        ) : savedGuestSession?.hand && (
           <div className="rounded-xl border border-emerald-500/40 bg-[#1e2227] p-4 mb-4 shadow-lg">
             <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-2 text-emerald-300">
@@ -193,20 +236,29 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                     className="group relative rounded-lg border border-[#2a2f37] bg-[#1e2227] hover:bg-[#242a30] hover:border-[#4a5a4a] p-3 transition-colors"
                   >
                     <button
-                      onClick={() => onResumeSession(s.shareCode)}
+                      onClick={() => {
+                        if (s.isDirector) {
+                          navigate(`/director?code=${encodeURIComponent(s.shareCode || s.id)}`);
+                        } else {
+                          onResumeSession(s.shareCode);
+                        }
+                      }}
                       className="w-full text-left cursor-pointer"
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0 pr-8">
-                          <div className="text-sm font-semibold text-white truncate">
-                            {VARIANTS[s.variant]?.label || "Hold'em"} – Hand #{s.handNumber}
+                          <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5">
+                            {s.isDirector && <Trophy size={14} className="text-amber-400 shrink-0" />}
+                            <span>{s.isDirector ? (s.tournamentName || 'Tournament Director') : `${VARIANTS[s.variant]?.label || "Hold'em"} – Hand #${s.handNumber}`}</span>
                           </div>
                           <div className="text-xs text-slate-400">
-                            {s.mode === 'cash' ? 'Cash' : 'Tournament'} – Blinds {money(s.smallBlind, s.currency)} / {money(s.bigBlind, s.currency)}
+                            {s.isDirector
+                              ? `Tournament Director – Level ${s.currentLevel || 1} (${s.remainingPlayers ?? 0} / ${s.totalPlayers ?? 0} players)`
+                              : `${s.mode === 'cash' ? 'Cash' : 'Tournament'} – Blinds ${money(s.smallBlind, s.currency)} / ${money(s.bigBlind, s.currency)}`}
                           </div>
                           <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500">
                             <Users size={12} />
-                            <span className="truncate">{s.playerNames?.join(', ') || 'No players'}</span>
+                            <span className="truncate">{s.playerNames?.join(', ') || (s.isDirector ? `${s.totalPlayers || 0} players` : 'No players')}</span>
                           </div>
                         </div>
                         <div className="flex items-center gap-1.5 text-xs text-slate-500 shrink-0 text-right">

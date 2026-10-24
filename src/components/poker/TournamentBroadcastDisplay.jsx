@@ -201,7 +201,7 @@ export default function TournamentBroadcastDisplay({
                 Current Blinds
               </span>
               <span className="px-2.5 py-1 rounded-md bg-purple-500/10 text-purple-300 text-xs font-semibold border border-purple-500/20">
-                {hand?.anteType === 'bba' ? 'Big Blind Ante' : hand?.anteAmount ? 'Ante Included' : 'No Ante'}
+                {hand?.anteType === 'three_blinds' ? '3 Blinds' : hand?.anteType === 'bba' ? 'Big Blind Ante' : hand?.anteType === 'btn_ante' ? 'Button Ante' : hand?.anteType === 'sb_half_ante' ? 'Small Blind 1/2 Ante' : hand?.anteAmount ? 'Ante Included' : 'No Ante'}
               </span>
             </div>
 

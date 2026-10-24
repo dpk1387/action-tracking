@@ -79,13 +79,23 @@ export function formatBlindsText(levelObj, tournamentAnteType = 'bba') {
   const sb = sbVal.toLocaleString();
   const bb = bbVal.toLocaleString();
 
-  if (anteType === 'none' || (anteType !== 'bba' && anteVal <= 0)) {
+  if (anteType === 'none' || anteType === 'three_blinds' || (anteType === 'traditional' && anteVal <= 0)) {
     return `${sb} / ${bb}`;
   }
 
   const anteStr = anteVal.toLocaleString();
   if (anteType === 'traditional') {
     return `${sb} / ${bb} / ${anteStr} (ANTE)`;
+  }
+
+  if (anteType === 'btn_ante') {
+    const btnAnte = anteVal > 0 ? anteVal : bbVal;
+    return `${sb} / ${bb} - ${btnAnte.toLocaleString()} (BTN ANTE)`;
+  }
+
+  if (anteType === 'sb_half_ante') {
+    const halfAnte = anteVal > 0 ? anteVal : Math.max(1, Math.round(bbVal * 0.5));
+    return `${sb} / ${bb} - ${halfAnte.toLocaleString()} (SB 1/2 ANTE)`;
   }
 
   // BBA format: SB / BB - 50 (BBA) (e.g. 25 / 50 - 50 (BBA))

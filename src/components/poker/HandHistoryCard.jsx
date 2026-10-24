@@ -40,7 +40,7 @@ export default function HandHistoryCard({ h }) {
         <div className="font-semibold">Hand #{h.handNumber}</div>
         <div className="text-xs text-slate-400">
           Blinds {money(h.smallBlind, cur)} / {money(h.bigBlind, cur)}
-          {h.anteType !== 'none' ? ` · ${h.anteType === 'bba' ? 'BBA' : 'Ante'} ${money(h.anteType === 'bba' ? h.bigBlind : h.anteAmount, cur)}` : ''}
+          {h.anteType === 'three_blinds' ? ` · 3B ${money(h.thirdBlind || (h.bigBlind * 2), cur)}` : h.anteType === 'bba' ? ` · BBA ${money(h.anteAmount || h.bigBlind, cur)}` : h.anteType === 'btn_ante' ? ` · BTN Ante ${money(h.anteAmount || h.bigBlind, cur)}` : h.anteType === 'sb_half_ante' ? ` · SB 1/2 Ante ${money(h.anteAmount || Math.round(h.bigBlind * 0.5), cur)}` : h.anteType === 'traditional' ? ` · Ante ${money(h.anteAmount, cur)}` : ''}
           {h.bombPot ? ' · Bomb pot' : ''}
           {h.killPot ? (h.halfKill ? ' · Half-kill' : ' · Kill pot') : ''}
         </div>

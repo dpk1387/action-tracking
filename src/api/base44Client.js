@@ -99,7 +99,9 @@ export const db = {
         let modified = false;
         Object.keys(store).forEach((k) => {
           const item = store[k];
-          if (!item || (!item.resumeState?.hand && !item.state?.hand) || k === 'undefined' || k === 'null' || !k) {
+          const hasHand = !!(item?.resumeState?.hand || item?.state?.hand);
+          const hasDirector = !!(item?.resumeState?.director || item?.state?.director);
+          if (!item || (!hasHand && !hasDirector) || k === 'undefined' || k === 'null' || !k) {
             delete store[k];
             modified = true;
           }
@@ -111,6 +113,23 @@ export const db = {
           .map(([key, r]) => {
             const sc = r.shareCode || key;
             const rs = r.resumeState || {};
+            const d = rs.director || r.state?.director;
+            if (d) {
+              return {
+                shareCode: sc,
+                id: key,
+                updatedAt: r.updatedAt || new Date().toISOString(),
+                isDirector: true,
+                mode: 'director',
+                tournamentName: d.name || 'Tournament Director',
+                remainingPlayers: d.remainingPlayers ?? d.playersRemaining ?? (d.players ? d.players.filter((p) => !p.busted).length : 0),
+                totalPlayers: d.totalEntries ?? d.totalPlayers ?? (d.players ? d.players.length : 0),
+                currentLevel: (d.clock?.level ?? d.currentLevelIndex ?? 0) + 1,
+                variant: d.variant || 'nlh',
+                currency: d.currency || '$',
+                playerNames: (d.players || []).map((p) => (typeof p === 'string' ? p : p.name)).filter(Boolean),
+              };
+            }
             const h = rs.hand || r.state?.hand || {};
             const players = (h.players || []).map((p) => p.name).filter(Boolean);
             return {
@@ -133,7 +152,7 @@ export const db = {
       if (name === 'readSavedSession') {
         const { shareCode } = args;
         const record = store[shareCode] || Object.values(store).find((s) => s.shareCode === shareCode);
-        if (!record || !record.resumeState || !record.resumeState.hand) {
+        if (!record || !record.resumeState || (!record.resumeState.hand && !record.resumeState.director)) {
           return { data: { error: 'No saved session' } };
         }
         return { data: { resumeState: record.resumeState, updatedAt: record.updatedAt } };
@@ -147,7 +166,7 @@ export const db = {
       }
 
       if (name === 'publishLiveSession') {
-        const { shareCode, hand, config, gameOver, equity, hideAmounts, holeCards } = args;
+        const { shareCode, hand, config, gameOver, equity, hideAmounts, holeCards, director } = args;
         if (!shareCode) return { data: { error: 'No share code' } };
         const updatedAt = new Date().toISOString();
         const resumeState = {
@@ -155,6 +174,7 @@ export const db = {
           hand: hand || null,
           gameOver: gameOver || null,
           holeCards: holeCards || null,
+          director: director || null,
         };
         const state = {
           hand,
@@ -163,6 +183,7 @@ export const db = {
           equity,
           hideAmounts,
           holeCards,
+          director,
           _holeCards: holeCards,
         };
         store[shareCode] = {
