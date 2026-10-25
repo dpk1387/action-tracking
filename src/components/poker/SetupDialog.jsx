@@ -64,8 +64,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [stackInBB, setStackInBB] = useState(initial?.stackInBB || false);
   const [smallBlind, setSmallBlind] = useState(initial?.smallBlind ?? 25);
   const [bigBlind, setBigBlind] = useState(initial?.bigBlind ?? 50);
-  const [thirdBlind, setThirdBlind] = useState(initial?.thirdBlind ?? (initial?.bigBlind ? initial.bigBlind * 2 : 5));
-  const [fourthBlind, setFourthBlind] = useState(initial?.fourthBlind ?? (initial?.bigBlind ? initial.bigBlind * 4 : 10));
+  const initBB = Number(initial?.bigBlind) || (initial?.mode === 'cash' ? 2 : 50);
+  const [thirdBlind, setThirdBlind] = useState(initial?.thirdBlind ?? (initBB * 2));
+  const [fourthBlind, setFourthBlind] = useState(initial?.fourthBlind ?? (initBB * 4));
+  const [thirdBlindCustomized, setThirdBlindCustomized] = useState(initial?.thirdBlind != null);
+  const [fourthBlindCustomized, setFourthBlindCustomized] = useState(initial?.fourthBlind != null);
   const [anteType, setAnteType] = useState(initial?.anteType || 'bba');
   const [anteAmount, setAnteAmount] = useState(initial?.anteAmount ?? 50);
   const [sbHalfAnteShortHanded, setSbHalfAnteShortHanded] = useState(initial?.sbHalfAnteShortHanded ?? true);
@@ -273,6 +276,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       if (!cashBlindsTouched) {
         setSmallBlind(CASH_DEFAULT.smallBlind);
         setBigBlind(CASH_DEFAULT.bigBlind);
+        setThirdBlind(CASH_DEFAULT.bigBlind * 2);
+        setFourthBlind(CASH_DEFAULT.bigBlind * 4);
         setAnteType(CASH_DEFAULT.anteType);
         setAnteAmount(CASH_DEFAULT.anteAmount);
       }
@@ -611,8 +616,18 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                 <label className="text-xs text-slate-400 block mb-1">{gameType === 'fl' ? 'Big bet' : 'Big blind'}</label>
                 <input type="text" inputMode="decimal" value={gameType === 'fl' ? bigBet : bigBlind} onChange={(e) => {
                   const v = e.target.value;
-                  if (gameType === 'fl') setBigBet(v);
-                  else { setBigBlind(v); setCashBlindsTouched(true); if (anteType === 'traditional') setAnteAmount(suggestAnte(v)); }
+                  if (gameType === 'fl') {
+                    setBigBet(v);
+                  } else {
+                    setBigBlind(v);
+                    setCashBlindsTouched(true);
+                    const parsedBB = parseAmount(v) ?? Number(v);
+                    if (parsedBB && parsedBB > 0) {
+                      if (!thirdBlindCustomized) setThirdBlind(parsedBB * 2);
+                      if (!fourthBlindCustomized) setFourthBlind(parsedBB * 4);
+                    }
+                    if (anteType === 'traditional') setAnteAmount(suggestAnte(v));
+                  }
                 }} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
               </div>
               {(anteType === 'three_blinds' || anteType === 'four_blinds') && (
@@ -622,8 +637,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                     type="text"
                     inputMode="decimal"
                     value={thirdBlind}
-                    onChange={(e) => setThirdBlind(e.target.value)}
-                    placeholder={String((Number(bigBlind) || 2) * 2)}
+                    onChange={(e) => {
+                      setThirdBlind(e.target.value);
+                      setThirdBlindCustomized(true);
+                    }}
+                    placeholder={String((parseAmount(bigBlind) ?? Number(bigBlind) ?? 2) * 2)}
                     className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
                   />
                 </div>
@@ -635,8 +653,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                     type="text"
                     inputMode="decimal"
                     value={fourthBlind}
-                    onChange={(e) => setFourthBlind(e.target.value)}
-                    placeholder={String((Number(bigBlind) || 2) * 4)}
+                    onChange={(e) => {
+                      setFourthBlind(e.target.value);
+                      setFourthBlindCustomized(true);
+                    }}
+                    placeholder={String((parseAmount(bigBlind) ?? Number(bigBlind) ?? 2) * 4)}
                     className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
                   />
                 </div>
@@ -650,6 +671,19 @@ export default function SetupDialog({ initial, onSave, onClose }) {
               onChange={(e) => {
                 const t = e.target.value;
                 setAnteType(t);
+                const bbVal = parseAmount(bigBlind) ?? Number(bigBlind) ?? 2;
+                if (t === 'three_blinds') {
+                  if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
+                    setThirdBlind(bbVal * 2);
+                  }
+                } else if (t === 'four_blinds') {
+                  if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
+                    setThirdBlind(bbVal * 2);
+                  }
+                  if (!fourthBlindCustomized || Number(fourthBlind) === 10 || Number(fourthBlind) === 0) {
+                    setFourthBlind(bbVal * 4);
+                  }
+                }
                 if (t === 'traditional') setAnteAmount(suggestAnte(bigBlind));
                 else if (t === 'bba' || t === 'btn_ante') setAnteAmount(Number(bigBlind));
                 else if (t === 'sb_half_ante') setAnteAmount(Math.max(1, Math.round(Number(bigBlind) * 0.5)));

@@ -1,11 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { parseCards, variantRanks, bettingFrozen } from '@/lib/poker';
 
-export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillBoard, holeCards }) {
+export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillBoard, holeCards, onRunIt }) {
   const [textA, setTextA] = useState('');
   const [textB, setTextB] = useState('');
   const [textC, setTextC] = useState('');
   const [error, setError] = useState('');
+  const [runItPressed, setRunItPressed] = useState(false);
+
+  useEffect(() => {
+    setRunItPressed(false);
+  }, [hand?.street, hand?.handNumber, hand?.phase]);
 
   const nonFolded = hand.players.filter((p) => p.status !== 'folded');
   const frozen = bettingFrozen(hand);
@@ -20,6 +25,8 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
   const next = { preflop: 'flop', flop: 'turn', turn: 'river' }[hand.street];
   const isRiver = hand.street === 'river';
   const complete = (hand.currentPlayer === -1 || noFurtherBetting || frozen || hand.phase === 'ended') && hand.phase !== 'awarded';
+  const canRunIt = !runItPressed && !hand.runItSelected && !hand.runTimes && !hand.doubleBoard && complete && Boolean(next);
+  const isCommonHidden = (dbl || isTriple || (hand.runTimes && hand.runTimes >= 2)) && (hand.street === 'flop' || hand.street === 'turn');
 
   const heldKeys = new Set();
   if (holeCards) {
@@ -75,6 +82,7 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
 
   const dealReal = () => {
     setError('');
+    setRunItPressed(true);
     const expected = next === 'flop' ? 3 : 1;
     const { aCards, bCards, cCards, error: perr } = parseAllBoards();
     if (perr) return setError(perr);
@@ -89,6 +97,23 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
 
   const fillHidden = () => {
     setError('');
+    const allowed = variantRanks(hand.variant);
+    if (isCommonHidden) {
+      const a = parseCards(textA, allowed);
+      if (a.error) return setError(a.error);
+      if (a.cards.length !== hiddenA) {
+        return setError(`Enter exactly ${hiddenA} card(s) for the ${hand.street === 'flop' ? 'flop' : 'flop & turn'}.`);
+      }
+      for (const c of a.cards) {
+        const k = c.rank + c.suit;
+        if (heldKeys.has(k)) return setError(`${c.rank}${c.suit} is in a player's hand`);
+      }
+      const res = onFillBoard(a.cards);
+      if (res && res.error) setError(res.error);
+      else { setTextA(''); setTextB(''); setTextC(''); }
+      return;
+    }
+
     const { aCards, bCards, cCards, error: perr } = parseAllBoards();
     if (perr) return setError(perr);
     if (aCards.length !== hiddenA) return setError(`Board 1: enter ${hiddenA} card(s).`);
@@ -102,6 +127,7 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
 
   const dealHidden = () => {
     setError('');
+    setRunItPressed(true);
     const res = onDealHidden();
     if (res && res.error) setError(res.error);
   };
@@ -117,27 +143,65 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
       {hiddenCount > 0 && showdown ? (
         <>
           <div className="text-xs text-slate-400 mb-2">
-            Enter the {hiddenLabelA} already on board 1{dbl ? ', board 2' : ''}{isTriple ? ', and board 3' : ''} (rank-suit, e.g. Td 8s 2c). Use T for ten.
+            {isCommonHidden
+              ? `Enter the ${hand.street === 'flop' ? 'flop' : 'flop & turn'} (appears on all boards) (rank-suit, e.g. Td 8s 2c). Use T for ten.`
+              : `Enter the ${hiddenLabelA} already on board 1${dbl ? ', board 2' : ''}${isTriple ? ', and board 3' : ''} (rank-suit, e.g. Td 8s 2c). Use T for ten.`}
           </div>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="w-16 shrink-0 text-xs text-slate-400">Board 1</span>
-              <input value={textA} onChange={(e) => setTextA(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fillHidden()} placeholder={`${hiddenA} cards`} className="flex-1 rounded-lg bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+              <span className="w-20 shrink-0 text-xs text-slate-400">
+                {isCommonHidden ? 'Common' : 'Board 1'}
+              </span>
+              <input
+                value={textA}
+                onChange={(e) => setTextA(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && fillHidden()}
+                placeholder={`${hiddenA} cards${isCommonHidden ? ' (shared on all boards)' : ''}`}
+                className="flex-1 rounded-lg bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+              />
             </div>
-            {dbl && (
+            {!isCommonHidden && dbl && (
               <div className="flex items-center gap-2">
-                <span className="w-16 shrink-0 text-xs text-slate-400">Board 2</span>
+                <span className="w-20 shrink-0 text-xs text-slate-400">Board 2</span>
                 <input value={textB} onChange={(e) => setTextB(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fillHidden()} placeholder={`${hiddenB} cards`} className="flex-1 rounded-lg bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
               </div>
             )}
-            {isTriple && (
+            {!isCommonHidden && isTriple && (
               <div className="flex items-center gap-2">
-                <span className="w-16 shrink-0 text-xs text-slate-400">Board 3</span>
+                <span className="w-20 shrink-0 text-xs text-slate-400">Board 3</span>
                 <input value={textC} onChange={(e) => setTextC(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fillHidden()} placeholder={`${hiddenC} cards`} className="flex-1 rounded-lg bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
               </div>
             )}
           </div>
-          <button onClick={fillHidden} className="mt-2 rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer">Confirm board</button>
+          <div className="flex items-center gap-2 mt-2">
+            <button onClick={fillHidden} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer font-semibold">
+              Confirm board
+            </button>
+            {canRunIt && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRunItPressed(true);
+                    onRunIt && onRunIt(2);
+                  }}
+                  className="rounded-lg bg-[#223326] hover:bg-[#2b4231] border border-emerald-600/70 text-emerald-300 text-xs font-bold px-3 py-2 cursor-pointer shadow-md transition-colors"
+                >
+                  Run It 2x
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRunItPressed(true);
+                    onRunIt && onRunIt(3);
+                  }}
+                  className="rounded-lg bg-[#2e233d] hover:bg-[#3d2f52] border border-purple-600/70 text-purple-300 text-xs font-bold px-3 py-2 cursor-pointer shadow-md transition-colors"
+                >
+                  Run It 3x
+                </button>
+              </>
+            )}
+          </div>
         </>
       ) : isAllInShowdown && complete && next ? (
         <>
@@ -162,12 +226,68 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
               </div>
             )}
           </div>
-          <button onClick={dealReal} className="mt-2 rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer">Deal {streetUpper}</button>
+          <div className="flex items-center gap-2 mt-2">
+            <button onClick={dealReal} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer font-semibold">
+              Deal {streetUpper}
+            </button>
+            {canRunIt && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRunItPressed(true);
+                    onRunIt && onRunIt(2);
+                  }}
+                  className="rounded-lg bg-[#223326] hover:bg-[#2b4231] border border-emerald-600/70 text-emerald-300 text-xs font-bold px-3 py-2 cursor-pointer shadow-md transition-colors"
+                >
+                  Run It 2x
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRunItPressed(true);
+                    onRunIt && onRunIt(3);
+                  }}
+                  className="rounded-lg bg-[#2e233d] hover:bg-[#3d2f52] border border-purple-600/70 text-purple-300 text-xs font-bold px-3 py-2 cursor-pointer shadow-md transition-colors"
+                >
+                  Run It 3x
+                </button>
+              </>
+            )}
+          </div>
         </>
       ) : !isAllInShowdown && complete && next ? (
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs text-slate-400">Deal the {streetUpper}{boardsLabel} – board stays hidden unless there's an all-in.</div>
-          <button onClick={dealHidden} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer">Deal {streetUpper}</button>
+          <div className="flex items-center gap-2">
+            <button onClick={dealHidden} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer font-semibold">
+              Deal {streetUpper}
+            </button>
+            {canRunIt && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRunItPressed(true);
+                    onRunIt && onRunIt(2);
+                  }}
+                  className="rounded-lg bg-[#223326] hover:bg-[#2b4231] border border-emerald-600/70 text-emerald-300 text-xs font-bold px-3 py-2 cursor-pointer shadow-md transition-colors"
+                >
+                  Run It 2x
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRunItPressed(true);
+                    onRunIt && onRunIt(3);
+                  }}
+                  className="rounded-lg bg-[#2e233d] hover:bg-[#3d2f52] border border-purple-600/70 text-purple-300 text-xs font-bold px-3 py-2 cursor-pointer shadow-md transition-colors"
+                >
+                  Run It 3x
+                </button>
+              </>
+            )}
+          </div>
         </div>
       ) : (
         <div className="text-xs text-slate-500">{isRiver ? 'River is out – enter hole cards to settle the showdown.' : `Complete the ${hand.street} round before dealing the ${next}.`}</div>

@@ -87,10 +87,11 @@ export default function Spectator() {
 
   const hand = liveState?.hand;
   const config = liveState?.config;
-  const cur = hand?.currency || '$';
-  const hideAmounts = !!liveState?.hideAmounts;
+  // Spectator view: amounts should never be hidden because spectators are away from the venue
+  const hideAmounts = false;
   const isTournament = hand?.mode === 'tournament' || config?.mode === 'tournament';
-  const stackCurrency = isTournament ? '' : cur;
+  const cur = isTournament ? '' : (hand?.currency || '$');
+  const stackCurrency = cur;
 
   const potTotal = hand?.players ? hand.players.reduce((s, p) => s + (p.totalBet || 0), 0) : 0;
   const actions = hand?.actionHistory || [];
@@ -166,6 +167,33 @@ export default function Spectator() {
           hideAmounts={hideAmounts}
           pot={potTotal}
         />
+
+        {/* Hand Action History Log */}
+        <div className="rounded-xl border border-[#2a2f37] bg-[#1e2227] p-4 shadow-xl">
+          <div className="flex items-center justify-between mb-3 border-b border-[#2a2f37]/70 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+              Hand Action History ({actions.length})
+            </h3>
+            <span className="text-[11px] text-slate-400 font-mono">Hand #{hand.handNumber}</span>
+          </div>
+          <div className="space-y-1.5 max-h-56 overflow-y-auto text-xs">
+            {actions.length === 0 ? (
+              <div className="text-slate-500 py-3 text-center">No actions recorded yet.</div>
+            ) : (
+              [...actions].reverse().map((a, i) => (
+                <div key={i} className="flex justify-between items-center py-1.5 border-b border-[#2a2f37]/50 text-slate-300">
+                  <div>
+                    <span className="text-slate-500 mr-2 font-mono text-[11px]">[{STREET_LABEL[a.street] || a.street}]</span>
+                    <span className="font-semibold text-white">{a.player}</span>
+                  </div>
+                  <span className="text-emerald-400 font-semibold font-mono">
+                    {a.action} {a.chips ? (cur ? money(a.chips, cur) : money(a.chips, '')) : ''}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -290,8 +318,8 @@ export default function Spectator() {
                       <span className="text-slate-500 mr-2 font-mono">[{STREET_LABEL[a.street] || a.street}]</span>
                       <span className="font-medium text-white">{a.player}</span>
                     </div>
-                    <span className="text-emerald-400 font-semibold">
-                      {a.action} {hideAmounts ? '' : (a.chips ? (stackCurrency ? money(a.chips, stackCurrency) : a.chips.toLocaleString()) : '')}
+                    <span className="text-emerald-400 font-semibold font-mono">
+                      {a.action} {hideAmounts ? '' : (a.chips ? (cur ? money(a.chips, cur) : money(a.chips, '')) : '')}
                     </span>
                   </div>
                 ))

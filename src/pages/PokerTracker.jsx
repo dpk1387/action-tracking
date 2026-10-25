@@ -522,6 +522,26 @@ export default function PokerTracker() {
     return {};
   };
 
+  const handleRunIt = (times) => {
+    setHand((prev) => {
+      if (!prev) return prev;
+      const is3x = times === 3;
+      const bCount = is3x ? 3 : 2;
+      const curA = prev.communityCards || [];
+      const bB = curA.map((c) => ({ ...c }));
+      const bC = is3x ? curA.map((c) => ({ ...c })) : prev.boardC;
+      return {
+        ...prev,
+        doubleBoard: true,
+        bombBoards: bCount,
+        runTimes: times,
+        runItSelected: times,
+        boardB: bB,
+        boardC: is3x ? bC : prev.boardC,
+      };
+    });
+  };
+
   const sevenTwoActive = (h) => !!(h?.sideGames?.sevenTwo);
 
   const sevenTwoQualifyingWinner = (awarded) => {
@@ -925,9 +945,11 @@ export default function PokerTracker() {
     }
     if (oot.kind === 'aggressive' && oot.amount && Number(oot.amount) > 0) {
       const amt = Number(oot.amount);
-      const n = hand.players.length;
-      const buttonIndex = hand.players.findIndex((pl) => pl.seat === hand.buttonSeat);
-      const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
+      const minRaise = hand.currentBet === 0
+        ? hand.bigBlind
+        : (hand.street === 'preflop' && (!hand.raiseLevel || hand.raiseLevel <= 1))
+        ? Math.max(hand.currentBet * 2, hand.currentBet + (hand.lastRaiseAmount || hand.bigBlind))
+        : hand.currentBet + (hand.lastRaiseAmount || hand.bigBlind);
       if (amt >= minRaise && amt <= cp.currentBet + cp.stack) {
         const t = setTimeout(() => {
           pushHistory(hand);
@@ -1644,7 +1666,14 @@ export default function PokerTracker() {
         {hand.phase !== 'awarded' ? (
           <>
             {!lowGame && (
-              <CommunityCardInput hand={hand} onDeal={handleDeal} onDealHidden={handleDealHidden} onFillBoard={handleFillBoard} holeCards={holeCards} />
+              <CommunityCardInput
+                hand={hand}
+                onDeal={handleDeal}
+                onDealHidden={handleDealHidden}
+                onFillBoard={handleFillBoard}
+                holeCards={holeCards}
+                onRunIt={handleRunIt}
+              />
             )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="space-y-3">

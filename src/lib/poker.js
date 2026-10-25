@@ -90,7 +90,8 @@ export function calcAnteForType(anteType, bigBlind, levelAnte) {
 
 export function formatBlinds(hand) {
   if (!hand) return '';
-  const cur = hand.currency || '';
+  const isTourney = hand.mode === 'tournament';
+  const cur = isTourney ? '' : (hand.currency || '');
 
   if (hand.bombPot) {
     const bombAmt = hand.bombAmount || (hand.bigBlind ? hand.bigBlind * 5 : 0);
@@ -159,6 +160,13 @@ function formatNumberTrimmed(n, maxDecimals) {
   return String(rounded);
 }
 
+export function formatKWithDec(n, sym = '', sign = '') {
+  const k = n / 1000;
+  const rounded = Math.round(k * 10) / 10;
+  const kStr = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
+  return `${sign}${sym}${kStr}K`;
+}
+
 export function formatKM(val) {
   if (val == null || val === '') return '';
   const n = typeof val === 'number' ? val : (parseAmount(val) ?? Number(val));
@@ -171,10 +179,11 @@ export function formatKM(val) {
     const mStr = m % 1 === 0 ? m.toFixed(0) : m.toFixed(maxDec).replace(/\.?0+$/, '');
     return `${sign}${mStr}M`;
   }
-  if (absN >= 1000) {
-    const k = absN / 1000;
-    const kStr = k % 1 === 0 ? k.toFixed(0) : k.toFixed(2).replace(/\.?0+$/, '');
-    return `${sign}${kStr}K`;
+  if (absN >= 1000 && absN <= 100000) {
+    return formatKWithDec(absN, '', sign);
+  }
+  if (absN > 100000) {
+    return `${sign}${Math.round(absN / 1000)}K`;
   }
   return `${sign}${absN}`;
 }
@@ -197,11 +206,11 @@ export function formatPlayerTagAmount(val, currency = '', hand = null) {
   if (!isFinite(n)) return '';
   const absN = Math.abs(n);
   const sign = n < 0 ? '-' : '';
-  const sym = currency || '';
+  const isTourney = hand?.mode === 'tournament';
+  const sym = isTourney ? '' : (currency || '');
 
-  // Regardless of smallest chip:
-  // <100K: full number
-  if (absN < 100000) {
+  // Below 1,000: full number
+  if (absN < 1000) {
     const hasDec = !Number.isInteger(absN);
     const numStr = absN.toLocaleString('en-US', {
       minimumFractionDigits: hasDec ? 2 : 0,
@@ -210,59 +219,19 @@ export function formatPlayerTagAmount(val, currency = '', hand = null) {
     return `${sign}${sym}${numStr}`;
   }
 
+  // 1,000 to 100,000: use K and one decimal digit if needed
+  if (absN >= 1000 && absN <= 100000) {
+    return formatKWithDec(absN, sym, sign);
+  }
+
   // 100K-999,999: use K, no decimal digits, do round
-  if (absN >= 100000 && absN < 1000000) {
+  if (absN > 100000 && absN < 1000000) {
     return `${sign}${sym}${Math.round(absN / 1000)}K`;
   }
 
-  // 100M-999,999,999 (and 1B+): use M, no decimal digits, do round
-  if (absN >= 100000000) {
-    return `${sign}${sym}${Math.round(absN / 1000000)}M`;
-  }
-
-  const smallestChip = getSmallestChip(hand);
-
-  // Small chip 100K+:
-  // below 1M use K, no decimal digits
-  // 1M+ use M, no decimal digits
-  if (smallestChip >= 100000) {
-    if (absN >= 1000000) {
-      return `${sign}${sym}${Math.round(absN / 1000000)}M`;
-    }
-    return `${sign}${sym}${Math.round(absN / 1000)}K`;
-  }
-
-  // Small chip 10K or 25K:
-  // below 1M use K, no decimal digits
-  // 1M-<100M use M, up to 1 decimal digit
-  if (smallestChip === 10000 || smallestChip === 25000) {
-    if (absN >= 1000000) {
-      const mStr = formatNumberTrimmed(absN / 1000000, 1);
-      return `${sign}${sym}${mStr}M`;
-    }
-    return `${sign}${sym}${Math.round(absN / 1000)}K`;
-  }
-
-  // Small chip 1K, 5K:
-  // below 100K use K, no decimal digits
-  // 1M-<100M - use M, up to 1 decimal digit
-  if (smallestChip === 1000 || smallestChip === 5000) {
-    if (absN >= 1000000) {
-      const mStr = formatNumberTrimmed(absN / 1000000, 1);
-      return `${sign}${sym}${mStr}M`;
-    }
-    return `${sign}${sym}${Math.round(absN / 1000)}K`;
-  }
-
-  // Smallest chip within 25-500 (or below 25):
-  // below 100K - use K, 1 decimal digit (eg 83,600 -> 83.6K)
-  // 1M-<100M - use M, up to 1 decimal digit
-  if (absN >= 1000000) {
-    const mStr = formatNumberTrimmed(absN / 1000000, 1);
-    return `${sign}${sym}${mStr}M`;
-  }
-  const kStr = formatNumberTrimmed(absN / 1000, 1);
-  return `${sign}${sym}${kStr}K`;
+  // 1M+: use M, up to 1 decimal digit
+  const mStr = formatNumberTrimmed(absN / 1000000, 1);
+  return `${sign}${sym}${mStr}M`;
 }
 
 export function formatSidePotAmount(amt, currency = '') {
@@ -273,8 +242,7 @@ export function formatSidePotAmount(amt, currency = '') {
   const sign = n < 0 ? '-' : '';
   const sym = currency || '';
 
-  // Show full number if under 10,000
-  if (absN < 10000) {
+  if (absN < 1000) {
     const hasDec = !Number.isInteger(absN);
     const numStr = absN.toLocaleString('en-US', {
       minimumFractionDigits: hasDec ? 2 : 0,
@@ -283,21 +251,16 @@ export function formatSidePotAmount(amt, currency = '') {
     return `${sign}${sym}${numStr}`;
   }
 
-  // Only if between 10K-100K and 1M-100M should 1 decimal digit be used
-  if (absN >= 10000 && absN < 100000) {
-    const kStr = formatNumberTrimmed(absN / 1000, 1);
-    return `${sign}${sym}${kStr}K`;
-  }
-  if (absN >= 1000000 && absN < 100000000) {
-    const mStr = formatNumberTrimmed(absN / 1000000, 1);
-    return `${sign}${sym}${mStr}M`;
+  if (absN >= 1000 && absN <= 100000) {
+    return formatKWithDec(absN, sym, sign);
   }
 
-  // Otherwise show 0 decimal digits (100K-999,999, and >= 100M)
-  if (absN >= 100000000) {
-    return `${sign}${sym}${Math.round(absN / 1000000)}M`;
+  if (absN > 100000 && absN < 1000000) {
+    return `${sign}${sym}${Math.round(absN / 1000)}K`;
   }
-  return `${sign}${sym}${Math.round(absN / 1000)}K`;
+
+  const mStr = formatNumberTrimmed(absN / 1000000, 1);
+  return `${sign}${sym}${mStr}M`;
 }
 
 export function formatBetAmount(val, currency = '') {
@@ -317,23 +280,16 @@ export function formatBetAmount(val, currency = '') {
     return `${sign}${sym}${numStr}`;
   }
 
-  if (absN >= 1000000) {
-    const intPart = Math.floor(absN / 1000000);
-    const rem = Math.floor(absN % 1000000);
-    if (rem === 0) {
-      return `${sign}${sym}${intPart}M`;
-    }
-    const remStr = String(rem).padStart(6, '0').replace(/0+$/, '');
-    return `${sign}${sym}${intPart}.${remStr}M`;
+  if (absN >= 1000 && absN <= 100000) {
+    return formatKWithDec(absN, sym, sign);
   }
 
-  const intPart = Math.floor(absN / 1000);
-  const rem = Math.floor(absN % 1000);
-  if (rem === 0) {
-    return `${sign}${sym}${intPart}K`;
+  if (absN > 100000 && absN < 1000000) {
+    return `${sign}${sym}${Math.round(absN / 1000)}K`;
   }
-  const remStr = String(rem).padStart(3, '0').replace(/0+$/, '');
-  return `${sign}${sym}${intPart}.${remStr}K`;
+
+  const mStr = formatNumberTrimmed(absN / 1000000, 1);
+  return `${sign}${sym}${mStr}M`;
 }
 
 export function positionForSeat(n, buttonIndex, seatOrderIndex) {
@@ -764,12 +720,12 @@ export function startHand(config, buttonSeat, handNumber) {
 
   if (isFourBlinds && fbIndex >= 0) {
     currentBet = players[fbIndex].currentBet || (Number(config.fourthBlind) || (config.bigBlind * 4));
-    lastRaiseAmount = Math.max(currentBet - (players[tbIndex]?.currentBet || (config.bigBlind * 2)), config.bigBlind);
+    lastRaiseAmount = currentBet;
     raiseLevel = 1;
     first = firstActiveAfter(players, fbIndex);
   } else if (isThreeBlinds && tbIndex >= 0) {
     currentBet = players[tbIndex].currentBet || (Number(config.thirdBlind) || (config.bigBlind * 2));
-    lastRaiseAmount = Math.max(currentBet - bb, config.bigBlind);
+    lastRaiseAmount = currentBet;
     raiseLevel = 1;
     first = firstActiveAfter(players, tbIndex);
   }
@@ -967,7 +923,6 @@ export function applyAction(hand, playerId, type, amount) {
     p.status = 'folded';
     p.lastAction = { type: 'fold' };
     p.hasActed = true;
-    applyOversizedCap(h);
   } else if (type === 'check') {
     p.lastAction = { type: 'check' };
     p.hasActed = true;
@@ -1015,22 +970,14 @@ export function applyAction(hand, playerId, type, amount) {
         });
       }
     }
-    const isSoleDeepest = hasSoleDeepestStack(h, p.id);
-    if (wentAllin && !isSoleDeepest) {
+    if (wentAllin) {
       p.lastAction = { type: 'allin', amount: p.currentBet, raiseLevel: level };
       p.status = 'allin';
     } else {
       const actionType = isRaise ? 'raise' : 'bet';
       p.lastAction = { type: actionType, amount: p.currentBet, raiseLevel: level };
-      if (wentAllin) p.status = 'allin';
     }
     p.hasActed = true;
-    applyOversizedCap(h);
-    const postNonFoldedOthers = h.players.filter((o) => o.id !== p.id && o.status !== 'folded');
-    const postOtherMaxBet = postNonFoldedOthers.length > 0 ? Math.max(...postNonFoldedOthers.map((o) => o.currentBet)) : 0;
-    if (p.currentBet <= postOtherMaxBet || p._wasCapped) {
-      p.lastAction = { type: 'call', amount: p.currentBet, raiseLevel: h.raiseLevel || 1 };
-    }
   } else if (type === 'allin') {
     const pay = p.stack;
     const prevBet = h.currentBet;
@@ -1038,13 +985,11 @@ export function applyAction(hand, playerId, type, amount) {
     p.stack = 0;
     p.currentBet += pay;
     p.totalBet += pay;
-    const oldBet = p.currentBet - pay;
     const newBet = p.currentBet;
     const increased = newBet > prevBet;
     const isShortRaise = increased && (newBet - prevBet) < prevLastRaise;
     const isCoveredCall = newBet <= prevBet;
     let level = h.raiseLevel;
-    let wasCapped = false;
     if (increased && !isCoveredCall) {
       h.raiseLevel = (prevBet > 0 || h.street === 'preflop') ? (h.raiseLevel || 1) + 1 : 1;
       level = h.raiseLevel;
@@ -1065,43 +1010,9 @@ export function applyAction(hand, playerId, type, amount) {
         });
       }
     }
-    const isSoleDeepest = hasSoleDeepestStack(h, p.id);
-    if (isCoveredCall) {
-      p.lastAction = { type: 'allin', amount: newBet, raiseLevel: level };
-    } else if (isSoleDeepest) {
-      const isRaise = prevBet > 0 || h.street === 'preflop';
-      p.lastAction = { type: isRaise ? 'raise' : 'bet', amount: newBet, raiseLevel: level };
-    } else {
-      p.lastAction = { type: 'allin', amount: newBet, raiseLevel: level };
-    }
+    p.lastAction = { type: 'allin', amount: newBet, raiseLevel: level };
     p.hasActed = true;
     p.status = 'allin';
-    applyOversizedCap(h);
-
-    if (p.stack > 0 && !isCoveredCall) {
-      wasCapped = true;
-      p._wasCapped = true;
-      p._allInCapped = true;
-      p.status = 'active';
-      const cappedBet = p.currentBet;
-      const wasJustCalling = cappedBet <= prevBet;
-      if (wasJustCalling) {
-        p.lastAction = { type: 'call', amount: cappedBet - oldBet, raiseLevel: h.raiseLevel };
-      } else {
-        const isRaise = prevBet > 0 || h.street === 'preflop';
-        p.lastAction = {
-          type: isRaise ? 'raise' : 'bet',
-          amount: cappedBet,
-          raiseLevel: h.raiseLevel,
-        };
-      }
-    } else if (isCoveredCall && p.stack === 0) {
-      p.lastAction = { type: 'allin', amount: newBet, raiseLevel: level };
-    }
-
-    if (wasCapped) {
-      h._pendingCappedAction = true;
-    }
   } else if (type === 'straddle') {
     const newLevel = (h.straddleLevel || 0) + 1;
     const targetAmount = amount;
@@ -1320,6 +1231,18 @@ export function fillBoard(hand, cards) {
   const hiddenC = isTriple ? (hand.boardC || []).filter((c) => c.hidden).length : 0;
   const total = hiddenA + hiddenB + hiddenC;
   if (total === 0) return { error: 'No hidden board cards to enter.' };
+
+  // If cards.length === hiddenA and running multiple times on flop/turn:
+  // This is the common flop (or flop+turn) being revealed across all boards!
+  if ((hand.doubleBoard || isTriple || (hand.runTimes && hand.runTimes >= 2)) && cards.length === hiddenA) {
+    const h = clone(hand);
+    let ci = 0;
+    h.communityCards = (h.communityCards || []).map((c) => (c.hidden ? cards[ci++] : c));
+    if (h.doubleBoard) h.boardB = h.communityCards.map((c) => ({ ...c }));
+    if (isTriple) h.boardC = h.communityCards.map((c) => ({ ...c }));
+    return { hand: h };
+  }
+
   if (cards.length !== total) return { error: `Enter ${total} card(s) for the board.` };
   const h = clone(hand);
   let ci = 0;
@@ -1336,9 +1259,11 @@ export function postBlinds(hand) {
   const buttonIndex = h.players.findIndex((p) => p.seat === h.buttonSeat);
   if (buttonIndex === -1) return h;
   const isThreeBlinds = h.anteType === 'three_blinds' && n >= 3;
+  const isFourBlinds = h.anteType === 'four_blinds' && n >= 4;
   const sbIndex = n === 2 ? buttonIndex : (buttonIndex + 1) % n;
   const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
-  const tbIndex = isThreeBlinds ? (buttonIndex + 3) % n : -1;
+  const tbIndex = (isThreeBlinds || isFourBlinds) ? (buttonIndex + 3) % n : -1;
+  const fbIndex = isFourBlinds ? (buttonIndex + 4) % n : -1;
 
   const activeCount = h.players.filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
   const isShortHandedSB = h.sbHalfAnteShortHanded && activeCount < (Number(h.shortHandedThreshold) || 5);
@@ -1377,7 +1302,21 @@ export function postBlinds(hand) {
   h.players[bbIndex].totalBet += bb;
   h.players[bbIndex].lastAction = { type: 'bb', amount: bb };
 
-  if (isThreeBlinds && tbIndex >= 0) {
+  if (isFourBlinds && tbIndex >= 0 && fbIndex >= 0) {
+    const tbTarget = Number(h.thirdBlind) || (h.bigBlind * 2);
+    const tb = Math.min(tbTarget, h.players[tbIndex].stack);
+    h.players[tbIndex].stack -= tb;
+    h.players[tbIndex].currentBet = tb;
+    h.players[tbIndex].totalBet += tb;
+    h.players[tbIndex].lastAction = { type: '3b', amount: tb };
+
+    const fbTarget = Number(h.fourthBlind) || (h.bigBlind * 4);
+    const fb = Math.min(fbTarget, h.players[fbIndex].stack);
+    h.players[fbIndex].stack -= fb;
+    h.players[fbIndex].currentBet = fb;
+    h.players[fbIndex].totalBet += fb;
+    h.players[fbIndex].lastAction = { type: '4b', amount: fb };
+  } else if (isThreeBlinds && tbIndex >= 0) {
     const tbTarget = Number(h.thirdBlind) || (h.bigBlind * 2);
     const tb = Math.min(tbTarget, h.players[tbIndex].stack);
     h.players[tbIndex].stack -= tb;
@@ -1404,10 +1343,16 @@ export function postBlinds(hand) {
 
   h.players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
 
-  if (isThreeBlinds && tbIndex >= 0) {
+  if (isFourBlinds && fbIndex >= 0) {
+    const fbVal = h.players[fbIndex].currentBet || (Number(h.fourthBlind) || (h.bigBlind * 4));
+    h.currentBet = fbVal;
+    h.lastRaiseAmount = fbVal;
+    h.raiseLevel = 1;
+    h.currentPlayer = firstActiveAfter(h.players, fbIndex);
+  } else if (isThreeBlinds && tbIndex >= 0) {
     const tbVal = h.players[tbIndex].currentBet || (Number(h.thirdBlind) || (h.bigBlind * 2));
     h.currentBet = tbVal;
-    h.lastRaiseAmount = Math.max(tbVal - bb, h.bigBlind);
+    h.lastRaiseAmount = tbVal;
     h.raiseLevel = 1;
     h.currentPlayer = firstActiveAfter(h.players, tbIndex);
   } else {
@@ -1439,9 +1384,11 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
   const n = h.players.length;
   const buttonIndex = h.players.findIndex((p) => p.seat === h.buttonSeat);
   const isThreeBlinds = h.anteType === 'three_blinds' && n >= 3;
+  const isFourBlinds = h.anteType === 'four_blinds' && n >= 4;
   const sbIndex = n === 2 ? buttonIndex : (buttonIndex + 1) % n;
   const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
-  const tbIndex = isThreeBlinds ? (buttonIndex + 3) % n : -1;
+  const tbIndex = (isThreeBlinds || isFourBlinds) ? (buttonIndex + 3) % n : -1;
+  const fbIndex = isFourBlinds ? (buttonIndex + 4) % n : -1;
 
   const activeCount = h.players.filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
   const isShortHandedSB = h.sbHalfAnteShortHanded && activeCount < (Number(h.shortHandedThreshold) || 5);
@@ -1490,7 +1437,21 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
   h.players[bbIndex].totalBet += bbPay;
   h.players[bbIndex].lastAction = { type: 'bb', amount: bbPay };
 
-  if (isThreeBlinds && tbIndex >= 0) {
+  if (isFourBlinds && tbIndex >= 0 && fbIndex >= 0) {
+    const tbTarget = Number(h.thirdBlind) || (bb * 2);
+    const tbPay = Math.min(tbTarget, h.players[tbIndex].stack);
+    h.players[tbIndex].stack -= tbPay;
+    h.players[tbIndex].currentBet = tbPay;
+    h.players[tbIndex].totalBet += tbPay;
+    h.players[tbIndex].lastAction = { type: '3b', amount: tbPay };
+
+    const fbTarget = Number(h.fourthBlind) || (bb * 4);
+    const fbPay = Math.min(fbTarget, h.players[fbIndex].stack);
+    h.players[fbIndex].stack -= fbPay;
+    h.players[fbIndex].currentBet = fbPay;
+    h.players[fbIndex].totalBet += fbPay;
+    h.players[fbIndex].lastAction = { type: '4b', amount: fbPay };
+  } else if (isThreeBlinds && tbIndex >= 0) {
     const tbTarget = Number(h.thirdBlind) || (bb * 2);
     const tbPay = Math.min(tbTarget, h.players[tbIndex].stack);
     h.players[tbIndex].stack -= tbPay;
@@ -1520,10 +1481,16 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
   h.bigBlind = bb;
   h.anteAmount = ante;
 
-  if (isThreeBlinds && tbIndex >= 0) {
+  if (isFourBlinds && fbIndex >= 0) {
+    const fbActual = h.players[fbIndex].currentBet || (Number(h.fourthBlind) || (bb * 4));
+    h.currentBet = fbActual;
+    h.lastRaiseAmount = fbActual;
+    h.raiseLevel = 1;
+    h.currentPlayer = firstActiveAfter(h.players, fbIndex);
+  } else if (isThreeBlinds && tbIndex >= 0) {
     const tbActual = h.players[tbIndex].currentBet || (Number(h.thirdBlind) || (bb * 2));
     h.currentBet = tbActual;
-    h.lastRaiseAmount = Math.max(tbActual - bb, bb);
+    h.lastRaiseAmount = tbActual;
     h.raiseLevel = 1;
     h.currentPlayer = firstActiveAfter(h.players, tbIndex);
   } else {
@@ -2024,9 +1991,17 @@ export function fmt(n) {
 export function money(n, currency = '') {
   const parsed = parseAmount(n);
   const num = parsed != null ? parsed : (Number(n) || 0);
+  const absN = Math.abs(num);
+  const sign = num < 0 ? '-' : '';
+  const sym = currency || '';
+
+  if (absN >= 1000 && absN <= 100000) {
+    return formatKWithDec(absN, sym, sign);
+  }
+
   const hasDec = !Number.isInteger(num);
-  const str = num.toLocaleString('en-US', { minimumFractionDigits: hasDec ? 2 : 0, maximumFractionDigits: 2 });
-  return currency ? `${currency}${str}` : str;
+  const str = absN.toLocaleString('en-US', { minimumFractionDigits: hasDec ? 2 : 0, maximumFractionDigits: 2 });
+  return `${sign}${sym}${str}`;
 }
 
 export function rankDisplay(r) {

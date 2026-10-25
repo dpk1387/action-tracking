@@ -5,15 +5,26 @@ export default function DirectorBustDialog({
   isOpen,
   onClose,
   remainingPlayers,
+  players = [],
+  eliminations = [],
   payouts = [],
   splitSimultaneousTies = true,
   onConfirmBust,
 }) {
   if (!isOpen) return null;
 
+  // Filter out any players who have already been eliminated!
+  const eliminatedNames = new Set((eliminations || []).map((e) => (e.name || '').trim().toLowerCase()));
+  const activeRemainingPlayers = (players || []).filter((p) => {
+    if (p.status === 'eliminated' || p.status === 'out' || p.eliminated) return false;
+    if (p.name && eliminatedNames.has(p.name.trim().toLowerCase())) return false;
+    return true;
+  });
+
   const [bustCount, setBustCount] = useState(1);
+  const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [playersList, setPlayersList] = useState([
-    { id: '1', name: 'Player 1', stack: 5000 },
+    { id: '1', name: '', stack: 5000 },
   ]);
 
   useEffect(() => {
@@ -75,10 +86,34 @@ export default function DirectorBustDialog({
 
   const handleSubmit = (e) => {
     e?.preventDefault();
+    let finalList = [...playersList];
+    if (playersList.length === 1) {
+      const chosen = activeRemainingPlayers.find((p) => String(p.id) === String(selectedPlayerId)) ||
+                     activeRemainingPlayers.find((p) => p.name && p.name.trim().toLowerCase() === (playersList[0]?.name || '').trim().toLowerCase());
+      finalList = [
+        {
+          id: chosen ? chosen.id : (selectedPlayerId || `player_bust_${Date.now()}`),
+          name: chosen?.name || playersList[0]?.name || `Player (Place ${startPlace})`,
+          stack: chosen?.stack || playersList[0]?.stack || 0,
+        },
+      ];
+    } else {
+      // For multiple, match any names with activeRemainingPlayers where possible
+      finalList = finalList.map((p) => {
+        const found = activeRemainingPlayers.find(
+          (ap) => String(ap.id) === String(p.id) || (ap.name && ap.name.trim().toLowerCase() === (p.name || '').trim().toLowerCase())
+        );
+        return {
+          id: found ? found.id : p.id,
+          name: found?.name || p.name || 'Player',
+          stack: p.stack ?? found?.stack ?? 0,
+        };
+      });
+    }
     onConfirmBust({
-      bustCount: playersList.length,
-      players: playersList,
-      stackRankedOrder: playersList,
+      bustCount: finalList.length,
+      players: finalList,
+      stackRankedOrder: finalList,
     });
     onClose();
   };
@@ -129,6 +164,47 @@ export default function DirectorBustDialog({
               ))}
             </div>
           </div>
+
+          {/* If 1 player is busting: Allow quick bust or optional player selection */}
+          {playersList.length === 1 && (
+            <div className="bg-[#171c26] p-3.5 rounded-xl border border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-300">Single Elimination:</span>
+                <span className="text-xs font-bold text-emerald-400 font-mono">{startPlace}th Place</span>
+              </div>
+              {activeRemainingPlayers && activeRemainingPlayers.length > 0 ? (
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    Select player to eliminate:
+                  </label>
+                  <select
+                    value={selectedPlayerId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setSelectedPlayerId(id);
+                      const chosen = activeRemainingPlayers.find((p) => String(p.id) === String(id));
+                      if (chosen) {
+                        updatePlayerName(0, chosen.name);
+                        updatePlayerStack(0, chosen.stack || 0);
+                      }
+                    }}
+                    className="w-full bg-[#10141c] border border-slate-700 rounded-lg px-2.5 py-2 text-white text-xs focus:outline-none focus:border-rose-500"
+                  >
+                    <option value="">— Select Remaining Active Player ({activeRemainingPlayers.length} left) —</option>
+                    {activeRemainingPlayers.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} {p.stack ? `(${p.stack.toLocaleString()} chips)` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="text-xs text-slate-400">
+                  Click Confirm below to record 1 player elimination.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* If multiple players are busting */}
           {playersList.length > 1 && (

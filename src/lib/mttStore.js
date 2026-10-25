@@ -34,8 +34,8 @@ function parseVal(v) {
   return isNaN(clean) ? 0 : clean;
 }
 
-export const generateRoster = (playerNames = [], totalCount = 16) => {
-  const count = Math.max(1, Number(totalCount) || 1);
+export const generateRoster = (playerNames = [], totalCount = 0) => {
+  const count = Math.max(0, Number(totalCount) || 0);
   const roster = [];
   for (let i = 1; i <= count; i++) {
     const custom = playerNames[i - 1];
@@ -48,15 +48,15 @@ export const generateRoster = (playerNames = [], totalCount = 16) => {
 };
 
 export const defaultMTT = () => {
-  const tablesCount = 2;
-  const totalPlayers = 16;
+  const tablesCount = 1;
+  const totalPlayers = 0;
   const startingStack = 10000;
   const buyIn = 100;
   const payoutConfig = getDefaultPayoutConfig(tablesCount);
   const payouts = calculateTournamentPayouts({
-    totalPlayers,
+    totalPlayers: 0,
     buyIn,
-    totalPool: totalPlayers * buyIn,
+    totalPool: 0,
     payoutConfig,
     tablesCount,
   });
@@ -67,17 +67,17 @@ export const defaultMTT = () => {
     name: 'Championship Tournament',
     buyIn,
     currency: '$',
-    totalPlayers,
-    remainingPlayers: totalPlayers,
+    totalPlayers: 0,
+    remainingPlayers: 0,
     reEntries: 0,
     totalRebuys: 0,
     startingStack,
-    tablesCount,
-    totalChips: totalPlayers * startingStack,
-    totalPrizePool: totalPlayers * buyIn,
+    tablesCount: 1,
+    totalChips: 0,
+    totalPrizePool: 0,
     bountyPercent: 50,
     bountyPool: 0,
-    rankPool: totalPlayers * buyIn,
+    rankPool: 0,
     mysteryBountyConfig: {
       startPhase: 'itm',
       startLevel: 8,
@@ -102,7 +102,7 @@ export const defaultMTT = () => {
     },
     anteType: 'bba', // 'none' | 'traditional' | 'bba'
     chipDenominations: defaultDenomsFor(25),
-    players: generateRoster([], totalPlayers),
+    players: [],
     splitSimultaneousTies: true, // boolean toggle for simultaneous eliminations
     payoutConfig,
     payouts,
@@ -123,6 +123,11 @@ function loadState() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.totalPlayers === 'number') {
+        if (!parsed.active && (parsed.totalPlayers === 16 || !parsed.players?.length)) {
+          parsed.totalPlayers = 0;
+          parsed.remainingPlayers = 0;
+          parsed.players = [];
+        }
         return parsed;
       }
     }
@@ -191,9 +196,9 @@ export const mttStore = {
   createDirectorTournament: (data = {}) => {
     const {
       name = 'Championship Tournament',
-      totalPlayers = 16,
+      totalPlayers = 0,
       startingStack = 10000,
-      tablesCount = 2,
+      tablesCount = 1,
       buyIn = 100,
       currency = '$',
       levelDurationMinutes = 15,
@@ -216,7 +221,7 @@ export const mttStore = {
       mysteryBountyConfig = null,
     } = data;
 
-    const numPlayers = Math.max(2, Number(totalPlayers) || 16);
+    const numPlayers = Math.max(0, Number(totalPlayers) || (playerNames?.length || 0));
     const sStack = Math.max(100, Number(startingStack) || 10000);
     const tCount = Math.max(1, Number(tablesCount) || 1);
     const bIn = Math.max(0, Number(buyIn) || 100);
@@ -499,10 +504,23 @@ export const mttStore = {
       tied: !!p.tied,
     }));
 
+    const bustedIds = new Set(listToProcess.map((p) => String(p.id)));
+    const bustedNames = new Set(listToProcess.map((p) => String(p.name || '').trim().toLowerCase()).filter(Boolean));
+
+    const updatedPlayers = (state.players || []).map((p) => {
+      const matchId = bustedIds.has(String(p.id));
+      const matchName = p.name && bustedNames.has(String(p.name).trim().toLowerCase());
+      if (matchId || matchName) {
+        return { ...p, status: 'eliminated', eliminated: true };
+      }
+      return p;
+    });
+
     state = {
       ...state,
+      players: updatedPlayers,
       remainingPlayers: newRemaining,
-      eliminations: [...newElims, ...state.eliminations],
+      eliminations: [...newElims, ...(state.eliminations || [])],
       isEnded: isEnded || state.isEnded,
       clock: isEnded ? { ...state.clock, isRunning: false } : state.clock,
     };

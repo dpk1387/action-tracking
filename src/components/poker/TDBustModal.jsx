@@ -24,9 +24,12 @@ export default function TDBustModal({
   });
 
   const handleConfirm = () => {
-    if (selectedIds.length === 0) return;
+    const toBust = selectedIds.length > 0
+      ? selectedIds
+      : (filteredPlayers.length > 0 ? [filteredPlayers[0].id] : (players.length > 0 ? [players[0].id] : []));
+    if (toBust.length === 0) return;
     const eliminator = players.find((p) => p.id === eliminatorId);
-    onBust(selectedIds, eliminator?.name || null);
+    onBust(toBust, eliminator?.name || null);
     onClose();
   };
 
@@ -165,7 +168,9 @@ export default function TDBustModal({
                 {selectedIds.length} player{selectedIds.length > 1 ? 's' : ''} selected
               </span>
             ) : (
-              'Select at least 1 player'
+              <span className="text-slate-400">
+                1 player bust (quick) or select specific player(s) above
+              </span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -177,11 +182,11 @@ export default function TDBustModal({
             </button>
             <button
               onClick={handleConfirm}
-              disabled={selectedIds.length === 0}
+              disabled={players.length === 0}
               className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-xs font-bold cursor-pointer transition-colors shadow-md"
             >
               <Flame size={13} />
-              Confirm Bust ({selectedIds.length})
+              Confirm Bust ({selectedIds.length > 0 ? selectedIds.length : '1 Player'})
             </button>
           </div>
         </div>

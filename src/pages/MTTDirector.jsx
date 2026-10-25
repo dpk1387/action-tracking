@@ -70,24 +70,7 @@ export default function MTTDirector() {
     }
   }, [mtt.active, remainingPlayers]);
 
-  // Tournament Clock Interval
-  useEffect(() => {
-    if (!mtt.clock?.isRunning) return;
 
-    const interval = setInterval(() => {
-      const cur = mttStore.get().clock;
-      if (!cur?.isRunning) return;
-
-      if (cur.secondsLeft > 1) {
-        mttStore.updateClock({ secondsLeft: cur.secondsLeft - 1 });
-      } else {
-        // Advance to next level automatically
-        mttStore.nextLevel();
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [mtt.clock?.isRunning]);
 
   const handleSaveStructure = (data) => {
     if (!mtt.active) {
@@ -95,6 +78,7 @@ export default function MTTDirector() {
     } else {
       mttStore.updateStructure(data);
     }
+    setShowStructureModal(false);
   };
 
   const handleResetTournament = () => {
@@ -197,12 +181,20 @@ export default function MTTDirector() {
         isOpen={showStructureModal}
         initialData={mtt}
         onSave={handleSaveStructure}
-        onClose={() => setShowStructureModal(false)}
+        onClose={() => {
+          if (!mtt.active) {
+            navigate('/');
+          } else {
+            setShowStructureModal(false);
+          }
+        }}
       />
 
       <DirectorBustDialog
         isOpen={showBustModal}
         remainingPlayers={mtt.remainingPlayers ?? mtt.totalPlayers}
+        players={mtt.players || []}
+        eliminations={mtt.eliminations || []}
         payouts={mtt.payouts || []}
         splitSimultaneousTies={mtt.splitSimultaneousTies}
         onConfirmBust={(bustData) => mttStore.recordBust(bustData)}

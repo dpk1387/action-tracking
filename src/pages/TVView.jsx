@@ -4,6 +4,7 @@ import {
   money,
   formatBlinds,
   formatPlayerTagAmount,
+  formatBetAmount,
   VARIANTS,
   GAME_TYPES,
   STREET_LABEL,
@@ -13,34 +14,98 @@ import {
   isAllInSituation,
   isAllInShowdown,
   positionForSeat,
+  hasSoleDeepestStack,
+  bettingFrozen,
 } from '@/lib/poker';
 import { levelTimerState, formatTimer, formatTimerLabel, scheduledLevelNumber } from '@/lib/levelTimer';
-import { Maximize2, Minimize2, Tv, ListFilter } from 'lucide-react';
-import AllInView from '@/components/poker/AllInView';
+import { Maximize2, Minimize2, Tv } from 'lucide-react';
 import TournamentClockView from '@/components/poker/TournamentClockView';
-import { mttStore, useMTT } from '@/lib/mttStore';
+import { useMTT } from '@/lib/mttStore';
 
-function TVCard({ card }) {
-  if (!card) return <div className="w-12 h-16 rounded-lg border-2 border-dashed border-slate-700/60" />;
+function raiseLabelLocal(level) {
+  if (!level || level <= 1) return 'Bet';
+  if (level === 2) return 'Raise';
+  return `${level}-bet`;
+}
+
+function BroadcastCard({ card }) {
+  if (!card) return null;
   if (card.hidden) {
     return (
-      <div className="w-12 h-16 rounded-lg bg-[#273527] border-2 border-[#4a5a4a] flex items-center justify-center shadow-lg">
-        <span className="text-[#7fae7f] text-base font-bold">?</span>
+      <div className="w-8 h-11 sm:w-9 sm:h-12 rounded bg-[#1e251e] border border-amber-600/40 flex items-center justify-center shadow">
+        <span className="text-amber-300 font-bold text-xs">?</span>
       </div>
     );
   }
   const red = SUIT_RED[card.suit];
   return (
-    <div className={`w-12 h-16 rounded-lg bg-slate-100 flex flex-col items-center justify-center font-bold text-lg shadow-xl ${red ? 'text-rose-600' : 'text-slate-900'}`}>
-      <span>{rankDisplay(card.rank)}{SUIT_SYMBOL[card.suit]}</span>
+    <div className="w-8 h-11 sm:w-9 sm:h-12 rounded-md bg-white border border-slate-300 flex flex-col items-center justify-center shadow-lg leading-none select-none px-1 shrink-0">
+      <span className={`text-xs sm:text-sm font-black ${red ? 'text-rose-600' : 'text-slate-900'}`}>
+        {rankDisplay(card.rank)}
+      </span>
+      <span className={`text-xs sm:text-sm ${red ? 'text-rose-600' : 'text-slate-900'}`}>
+        {SUIT_SYMBOL[card.suit]}
+      </span>
     </div>
   );
+}
+
+function getPlayerEquity(equity, p) {
+  if (!equity || p.status === 'folded') return null;
+  const val = equity[p.id] ?? equity[p.seat];
+  if (val == null) return null;
+  const num = Number(val);
+  if (isNaN(num)) return null;
+  const pct = num <= 1 ? Math.round(num * 100) : Math.round(num);
+  return `${pct}%`;
+}
+
+function getBroadcastActionText(p, isTurn, hand, cur, isSoleDeepest, actionEnded) {
+  if (p.status === 'folded') return 'FOLDED';
+
+  const allin = p.status === 'allin' || p.stack <= 0 || p.lastAction?.type === 'allin';
+  if (actionEnded && isSoleDeepest) {
+    return '';
+  }
+  if (allin) {
+    const amt = p.lastAction?.amount || p.currentBet;
+    return amt ? `ALL IN FOR ${formatBetAmount(amt, cur)}` : 'ALL-IN';
+  }
+
+  if (isTurn) {
+    const toCall = Math.max(0, (hand.currentBet || 0) - (p.currentBet || 0));
+    if (toCall > 0) {
+      return `${formatBetAmount(toCall, cur)} TO CALL`;
+    }
+    return 'TO ACT';
+  }
+
+  const la = p.lastAction;
+  if (la) {
+    if (la.type === 'check') return 'CHECK';
+    if (la.type === 'fold') return 'FOLDED';
+    if (la.type === 'call') return `CALL ${formatBetAmount(la.amount, cur)}`;
+    if (la.type === 'bet' || la.type === 'raise') {
+      const lbl = raiseLabelLocal(la.raiseLevel).toUpperCase();
+      return `${lbl} ${formatBetAmount(la.amount, cur)}`;
+    }
+    if (la.type === 'sb' || la.type === 'bb' || la.type === '3b' || la.type === '4b') {
+      return `${la.type.toUpperCase()} ${formatBetAmount(la.amount, cur)}`;
+    }
+    if (la.type === 'straddle') return `STRADDLE ${formatBetAmount(la.amount, cur)}`;
+    if (la.type === 'kill') return `KILL ${formatBetAmount(la.amount, cur)}`;
+  }
+
+  if (p.currentBet > 0) {
+    return `POSTED ${formatBetAmount(p.currentBet, cur)}`;
+  }
+
+  return '';
 }
 
 export default function TVView() {
   const [liveState, setLiveState] = useState(() => readLive());
   const localMTT = useMTT();
-  const [lastActionOnly, setLastActionOnly] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [now, setNow] = useState(Date.now());
 
@@ -86,10 +151,10 @@ export default function TVView() {
   const equity = liveState?.equity || null;
   const config = liveState?.config;
   const gameOver = liveState?.gameOver;
-  const cur = hand?.currency || '$';
-  const hideAmounts = !!liveState?.hideAmounts;
   const isTournament = hand?.mode === 'tournament' || config?.mode === 'tournament';
-  const stackCurrency = isTournament ? '' : cur;
+  const cur = isTournament ? '' : (hand?.currency || '$');
+  const hideAmounts = !!liveState?.hideAmounts;
+  const stackCurrency = cur;
 
   // Reliable all-in detection
   const inAllIn = Boolean(
@@ -146,59 +211,64 @@ export default function TVView() {
   }
 
   const timer = levelTimerState(hand, now);
-  const actions = hand?.actionHistory || [];
-  const displayActions = lastActionOnly ? actions.slice(-1) : actions.slice(-14);
-  const totalPot = hand.players.reduce((s, p) => s + (p.totalBet || 0), 0);
+  const totalPot = hand.players ? hand.players.reduce((s, p) => s + (p.totalBet || 0), 0) : 0;
+  const actionEnded = hand.currentPlayer === -1 || bettingFrozen(hand) || hand.phase === 'ended' || hand.phase === 'awarded';
 
   return (
-    <div className="min-h-screen bg-[#0d0f12] text-white flex flex-col select-none overflow-hidden p-3 sm:p-5">
-      {/* Top Bar: Tournament Clock, Blinds, Status */}
-      <div className="flex items-center justify-between border-b border-[#22272e] pb-3 mb-3 gap-4">
-        <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-[#090b0e] text-white flex flex-col select-none overflow-x-hidden p-3 sm:p-5">
+      {/* Top Bar: Hand #, Variant, Level, Blinds, Timer, Fullscreen */}
+      <div className="flex flex-wrap items-center justify-between border-b border-slate-800/80 pb-3 mb-3 gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
-            <span className="text-lg sm:text-xl font-bold tracking-tight text-emerald-400">
+            <span className="text-lg sm:text-xl font-black tracking-tight text-emerald-400 font-mono">
               HAND #{hand.handNumber}
             </span>
           </div>
           <span className="text-slate-600 text-base">|</span>
-          <span className="text-slate-300 font-semibold text-base sm:text-lg">
+          <span className="text-slate-200 font-bold text-sm sm:text-base">
             {VARIANTS[hand.variant]?.label || "Hold'em"} ({GAME_TYPES[hand.gameType] || 'NL'})
           </span>
           {hand.blindSchedule?.length > 0 && (
-            <span className="bg-[#242b23] border border-[#3b4c3a] text-emerald-300 text-xs px-2.5 py-1 rounded font-bold">
+            <span className="bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs px-2.5 py-0.5 rounded-full font-bold">
               Level {scheduledLevelNumber(hand)}
             </span>
           )}
-        </div>
-
-        {/* Central Timer */}
-        {timer.active && (
-          <div className="flex items-center gap-3 bg-[#191d23] border border-[#2c333d] px-4 py-1.5 rounded-xl shadow-lg">
-            <span className="text-xs uppercase tracking-wider text-slate-400 font-bold">
-              {timer.phase === 'break' ? 'Break' : 'Clock'}:
-            </span>
-            <span className={`font-mono text-2xl sm:text-3xl font-extrabold ${timer.expired ? 'text-rose-400' : 'text-white'}`}>
-              {formatTimer(timer)}
-            </span>
-            <span className="text-xs text-slate-400 font-medium">
-              {formatTimerLabel(timer)}
+          <span className="text-slate-600 text-base">|</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs uppercase font-bold text-slate-400">Blinds:</span>
+            <span className="text-sm sm:text-base font-extrabold text-white font-mono">
+              {formatBlinds(hand)}
             </span>
           </div>
-        )}
+          <span className="text-slate-600 text-base">|</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs uppercase font-bold text-slate-400">Street:</span>
+            <span className="text-sm sm:text-base font-extrabold text-emerald-400 uppercase">
+              {STREET_LABEL[hand.street] || 'Preflop'}
+            </span>
+          </div>
+        </div>
 
-        {/* Controls & Fullscreen */}
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={() => setLastActionOnly((v) => !v)}
-            className="flex items-center gap-1.5 bg-[#191d23] hover:bg-[#252c36] text-xs px-3 py-1.5 rounded-lg border border-[#2a2f37] text-slate-300 cursor-pointer"
-          >
-            <ListFilter size={14} />
-            {lastActionOnly ? 'Last Action Only' : 'Full Action Feed'}
-          </button>
+        {/* Central Timer & Controls */}
+        <div className="flex items-center gap-3 ml-auto">
+          {timer.active && (
+            <div className="flex items-center gap-2.5 bg-[#141820] border border-slate-700/80 px-3.5 py-1.5 rounded-xl shadow-lg">
+              <span className="text-xs uppercase tracking-wider text-slate-400 font-bold">
+                {timer.phase === 'break' ? 'Break' : 'Clock'}:
+              </span>
+              <span className={`font-mono text-xl sm:text-2xl font-extrabold ${timer.expired ? 'text-rose-400' : 'text-white'}`}>
+                {formatTimer(timer)}
+              </span>
+              <span className="text-xs text-slate-400 font-medium">
+                {formatTimerLabel(timer)}
+              </span>
+            </div>
+          )}
+
           <button
             onClick={toggleFullscreen}
-            className="p-1.5 rounded-lg bg-[#191d23] hover:bg-[#252c36] text-slate-300 border border-[#2a2f37] cursor-pointer"
+            className="p-2 rounded-xl bg-[#141820] hover:bg-[#1e2430] text-slate-300 border border-slate-700/80 cursor-pointer shadow"
             title="Toggle Fullscreen"
           >
             {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
@@ -206,162 +276,122 @@ export default function TVView() {
         </div>
       </div>
 
-      {/* Main TV Layout: Left (Table & Board / All In View) | Right (Action Feed & Stacks) */}
-      {/* Width of sidebar lowered by ~25% to give ample room to actual action view, eliminating horizontal scrolling */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch min-h-0">
-        {/* Table & Board View or All In View (lg:col-span-9 - widened by 25% of sidebar) */}
-        {inAllIn ? (
-          <div className="lg:col-span-9 flex flex-col min-w-0">
-            <AllInView
-              hand={hand}
-              holeCards={holeCards}
-              equity={equity}
-              hideAmounts={hideAmounts}
-              pot={totalPot}
-            />
+      {/* Main TV Display Area */}
+      <div className="flex-1 flex flex-col justify-start max-w-6xl w-full mx-auto py-2">
+        {/* Pot Size Display - Respected by hideAmounts */}
+        <div className="flex flex-col items-center justify-center py-2 mb-4">
+          <div className="text-xs uppercase tracking-widest text-amber-300 font-extrabold mb-0.5">
+            Total Pot
           </div>
-        ) : (
-          <div className="lg:col-span-9 flex flex-col justify-between bg-[#15181d] rounded-2xl border border-[#252b33] p-5 shadow-2xl relative min-w-0">
-            {/* Header Blinds banner */}
-            <div className="flex items-center justify-between bg-[#1c222b] p-3.5 rounded-xl border border-[#2a3442]">
-              <div>
-                <div className="text-xs uppercase tracking-wider text-slate-400 font-bold">Blinds</div>
-                <div className="text-xl sm:text-2xl font-black text-white">
-                  {formatBlinds(hand)}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-xs uppercase tracking-wider text-slate-400 font-bold">Current Street</div>
-                <div className="text-xl sm:text-2xl font-black text-emerald-400">
-                  {STREET_LABEL[hand.street] || 'Preflop'}
-                </div>
-              </div>
-            </div>
+          <div className="text-4xl sm:text-6xl font-black text-white font-mono tracking-tight drop-shadow-lg">
+            {hideAmounts ? '—' : money(totalPot, cur)}
+          </div>
+        </div>
 
-            {/* Table Center with Pot & Community Cards */}
-            <div className="my-auto py-6 flex flex-col items-center justify-center">
-              {/* Pot Banner - Hidden if hideAmounts */}
-              <div className="text-center mb-5">
-                <span className="text-xs uppercase tracking-widest text-slate-400 font-bold block mb-1">Total Pot</span>
-                <span className="text-4xl sm:text-5xl font-black text-emerald-300 drop-shadow-md">
-                  {hideAmounts ? '—' : money(totalPot, cur)}
-                </span>
-              </div>
+        {/* Player Tags Grid (Broadcast Banner Style matching user image) */}
+        {/* Compact tags with centered action text and static US corner flag */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 w-full max-w-[620px] mx-auto">
+          {orderedPlayers.map(({ p, originalIdx, posLabel }) => {
+            const isTurn = hand.currentPlayer === originalIdx;
+            const isFolded = p.status === 'folded';
+            const isAllInPlayer = p.status === 'allin';
+            const isBtn = originalIdx === buttonIdx;
+            const isSoleDeepest = hasSoleDeepestStack(hand, p.id);
+            const actionText = getBroadcastActionText(p, isTurn, hand, cur, isSoleDeepest, actionEnded);
 
-              {/* Board Cards */}
-              <div className="flex flex-col items-center gap-3">
-                <div className="flex gap-2.5">
-                  {[0, 1, 2, 3, 4].map((i) => (
-                    <TVCard key={i} card={hand.communityCards?.[i]} />
-                  ))}
-                </div>
-                {hand.doubleBoard && (
-                  <div className="flex gap-2.5 mt-2">
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <TVCard key={`b-${i}`} card={hand.boardB?.[i]} />
-                    ))}
-                  </div>
-                )}
-              </div>
+            // Hole cards & equity are ONLY displayed if it's an all-in situation
+            const pCards = holeCards[p.id] || holeCards[p.seat] || [];
+            const showCardsAndEquity = inAllIn;
+            const playerEquity = showCardsAndEquity ? getPlayerEquity(equity, p) : null;
 
-              {/* Turn Announcement */}
-              {hand.currentPlayer >= 0 && (
-                <div className="mt-6 bg-[#253224] border border-[#4a6b48] px-5 py-2 rounded-full flex items-center gap-3 shadow-lg animate-pulse">
-                  <span className="text-xs uppercase tracking-wider text-emerald-300 font-semibold">Action On:</span>
-                  <span className="text-base sm:text-lg font-bold text-white">
-                    {hand.players[hand.currentPlayer]?.name}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Quick Player Bar - Ordered by position starting from blinds (SB, BB) to button (BTN) */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 pt-2 border-t border-[#22272e]">
-              {orderedPlayers.map(({ p, originalIdx, posLabel }) => {
-                const isTurn = hand.currentPlayer === originalIdx;
-                const isFolded = p.status === 'folded';
-                const isAllInPlayer = p.status === 'allin';
-                const isBtn = originalIdx === buttonIdx;
-
-                return (
-                  <div
-                    key={p.id}
-                    className={`p-2 rounded-lg border text-center transition-all ${
-                      isTurn
-                        ? 'bg-[#293628] border-emerald-400 shadow-md scale-102 ring-1 ring-emerald-400/50'
-                        : isAllInPlayer
-                        ? 'bg-[#3d2020] border-rose-500'
-                        : isFolded
-                        ? 'bg-[#15171a] border-[#22262d] opacity-40'
-                        : 'bg-[#1a1f26] border-[#28303d]'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 mb-0.5 px-0.5">
-                      <span className="font-bold uppercase text-slate-300">{posLabel || '—'}</span>
-                      {isBtn && <span className="bg-white text-black text-[9px] font-bold px-1 rounded">D</span>}
-                    </div>
-                    <div className="text-xs font-semibold text-slate-200 truncate">
+            return (
+              <div
+                key={p.id}
+                className={`rounded-xl overflow-hidden border-2 transition-all flex flex-col shadow-2xl relative w-full ${
+                  isTurn
+                    ? 'border-amber-400 ring-2 ring-amber-400/80 shadow-[0_0_20px_rgba(245,158,11,0.5)]'
+                    : isAllInPlayer
+                    ? 'border-rose-500 ring-1 ring-rose-500/60'
+                    : isFolded
+                    ? 'border-slate-800 opacity-40 grayscale'
+                    : 'border-slate-800'
+                }`}
+              >
+                {/* TOP HALF: Yellow only when active turn, otherwise solid black */}
+                <div
+                  className={`px-3.5 py-2 flex items-center justify-between min-h-[56px] transition-colors ${
+                    isTurn
+                      ? 'bg-gradient-to-r from-[#cfac3e] via-[#f3d058] to-[#cfac3e]'
+                      : 'bg-black border-b border-zinc-800'
+                  }`}
+                >
+                  {/* Left: Player Name (Black if turn, white if not turn) */}
+                  <div className="flex items-center gap-2 min-w-0 pr-2">
+                    <span
+                      className={`font-black uppercase text-base sm:text-lg tracking-wider truncate ${
+                        isTurn ? 'text-black' : 'text-white'
+                      }`}
+                    >
                       {p.name}
-                    </div>
-                    <div className={`text-xs font-bold font-mono mt-0.5 ${isAllInPlayer ? 'text-rose-300' : 'text-white'}`}>
-                      {hideAmounts ? '—' : formatPlayerTagAmount(p.stack, stackCurrency, hand)}
-                    </div>
+                    </span>
+                    {isBtn && (
+                      <span
+                        className={`text-[10px] font-black px-1.5 py-0.5 rounded shadow shrink-0 ${
+                          isTurn ? 'bg-black text-amber-300' : 'bg-zinc-800 text-amber-300 border border-zinc-700'
+                        }`}
+                      >
+                        BTN
+                      </span>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
-        {/* Sidebar: Action Log & Player Stacks (lg:col-span-3 - lowered width by ~25%) */}
-        <div className="lg:col-span-3 flex flex-col gap-3 min-w-0">
-          {/* Action Log Box */}
-          <div className="flex-1 bg-[#15181d] rounded-2xl border border-[#252b33] p-4 flex flex-col min-h-[220px]">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 border-b border-[#22272e] pb-1.5">
-              {lastActionOnly ? 'Latest Action' : 'Live Action Log'}
-            </h3>
-            <div className="flex-1 overflow-y-auto space-y-1.5 pr-0.5">
-              {displayActions.length === 0 ? (
-                <div className="text-xs text-slate-500 py-6 text-center">
-                  Waiting for initial hand action...
+                  {/* Center: Hole Cards (ONLY shown if all-in) */}
+                  {showCardsAndEquity && pCards.length > 0 && (
+                    <div className="flex items-center gap-1.5 px-2">
+                      {pCards.map((c, ci) => (
+                        <BroadcastCard key={ci} card={c} />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Right: Equity on top & Position Tag below */}
+                  <div className="flex flex-col items-end shrink-0 pl-2 leading-none z-10 gap-0.5">
+                    {showCardsAndEquity && playerEquity && (
+                      <span
+                        className={`font-black text-sm sm:text-base font-mono ${
+                          isTurn ? 'text-black' : 'text-white'
+                        }`}
+                      >
+                        {playerEquity}
+                      </span>
+                    )}
+                    <span
+                      className={`font-extrabold text-xs uppercase tracking-wider ${
+                        isTurn ? 'text-black' : 'text-slate-300'
+                      }`}
+                    >
+                      {posLabel || '—'}
+                    </span>
+                  </div>
                 </div>
-              ) : (
-                displayActions.map((a, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between p-1.5 rounded-lg bg-[#1c222b] border border-[#28303d] text-xs"
-                  >
-                    <div className="truncate mr-1">
-                      <span className="text-slate-400 mr-1.5 font-mono text-[10px]">[{STREET_LABEL[a.street] || a.street}]</span>
-                      <span className="font-bold text-white">{a.player}</span>
-                    </div>
-                    <div className="font-semibold text-emerald-400 shrink-0 text-right">
-                      {a.action} {hideAmounts ? '' : (a.chips ? (stackCurrency ? money(a.chips, stackCurrency) : a.chips.toLocaleString()) : '')}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
 
-          {/* Active Player Leaderboard */}
-          <div className="bg-[#15181d] rounded-2xl border border-[#252b33] p-3.5">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Chip Counts</h4>
-            <div className="space-y-1 max-h-40 overflow-y-auto pr-0.5">
-              {[...hand.players]
-                .sort((a, b) => b.stack - a.stack)
-                .map((p, idx) => (
-                  <div key={p.id} className="flex items-center justify-between text-xs py-0.5 px-1.5 rounded hover:bg-[#1e242d]">
-                    <span className="text-slate-300 truncate mr-2">
-                      <span className="text-slate-500 mr-1 text-[10px]">{idx + 1}.</span> {p.name}
-                    </span>
-                    <span className="font-bold font-mono text-emerald-400 shrink-0">
-                      {hideAmounts ? '—' : (stackCurrency ? money(p.stack, stackCurrency) : p.stack.toLocaleString())}
+                {/* BOTTOM HALF: Solid Black Bar */}
+                <div className="bg-black px-3 py-1.5 relative flex items-center justify-between border-t border-black min-h-[36px]">
+                  {/* Left: Player Stack Size (Gold font, respected by hideAmounts) */}
+                  <div className="text-[#f3d058] font-black font-mono text-sm sm:text-base tracking-tight shrink-0 z-10">
+                    {hideAmounts ? '—' : formatPlayerTagAmount(p.stack, stackCurrency, hand)}
+                  </div>
+
+                  {/* Center: Action / Status / Amount to call (Centered bold white font) */}
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-12">
+                    <span className="text-white font-black text-xs sm:text-[13px] uppercase tracking-wide truncate font-mono">
+                      {actionText}
                     </span>
                   </div>
-                ))}
-            </div>
-          </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

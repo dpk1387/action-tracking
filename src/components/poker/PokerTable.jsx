@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Clock } from 'lucide-react';
-import { money, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown, hasSoleDeepestStack } from '@/lib/poker';
+import { money, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown, hasSoleDeepestStack, bettingFrozen } from '@/lib/poker';
 import AllInView from './AllInView';
 
 function raiseLabelLocal(level) {
@@ -99,10 +99,16 @@ export default function PokerTable({
   };
 
   const buttonIndex = hand.players.findIndex((p) => p.seat === hand.buttonSeat);
+  const isThreeBlinds = hand.anteType === 'three_blinds' && n >= 3;
+  const isFourBlinds = hand.anteType === 'four_blinds' && n >= 4;
   const sbIndex = n === 2 ? buttonIndex : (buttonIndex + 1) % n;
   const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
+  const tbIndex = (isThreeBlinds || isFourBlinds) ? (buttonIndex + 3) % n : -1;
+  const fbIndex = isFourBlinds ? (buttonIndex + 4) % n : -1;
   const sbSeat = hand.players[sbIndex]?.seat;
   const bbSeat = hand.players[bbIndex]?.seat;
+  const tbSeat = tbIndex >= 0 ? hand.players[tbIndex]?.seat : null;
+  const fbSeat = fbIndex >= 0 ? hand.players[fbIndex]?.seat : null;
   const potIsPublic = hand.gameType === 'pl';
 
   const stackShown = (p) => (alwaysShow ? true : (stackVisibleIds ? stackVisibleIds.has(p.id) : !hideAmounts));
@@ -272,32 +278,42 @@ export default function PokerTable({
         const atRisk = allin || isCapped;
         const la = p.lastAction;
         const isSoleDeepest = hasSoleDeepestStack(hand, p.id);
-        const laText = isCapped
-          ? 'All-in'
+        const actionEnded = hand.currentPlayer === -1 || bettingFrozen(hand) || hand.phase === 'ended' || hand.phase === 'awarded';
+        const isAllInPlayer = allin || p.stack <= 0 || la?.type === 'allin';
+        const laText = (actionEnded && isSoleDeepest)
+          ? ''
+          : isCapped
+          ? (actionEnded && isSoleDeepest ? '' : 'All-in')
           : la
           ? la.type === 'fold'
             ? 'Fold'
             : la.type === 'check'
             ? 'Check'
             : la.type === 'allin'
-            ? `All-in ${formatBetAmount(la.amount, cur)}`
+            ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur)}`)
             : la.type === 'straddle'
             ? `Straddle ${formatBetAmount(la.amount, cur)}`
             : la.type === 'kill'
             ? `Kill ${formatBetAmount(la.amount, cur)}`
             : la.type === 'bet' || la.type === 'raise'
-            ? (allin && !isSoleDeepest ? `All-in ${formatBetAmount(la.amount, cur)}` : `${raiseLabelLocal(la.raiseLevel)} ${formatBetAmount(la.amount, cur)}`)
+            ? (isAllInPlayer
+                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur)}`)
+                : `${raiseLabelLocal(la.raiseLevel)} ${formatBetAmount(la.amount, cur)}`)
             : la.type === 'call'
-            ? (allin && !isSoleDeepest ? `All-in ${formatBetAmount(la.amount, cur)}` : `Call ${formatBetAmount(la.amount, cur)}`)
+            ? (isAllInPlayer
+                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur)}`)
+                : `Call ${formatBetAmount(la.amount, cur)}`)
             : la.type === 'sb'
             ? `SB ${formatBetAmount(la.amount, cur)}`
             : la.type === 'bb'
             ? `BB ${formatBetAmount(la.amount, cur)}`
             : la.type === '3b'
             ? `3B ${formatBetAmount(la.amount, cur)}`
+            : la.type === '4b'
+            ? `4B ${formatBetAmount(la.amount, cur)}`
             : ''
-          : allin
-          ? 'All-in'
+          : isAllInPlayer
+          ? (actionEnded && isSoleDeepest ? '' : 'All-in')
           : 'Waiting';
 
         return (
@@ -313,13 +329,19 @@ export default function PokerTable({
                   : 'bg-[#15181d] border-[#2a2f37]'
               }`}
             >
-              {(isButton || p.seat === bbSeat || p.seat === sbSeat) && (
+              {(isButton || p.seat === bbSeat || p.seat === sbSeat || p.seat === tbSeat || p.seat === fbSeat) && (
                 <span className={`absolute -top-2 -right-2 px-1.5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center ${
                   isButton ? 'bg-white text-[#15181d]'
+                    : p.seat === fbSeat ? 'bg-[#5a3a8a] text-white'
+                    : p.seat === tbSeat ? 'bg-[#3a7a8a] text-white'
                     : p.seat === bbSeat ? 'bg-[#3a4a8a] text-white'
                     : 'bg-[#8a6a3a] text-white'
                 }`}>
-                  {isButton ? (n === 2 ? 'D/SB' : 'D') : p.seat === bbSeat ? 'BB' : 'SB'}
+                  {isButton ? (n === 2 ? 'D/SB' : 'D')
+                    : p.seat === fbSeat ? '4B'
+                    : p.seat === tbSeat ? '3B'
+                    : p.seat === bbSeat ? 'BB'
+                    : 'SB'}
                 </span>
               )}
               {isKiller && (

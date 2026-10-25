@@ -93,8 +93,10 @@ export default function DirectorStructureDialog({
 
   // General Setup
   const [name, setName] = useState(initialData.name || 'Championship Tournament');
-  const [totalPlayers, setTotalPlayers] = useState(initialData.totalPlayers || 16);
-  const [tablesCount, setTablesCount] = useState(initialData.tablesCount || 2);
+  const [totalPlayers, setTotalPlayers] = useState(
+    initialData.active ? (initialData.totalPlayers || 0) : (initialData.players?.length || 0)
+  );
+  const [tablesCount, setTablesCount] = useState(initialData.tablesCount || 1);
   const [startingStack, setStartingStack] = useState(initialData.startingStack || 10000);
   const [buyIn, setBuyIn] = useState(initialData.buyIn != null ? initialData.buyIn : 100);
   const [currency, setCurrency] = useState(initialData.currency || '$');
@@ -138,6 +140,7 @@ export default function DirectorStructureDialog({
   );
 
   // Bounty & Mystery Bounty settings
+  const defaultITMPlaces = (initialData.payoutConfig?.length) || (initialData.payouts?.length) || getDefaultPayoutConfig(initialData.tablesCount || 1).length || 2;
   const [bountyPercent, setBountyPercent] = useState(
     initialData.bountyPercent != null ? initialData.bountyPercent : 50
   );
@@ -146,20 +149,20 @@ export default function DirectorStructureDialog({
     return p === 'field' ? 'field' : 'itm';
   });
   const [mysteryBountyField, setMysteryBountyField] = useState(
-    initialData.mysteryBountyConfig?.startFieldSize || 18
+    initialData.mysteryBountyConfig?.startFieldSize || defaultITMPlaces
   );
   const [mysteryEnvelopes, setMysteryEnvelopes] = useState(() => {
     if (initialData.mysteryBountyConfig?.envelopes?.length) {
       return initialData.mysteryBountyConfig.envelopes;
     }
-    const initPool = (Number(initialData.totalPlayers) || 16) * (Number(initialData.buyIn) || 100);
+    const initPool = (Number(initialData.totalPlayers) || 0) * (Number(initialData.buyIn) || 100);
     const bPool = Math.round((initPool * (initialData.bountyPercent ?? 50)) / 100);
     const phase = initialData.mysteryBountyConfig?.startPhase === 'field' ? 'field' : 'itm';
-    let targetLeft = 16;
+    let targetLeft = defaultITMPlaces;
     if (phase === 'field') {
-      targetLeft = Math.max(2, Number(initialData.mysteryBountyConfig?.startFieldSize) || 18);
+      targetLeft = Math.max(2, Number(initialData.mysteryBountyConfig?.startFieldSize) || defaultITMPlaces);
     } else {
-      targetLeft = Math.max(2, Math.round((Number(initialData.totalPlayers) || 16) * 0.15));
+      targetLeft = Math.max(2, defaultITMPlaces);
     }
     return generateBalancedEnvelopes(bPool, Math.max(1, targetLeft - 1));
   });
@@ -204,8 +207,14 @@ export default function DirectorStructureDialog({
 
   // Table sizing recommendation logic
   const tableRecommendation = useMemo(() => {
-    const p = Math.max(1, Number(totalPlayers) || 1);
+    const p = Math.max(0, Number(totalPlayers) || 0);
     const t = Math.max(1, Number(tablesCount) || 1);
+    if (p === 0) {
+      return {
+        type: 'ok',
+        text: 'Enter player names in the Players tab to populate the tournament roster.',
+      };
+    }
     const avgPerTable = (p / t).toFixed(1);
 
     if (p / t < 5) {
@@ -239,7 +248,7 @@ export default function DirectorStructureDialog({
   const isBounty = tournamentType === 'bounty' || tournamentType === 'mystery bounty';
   const isMysteryBounty = tournamentType === 'mystery bounty';
   const effectiveBountyPercent = isBounty ? Math.min(99, Math.max(1, Number(bountyPercent) || 50)) : 0;
-  const numPlayers = Number(totalPlayers) || 16;
+  const numPlayers = Number(totalPlayers) || 0;
   const buyInAmount = Number(buyIn) || 100;
   const baseTotalPool = numPlayers * buyInAmount;
   const bountyPoolAmount = isBounty ? Math.round((baseTotalPool * effectiveBountyPercent) / 100) : 0;
@@ -306,12 +315,12 @@ export default function DirectorStructureDialog({
   };
 
   const handleAutoBalanceEnvelopes = () => {
-    let targetLeft = 16;
+    const currentITM = previewPayouts.length || payoutConfig.length || defaultITMPlaces || 2;
+    let targetLeft = currentITM;
     if (mysteryBountyPhase === 'field') {
-      targetLeft = Math.max(2, Number(mysteryBountyField) || 18);
+      targetLeft = Math.max(2, Number(mysteryBountyField) || currentITM);
     } else {
-      const itmCount = previewPayouts.length || payoutConfig.length || Math.round((Number(totalPlayers) || 16) * 0.15);
-      targetLeft = Math.max(2, itmCount);
+      targetLeft = Math.max(2, currentITM);
     }
     const targetCount = Math.max(1, targetLeft - 1);
     setMysteryEnvelopes(generateBalancedEnvelopes(bountyPoolAmount, targetCount));
@@ -323,12 +332,10 @@ export default function DirectorStructureDialog({
       .split(/\n|,/)
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
-    if (names.length > 0) {
-      setTotalPlayers(names.length);
-    }
+    setTotalPlayers(names.length);
   };
 
-  // Computed Player Roster
+  // Computed Player Roster automatically counted from entered entries
   const parsedPlayerNames = useMemo(() => {
     const rawLines = playerNamesInput
       .split(/\n|,/)
@@ -338,7 +345,7 @@ export default function DirectorStructureDialog({
     if (rawLines.length > 0) {
       return rawLines;
     }
-    const count = Number(totalPlayers) || 16;
+    const count = Number(totalPlayers) || 0;
     const list = [];
     for (let i = 1; i <= count; i++) {
       list.push(`Player ${i}`);
@@ -382,7 +389,7 @@ export default function DirectorStructureDialog({
     e?.preventDefault();
     onSave({
       name,
-      totalPlayers: Math.max(parsedPlayerNames.length, Number(totalPlayers) || 16),
+      totalPlayers: parsedPlayerNames.length,
       tablesCount: Number(tablesCount) || 1,
       startingStack: Number(startingStack) || 10000,
       buyIn: Number(buyIn) || 100,
@@ -415,11 +422,10 @@ export default function DirectorStructureDialog({
       mysteryBountyConfig: isMysteryBounty ? {
         startPhase: mysteryBountyPhase,
         startLevel: Number(mysteryBountyLevel) || 8,
-        startFieldSize: Number(mysteryBountyField) || 18,
+        startFieldSize: Number(mysteryBountyField) || defaultITMPlaces,
         envelopes: mysteryEnvelopes,
       } : undefined,
     });
-    onClose();
   };
 
   return (
@@ -498,17 +504,24 @@ export default function DirectorStructureDialog({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                    Total Starting Players
-                  </label>
-                  <input
-                    type="number"
-                    min="2"
-                    max="500"
-                    value={totalPlayers}
-                    onChange={(e) => setTotalPlayers(e.target.value)}
-                    className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono"
-                  />
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                      Total Starting Players
+                    </label>
+                    <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
+                      Auto-counted from Roster
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm font-mono">
+                    <span className="text-white font-bold">{parsedPlayerNames.length} Players</span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('players')}
+                      className="text-xs text-emerald-400 hover:text-emerald-300 underline font-sans cursor-pointer"
+                    >
+                      Edit Roster ({parsedPlayerNames.length}) →
+                    </button>
+                  </div>
                 </div>
 
                 <div>
@@ -914,7 +927,13 @@ export default function DirectorStructureDialog({
                               name="mysteryBountyPhase"
                               value={phase.id}
                               checked={mysteryBountyPhase === phase.id}
-                              onChange={() => setMysteryBountyPhase(phase.id)}
+                              onChange={() => {
+                                setMysteryBountyPhase(phase.id);
+                                if (phase.id === 'field') {
+                                  const itmCount = previewPayouts.length || payoutConfig.length || defaultITMPlaces || 2;
+                                  setMysteryBountyField((prev) => (Number(prev) === 18 || !prev ? itmCount : prev));
+                                }
+                              }}
                               className="mt-0.5 accent-purple-500"
                             />
                             <div className="flex-1">
@@ -936,7 +955,7 @@ export default function DirectorStructureDialog({
                             onChange={(e) => setMysteryBountyField(Math.max(2, Number(e.target.value) || 2))}
                             className="w-20 bg-[#1b202a] border border-slate-700 rounded-lg px-2.5 py-1 text-white text-xs font-mono text-center"
                           />
-                          <span className="text-slate-400 text-[11px]">(e.g. 18 players)</span>
+                          <span className="text-slate-400 text-[11px]">(default = {previewPayouts.length || payoutConfig.length || defaultITMPlaces} ITM places)</span>
                         </div>
                       )}
                     </div>
@@ -1158,20 +1177,28 @@ export default function DirectorStructureDialog({
                   <span className="text-emerald-400 text-[11px]">
                     {playerNamesInput.split(/\n|,/).filter((s) => s.trim().length > 0).length > 0
                       ? `${parsedPlayerNames.length} named entries`
-                      : `Using ${parsedPlayerNames.length} default player slots`}
+                      : parsedPlayerNames.length > 0
+                      ? `Using ${parsedPlayerNames.length} default player slots`
+                      : 'No players in roster'}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-h-44 overflow-y-auto pr-1">
-                  {parsedPlayerNames.map((pName, i) => (
-                    <div
-                      key={i}
-                      className="px-2.5 py-1.5 rounded-lg bg-[#181d26] border border-slate-800 text-xs font-mono truncate text-slate-300"
-                    >
-                      <span className="text-slate-500 mr-1.5">#{i + 1}</span>
-                      {pName}
-                    </div>
-                  ))}
-                </div>
+                {parsedPlayerNames.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-slate-500 italic">
+                    No players registered yet. Enter player names above to populate the tournament roster.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-h-44 overflow-y-auto pr-1">
+                    {parsedPlayerNames.map((pName, i) => (
+                      <div
+                        key={i}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#181d26] border border-slate-800 text-xs font-mono truncate text-slate-300"
+                      >
+                        <span className="text-slate-500 mr-1.5">#{i + 1}</span>
+                        {pName}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
