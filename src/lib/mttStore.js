@@ -4,8 +4,6 @@ import { calculateTournamentPayouts, getDefaultPayoutConfig, resolveSimultaneous
 import { publishLive } from './liveSync';
 import { parseAmount } from './poker';
 
-const STORAGE_KEY = 'mtt_tournament_state_v3';
-
 function isBreak(lvl) {
   if (!lvl) return false;
   return (
@@ -49,14 +47,14 @@ export const generateRoster = (playerNames = [], totalCount = 0) => {
 
 export const defaultMTT = () => {
   const tablesCount = 1;
-  const totalPlayers = 0;
-  const startingStack = 10000;
+  const totalPlayers = 10;
+  const startingStack = 5000; // 100 BB in level 1 (50 BB)
   const buyIn = 100;
   const payoutConfig = getDefaultPayoutConfig(tablesCount);
   const payouts = calculateTournamentPayouts({
-    totalPlayers: 0,
+    totalPlayers,
     buyIn,
-    totalPool: 0,
+    totalPool: totalPlayers * buyIn,
     payoutConfig,
     tablesCount,
   });
@@ -65,19 +63,20 @@ export const defaultMTT = () => {
     active: false,
     id: '',
     name: 'Championship Tournament',
+    nameEntryMode: 'now', // 'now' | 'itm'
     buyIn,
     currency: '$',
-    totalPlayers: 0,
-    remainingPlayers: 0,
+    totalPlayers: 10,
+    remainingPlayers: 10,
     reEntries: 0,
     totalRebuys: 0,
     startingStack,
     tablesCount: 1,
-    totalChips: 0,
-    totalPrizePool: 0,
+    totalChips: 10 * startingStack,
+    totalPrizePool: 10 * buyIn,
     bountyPercent: 50,
     bountyPool: 0,
-    rankPool: 0,
+    rankPool: 10 * buyIn,
     mysteryBountyConfig: {
       startPhase: 'itm',
       startLevel: 8,
@@ -87,10 +86,10 @@ export const defaultMTT = () => {
     isHandForHand: false,
     lateRegEnabled: true,
     lateRegLevel: 4,
-    tournamentType: 'freezeout', // 'freezeout' | 'reentry' | 'rebuy' | 'bounty' | 'mystery bounty' | 'shootout'
+    tournamentType: 'freezeout', // 'freezeout' | 'reentry' | 'rebuy' | 'bounty' | 'mystery bounty'
     maxReEntries: 0, // 0 for unlimited / freezeout
     rebuyCost: 100,
-    rebuyChips: 10000,
+    rebuyChips: 5000,
     rebuyRules: {
       timeCapEnabled: true,
       timeCapLevel: 4,
@@ -98,11 +97,11 @@ export const defaultMTT = () => {
       maxRebuys: 0,
       stackCapEnabled: true,
       stackCapUnit: 'chips', // 'chips' | 'bb'
-      stackCapValue: 10000,
+      stackCapValue: 5000,
     },
     anteType: 'bba', // 'none' | 'traditional' | 'bba'
     chipDenominations: defaultDenomsFor(25),
-    players: [],
+    players: generateRoster([], 10),
     splitSimultaneousTies: true, // boolean toggle for simultaneous eliminations
     payoutConfig,
     payouts,
@@ -117,19 +116,62 @@ export const defaultMTT = () => {
   };
 };
 
+const STORAGE_KEY = 'mtt_tournament_state_v3';
+const STORAGE_KEY_CATALOG = 'mtt_tournaments_catalog_v2';
+const STORAGE_KEY_ACTIVE_ID = 'mtt_active_tournament_id_v2';
+
+export function loadCatalog() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CATALOG);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const clean = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v && v.id && v.active) {
+            clean[k] = v;
+          }
+        }
+        return clean;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load MTT catalog', e);
+  }
+  return {};
+}
+
+export function saveCatalog(cat) {
+  try {
+    localStorage.setItem(STORAGE_KEY_CATALOG, JSON.stringify(cat));
+  } catch (e) {
+    console.warn('Failed to persist MTT catalog', e);
+  }
+}
+
 function loadState() {
   try {
+    const catalog = loadCatalog();
+    const activeId = localStorage.getItem(STORAGE_KEY_ACTIVE_ID);
+    if (activeId && catalog[activeId] && catalog[activeId].active) {
+      return catalog[activeId];
+    }
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed.totalPlayers === 'number') {
-        if (!parsed.active && (parsed.totalPlayers === 16 || !parsed.players?.length)) {
-          parsed.totalPlayers = 0;
-          parsed.remainingPlayers = 0;
-          parsed.players = [];
-        }
+      if (parsed && typeof parsed.totalPlayers === 'number' && parsed.active) {
+        const id = parsed.id || `mtt_${Date.now()}`;
+        parsed.id = id;
+        catalog[id] = parsed;
+        saveCatalog(catalog);
+        localStorage.setItem(STORAGE_KEY_ACTIVE_ID, id);
         return parsed;
       }
+    }
+    const existing = Object.values(catalog).filter((t) => t && t.active);
+    if (existing.length > 0) {
+      const sorted = existing.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      return sorted[0];
     }
   } catch (e) {
     console.warn('Failed to load MTT state', e);
@@ -141,8 +183,23 @@ let state = loadState();
 const listeners = new Set();
 
 const emit = () => {
+  if (state?.id && state.active) {
+    state.updatedAt = Date.now();
+    try {
+      const catalog = loadCatalog();
+      catalog[state.id] = state;
+      saveCatalog(catalog);
+      localStorage.setItem(STORAGE_KEY_ACTIVE_ID, state.id);
+    } catch (e) {
+      console.warn('Failed to save to MTT catalog', e);
+    }
+  }
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (state?.active) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   } catch (e) {
     console.warn('Failed to persist MTT state', e);
   }
@@ -154,27 +211,74 @@ const emit = () => {
 
 let clockTickerInterval = null;
 
+function hasAnyRunningTimer() {
+  if (state?.active && state?.clock?.isRunning) return true;
+  const cat = loadCatalog();
+  return Object.values(cat).some((t) => t && t.active && t.clock?.isRunning);
+}
+
 function syncTicker() {
-  if (state?.clock?.isRunning) {
+  if (hasAnyRunningTimer()) {
     if (!clockTickerInterval) {
       clockTickerInterval = setInterval(() => {
-        const cur = state?.clock;
-        if (!cur || !cur.isRunning) {
-          clearInterval(clockTickerInterval);
-          clockTickerInterval = null;
-          return;
+        let changed = false;
+        if (state?.active && state?.clock?.isRunning) {
+          const cur = state.clock;
+          if (cur.secondsLeft > 1) {
+            state = {
+              ...state,
+              clock: {
+                ...state.clock,
+                secondsLeft: cur.secondsLeft - 1,
+              },
+            };
+          } else {
+            const sched = state.clock.blindSchedule || [];
+            const curLevel = state.clock.level || 0;
+            const nextIdx = curLevel + 1;
+            const nextObj = sched[nextIdx];
+            const duration = parseVal(nextObj?.durationMinutes || nextObj?.minutes) || state.clock.levelDurationMinutes || 15;
+            state = {
+              ...state,
+              clock: {
+                ...state.clock,
+                level: nextIdx,
+                secondsLeft: duration * 60,
+              },
+            };
+          }
+          changed = true;
         }
-        if (cur.secondsLeft > 1) {
-          state = {
-            ...state,
-            clock: {
-              ...state.clock,
-              secondsLeft: cur.secondsLeft - 1,
-            },
-          };
+
+        // Also tick other running tournaments in background catalog
+        try {
+          const cat = loadCatalog();
+          let catChanged = false;
+          for (const [id, t] of Object.entries(cat)) {
+            if (id !== state?.id && t && t.active && t.clock?.isRunning) {
+              const cur = t.clock;
+              if (cur && cur.secondsLeft > 1) {
+                cur.secondsLeft -= 1;
+              } else if (cur) {
+                const sched = cur.blindSchedule || [];
+                const curLevel = cur.level || 0;
+                const nextIdx = curLevel + 1;
+                const nextObj = sched[nextIdx];
+                const duration = parseVal(nextObj?.durationMinutes || nextObj?.minutes) || cur.levelDurationMinutes || 15;
+                cur.level = nextIdx;
+                cur.secondsLeft = duration * 60;
+              }
+              catChanged = true;
+            }
+          }
+          if (catChanged) {
+            saveCatalog(cat);
+            changed = true;
+          }
+        } catch (e) {}
+
+        if (changed) {
           emit();
-        } else {
-          mttStore.nextLevel();
         }
       }, 1000);
     }
@@ -221,13 +325,15 @@ export const mttStore = {
       mysteryBountyConfig = null,
     } = data;
 
-    const numPlayers = Math.max(0, Number(totalPlayers) || (playerNames?.length || 0));
-    const sStack = Math.max(100, Number(startingStack) || 10000);
+    const lowestChip = chipDenominations && chipDenominations.length ? Math.min(...chipDenominations) : 25;
+    const schedule = blindSchedule && blindSchedule.length ? blindSchedule : defaultScheduleFor(lowestChip);
+    const lvl1BB = schedule[0]?.bigBlind ? parseVal(schedule[0].bigBlind) : 50;
+    const default100BB = lvl1BB * 100;
+    const sStack = startingStack != null ? Math.max(100, Number(startingStack) || default100BB) : default100BB;
+    const numPlayers = Math.max(2, Number(totalPlayers) || (playerNames?.length || 10));
     const tCount = Math.max(1, Number(tablesCount) || 1);
     const bIn = Math.max(0, Number(buyIn) || 100);
     const levelMins = Math.max(1, Number(levelDurationMinutes) || 15);
-    const lowestChip = chipDenominations && chipDenominations.length ? Math.min(...chipDenominations) : 25;
-    const schedule = blindSchedule && blindSchedule.length ? blindSchedule : defaultScheduleFor(lowestChip);
     const cfg = payoutConfig && payoutConfig.length ? payoutConfig : getDefaultPayoutConfig(tCount);
 
     const roster = generateRoster(playerNames, numPlayers);
@@ -247,10 +353,13 @@ export const mttStore = {
       splitSimultaneousTies,
     });
 
+    const tourneyId = (state?.id && !state.active) ? state.id : (data.id || `mtt_${Date.now()}`);
+
     state = {
       active: true,
-      id: `mtt_${Date.now()}`,
+      id: tourneyId,
       name,
+      nameEntryMode: data.nameEntryMode || 'now',
       totalPlayers: numPlayers,
       remainingPlayers: numPlayers,
       startingStack: sStack,
@@ -460,11 +569,45 @@ export const mttStore = {
     }
     const updated = Math.max(1, Math.min(totalEntries, cur + delta));
     const isEnded = updated === 1;
+
+    let updatedPlayers = state.players || [];
+    if (delta < 0) {
+      // If active players list has uneliminated generic/placeholder players, mark the last one eliminated
+      const activeIdx = updatedPlayers.map((p, idx) => (!p.eliminated && p.status !== 'eliminated' ? idx : -1)).filter((idx) => idx >= 0);
+      if (activeIdx.length > 0 && activeIdx.length > updated) {
+        const lastActiveIdx = activeIdx[activeIdx.length - 1];
+        updatedPlayers = updatedPlayers.map((p, idx) => (idx === lastActiveIdx ? { ...p, status: 'eliminated', eliminated: true } : p));
+      }
+    }
+
     state = {
       ...state,
+      players: updatedPlayers,
       remainingPlayers: updated,
       isEnded: isEnded || state.isEnded,
       clock: isEnded ? { ...state.clock, isRunning: false } : state.clock,
+    };
+    emit();
+  },
+
+  updateRosterNames: (names = []) => {
+    const cleanNames = names.map((n) => String(n || '').trim()).filter(Boolean);
+    if (cleanNames.length === 0) return;
+    const curRemaining = cleanNames.length;
+    const elimPlayers = (state.players || []).filter(
+      (p) => p.status === 'eliminated' || p.eliminated
+    );
+    const updatedActive = cleanNames.map((name, i) => ({
+      id: `active_p_${Date.now()}_${i + 1}`,
+      name,
+      status: 'active',
+      eliminated: false,
+      stack: state.startingStack || 5000,
+    }));
+    state = {
+      ...state,
+      remainingPlayers: curRemaining,
+      players: [...updatedActive, ...elimPlayers],
     };
     emit();
   },
@@ -585,7 +728,7 @@ export const mttStore = {
    * "add 1 to field remaining and entry count, adjust prize pool"
    */
   reEntryPlayer: ({ name = '' } = {}) => {
-    if (state.tournamentType === 'freezeout' || state.tournamentType === 'shootout') {
+    if (state.tournamentType === 'freezeout') {
       return { success: false, error: 'Re-entry is not permitted in a freezeout tournament.' };
     }
 
@@ -628,7 +771,7 @@ export const mttStore = {
    * "do not change field remaining and entry count, adjust prize pool"
    */
   rebuyPlayer: ({ name = '', cost = null, chips = null } = {}) => {
-    if (state.tournamentType === 'freezeout' || state.tournamentType === 'shootout') {
+    if (state.tournamentType === 'freezeout') {
       return { success: false, error: 'Rebuys are not permitted in a freezeout tournament.' };
     }
 
@@ -754,6 +897,136 @@ export const mttStore = {
       };
       emit();
     }
+  },
+
+  getTournaments: () => {
+    const cat = loadCatalog();
+    if (state?.id && state.active) {
+      cat[state.id] = state;
+    }
+    return Object.values(cat)
+      .filter((t) => t && t.id && t.active)
+      .map((t) => {
+        const sched = t.clock?.blindSchedule || [];
+        const curLvl = t.clock?.level || 0;
+        const lvlObj = sched[curLvl] || {};
+        const isB = isBreak(lvlObj);
+        let blindsText = '';
+        if (isB) {
+          blindsText = lvlObj.name || 'Break';
+        } else if (lvlObj.smallBlind != null) {
+          blindsText = `${lvlObj.smallBlind}/${lvlObj.bigBlind}${lvlObj.ante ? ` (ante ${lvlObj.ante})` : ''}`;
+        } else {
+          blindsText = `Level ${curLvl + 1}`;
+        }
+
+        return {
+          id: t.id,
+          name: t.name || 'Championship Tournament',
+          active: !!t.active,
+          isRunning: !!t.clock?.isRunning,
+          level: curLvl,
+          levelNumber: getLevelNum(sched, curLvl),
+          blindsText,
+          isBreak: isB,
+          secondsLeft: t.clock?.secondsLeft ?? (t.clock?.levelDurationMinutes || 15) * 60,
+          remainingPlayers: t.remainingPlayers ?? t.totalPlayers ?? 0,
+          totalPlayers: t.totalPlayers ?? 0,
+          buyIn: t.buyIn,
+          currency: t.currency || '$',
+          totalPrizePool: t.totalPrizePool || 0,
+          updatedAt: t.updatedAt || Date.now(),
+          createdAt: t.createdAt || Date.now(),
+        };
+      })
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  },
+
+  toggleTimerForTournament: (tournamentId) => {
+    if (!tournamentId) return;
+    if (state?.id === tournamentId) {
+      mttStore.toggleTimer();
+      return;
+    }
+    const cat = loadCatalog();
+    if (cat[tournamentId]) {
+      const tourney = cat[tournamentId];
+      const isRunning = !tourney.clock?.isRunning;
+      tourney.clock = {
+        ...tourney.clock,
+        isRunning,
+      };
+      tourney.updatedAt = Date.now();
+      cat[tournamentId] = tourney;
+      saveCatalog(cat);
+      syncTicker();
+      emit();
+    }
+  },
+
+  switchTournament: (tournamentId) => {
+    const cat = loadCatalog();
+    if (state?.id && state.active) {
+      cat[state.id] = state;
+      saveCatalog(cat);
+    }
+    if (cat[tournamentId]) {
+      state = cat[tournamentId];
+      localStorage.setItem(STORAGE_KEY_ACTIVE_ID, tournamentId);
+      syncTicker();
+      emit();
+      return true;
+    }
+    return false;
+  },
+
+  startNewTournament: () => {
+    const cat = loadCatalog();
+    if (state?.id && state.active) {
+      cat[state.id] = state;
+      saveCatalog(cat);
+    }
+    const activeTournaments = Object.values(cat).filter((t) => t && t.active);
+    const newId = `mtt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    state = {
+      ...defaultMTT(),
+      id: newId,
+      name: `Tournament ${activeTournaments.length + 1}`,
+      active: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    localStorage.setItem(STORAGE_KEY_ACTIVE_ID, newId);
+    if (clockTickerInterval) {
+      clearInterval(clockTickerInterval);
+      clockTickerInterval = null;
+    }
+    emit();
+    return newId;
+  },
+
+  deleteTournament: (tournamentId) => {
+    const cat = loadCatalog();
+    delete cat[tournamentId];
+    saveCatalog(cat);
+    if (state?.id === tournamentId) {
+      const remaining = Object.values(cat).filter((t) => t && t.active);
+      if (remaining.length > 0) {
+        state = remaining[0];
+        localStorage.setItem(STORAGE_KEY_ACTIVE_ID, state.id);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        syncTicker();
+      } else {
+        state = defaultMTT();
+        localStorage.removeItem(STORAGE_KEY_ACTIVE_ID);
+        localStorage.removeItem(STORAGE_KEY);
+        if (clockTickerInterval) {
+          clearInterval(clockTickerInterval);
+          clockTickerInterval = null;
+        }
+      }
+    }
+    emit();
   },
 
   resetTournament: () => {

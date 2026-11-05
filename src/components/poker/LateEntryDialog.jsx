@@ -96,28 +96,30 @@ export default function LateEntryDialog({
               {/* Seating Position Choice */}
               <div className="pt-1">
                 <div className="text-xs text-slate-400 mb-2 font-medium">Table Seating Position</div>
-                <div className="flex rounded-lg border border-[#2a2f37] p-0.5 bg-[#15181d] mb-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setSeatingChoice('left_of')}
-                    className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                      seatingChoice === 'left_of' ? 'bg-[#3b473b] text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Sit Left of Player
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSeatingChoice('seat_num')}
-                    className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                      seatingChoice === 'seat_num' ? 'bg-[#3b473b] text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Specific Seat #
-                  </button>
-                </div>
+                {!isCash && (
+                  <div className="flex rounded-lg border border-[#2a2f37] p-0.5 bg-[#15181d] mb-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setSeatingChoice('left_of')}
+                      className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                        seatingChoice === 'left_of' ? 'bg-[#3b473b] text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Sit Left of Player
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSeatingChoice('seat_num')}
+                      className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                        seatingChoice === 'seat_num' ? 'bg-[#3b473b] text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Specific Seat #
+                    </button>
+                  </div>
+                )}
 
-                {seatingChoice === 'left_of' ? (
+                {isCash || seatingChoice === 'left_of' ? (
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">Sits to the left of (clockwise):</label>
                     <select
@@ -127,7 +129,7 @@ export default function LateEntryDialog({
                     >
                       {players.map((p) => (
                         <option key={p.id || p.seat} value={p.id || p.seat}>
-                          {p.name || `Player ${p.seat}`} (Seat {p.seat})
+                          {isCash ? (p.name || 'Player') : `${p.name || `Player ${p.seat}`} (Seat ${p.seat})`}
                         </option>
                       ))}
                     </select>

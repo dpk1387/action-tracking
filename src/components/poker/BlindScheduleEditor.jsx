@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, X, ChevronUp, ChevronDown, GripVertical, Coffee } from 'lucide-react';
+import { Plus, X, ChevronUp, ChevronDown, GripVertical, Coffee, Coins } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { suggestAnte, formatKM, parseAmount } from '@/lib/poker';
 import { suggestNextBlinds } from '@/lib/tournamentStructures';
@@ -11,8 +11,13 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
   const isNone = anteType === 'none' || anteType === 'three_blinds';
   const isTraditional = anteType === 'traditional';
 
-  const ensureType = (item) =>
-    item.type === 'break' ? item : { type: 'level', ...item };
+  const ensureType = (item) => {
+    if (item.type === 'color_up') {
+      return { type: 'break', minutes: item.minutes || 2, isColorUp: true, race: item.race || { retired: '25', replacement: '100' } };
+    }
+    if (item.type === 'break') return item;
+    return { type: 'level', ...item };
+  };
 
   const updateRow = (i, field, value) => {
     onChange(schedule.map((l, idx) => {
@@ -43,6 +48,10 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
 
   const addBreak = () => {
     onChange([...schedule, { type: 'break', minutes: 10, race: null }]);
+  };
+
+  const addColorUp = () => {
+    onChange([...schedule, { type: 'break', minutes: 2, isColorUp: true, race: { retired: '25', replacement: '100' } }]);
   };
 
   const remove = (i) => onChange(schedule.filter((_, idx) => idx !== i));
@@ -77,30 +86,41 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
               {schedule.map((l, i) => {
                 const item = ensureType(l);
                 if (item.type === 'break') {
+                  const isColorUpBreak = Boolean(item.isColorUp || (item.race && (item.race.retired || item.race.replacement)));
                   return (
                     <Draggable key={`row-${i}`} draggableId={`row-${i}`} index={i}>
                       {(prov, snap) => (
                         <div
                           ref={prov.innerRef}
                           {...prov.draggableProps}
-                          className={`flex items-center gap-1.5 rounded border border-[#6b5a2a] bg-[#2a2418] px-2 py-1.5 ${snap.isDragging ? 'shadow-lg' : ''}`}
+                          className={`flex items-center gap-1.5 rounded border px-2 py-1.5 ${
+                            isColorUpBreak
+                              ? 'border-purple-800/80 bg-purple-950/35'
+                              : 'border-[#6b5a2a] bg-[#2a2418]'
+                          } ${snap.isDragging ? 'shadow-lg' : ''}`}
                         >
                           <span {...prov.dragHandleProps} className="text-slate-600 cursor-grab active:cursor-grabbing shrink-0 hover:text-slate-400">
                             <GripVertical size={14} />
                           </span>
-                          <Coffee size={14} className="text-amber-400 shrink-0" />
-                          <span className="text-[11px] text-amber-300 font-medium shrink-0">Break</span>
+                          {isColorUpBreak ? (
+                            <Coins size={14} className="text-purple-400 shrink-0" />
+                          ) : (
+                            <Coffee size={14} className="text-amber-400 shrink-0" />
+                          )}
+                          <span className={`text-[11px] font-semibold shrink-0 ${isColorUpBreak ? 'text-purple-300' : 'text-amber-300 font-medium'}`}>
+                            {isColorUpBreak ? 'Color up' : 'Break'}
+                          </span>
                           <input
                             type="number"
                             min="1"
-                            value={item.minutes || 10}
-                            onChange={(e) => updateRow(i, 'minutes', Number(e.target.value) > 0 ? Number(e.target.value) : 10)}
+                            value={item.minutes || (isColorUpBreak ? 2 : 10)}
+                            onChange={(e) => updateRow(i, 'minutes', Number(e.target.value) > 0 ? Number(e.target.value) : (isColorUpBreak ? 2 : 10))}
                             className="w-14 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm text-right"
                           />
                           <span className="text-[11px] text-slate-500">min</span>
                           <button
                             type="button"
-                            onClick={() => setRace(i, item.race ? null : { retired: '', replacement: '' })}
+                            onClick={() => setRace(i, item.race ? null : { retired: '25', replacement: '100' })}
                             className={`rounded px-2 py-1 text-xs shrink-0 ${item.race ? 'bg-[#4a5a4a] text-white' : 'bg-[#2a2f37] text-slate-300 hover:bg-[#363c45]'}`}
                           >
                             {item.race ? 'Race on' : '+ Race'}
@@ -144,7 +164,61 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
                     </Draggable>
                   );
                 }
-                const levelNum = schedule.filter((s, j) => s.type !== 'break' && j <= i).length;
+                if (item.type === 'color_up') {
+                  const race = item.race || { retired: '', replacement: '' };
+                  return (
+                    <Draggable key={`row-${i}`} draggableId={`row-${i}`} index={i}>
+                      {(prov, snap) => (
+                        <div
+                          ref={prov.innerRef}
+                          {...prov.draggableProps}
+                          className={`flex items-center gap-1.5 rounded border border-purple-800/70 bg-purple-950/30 px-2 py-1.5 ${snap.isDragging ? 'shadow-lg' : ''}`}
+                        >
+                          <span {...prov.dragHandleProps} className="text-slate-600 cursor-grab active:cursor-grabbing shrink-0 hover:text-slate-400">
+                            <GripVertical size={14} />
+                          </span>
+                          <Coins size={14} className="text-purple-400 shrink-0" />
+                          <span className="text-[11px] text-purple-300 font-semibold shrink-0">Color up</span>
+                          <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                            <span className="text-[10px] text-slate-400">Retire:</span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={race.retired || ''}
+                              onChange={(e) => setRace(i, { ...race, retired: e.target.value })}
+                              onBlur={(e) => {
+                                const p = parseAmount(e.target.value);
+                                if (p != null) setRace(i, { ...race, retired: formatKM(p) });
+                              }}
+                              placeholder="25"
+                              className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-1.5 py-1 text-white text-xs"
+                            />
+                            <span className="text-slate-500 text-xs">→</span>
+                            <span className="text-[10px] text-slate-400">Replace:</span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={race.replacement || ''}
+                              onChange={(e) => setRace(i, { ...race, replacement: e.target.value })}
+                              onBlur={(e) => {
+                                const p = parseAmount(e.target.value);
+                                if (p != null) setRace(i, { ...race, replacement: formatKM(p) });
+                              }}
+                              placeholder="100"
+                              className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-1.5 py-1 text-white text-xs"
+                            />
+                          </div>
+                          <div className="flex flex-col shrink-0 leading-none ml-auto">
+                            <button onClick={() => move(i, -1)} disabled={i === 0} className="text-slate-500 hover:text-white disabled:opacity-20"><ChevronUp size={14} /></button>
+                            <button onClick={() => move(i, 1)} disabled={i === schedule.length - 1} className="text-slate-500 hover:text-white disabled:opacity-20"><ChevronDown size={14} /></button>
+                          </div>
+                          <button onClick={() => remove(i)} className="text-slate-500 hover:text-rose-400 shrink-0"><X size={14} /></button>
+                        </div>
+                      )}
+                    </Draggable>
+                  );
+                }
+                const levelNum = schedule.filter((s, j) => s.type !== 'break' && s.type !== 'color_up' && j <= i).length;
                 return (
                   <Draggable key={`row-${i}`} draggableId={`row-${i}`} index={i}>
                     {(prov, snap) => (
@@ -217,8 +291,9 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
         </Droppable>
       </DragDropContext>
       <div className="mt-2 flex items-center gap-3">
-        <button onClick={addLevel} className="flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200"><Plus size={14} /> Add level</button>
-        <button onClick={addBreak} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200"><Plus size={14} /> Add break</button>
+        <button onClick={addLevel} className="flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200 cursor-pointer"><Plus size={14} /> Add level</button>
+        <button onClick={addBreak} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 cursor-pointer"><Plus size={14} /> Add break</button>
+        <button onClick={addColorUp} className="flex items-center gap-1 text-xs text-purple-300 hover:text-purple-200 cursor-pointer"><Plus size={14} /> Add color up</button>
       </div>
     </div>
   );

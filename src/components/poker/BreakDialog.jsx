@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { X } from 'lucide-react';
-import { money } from '@/lib/poker';
+import { money, parseAmount } from '@/lib/poker';
 import { levelTimerState, formatTimer } from '@/lib/levelTimer';
 
 function calcOddChips(stack, retired, replacement) {
@@ -23,8 +23,8 @@ function calcOddChips(stack, retired, replacement) {
 export default function BreakDialog({ hand, onChipRace, onResume, onClose, now, race: raceOverride, dismissOverride }) {
   const brkItem = (hand?.blindSchedule || [])[hand?.tLevel];
   const race = raceOverride || brkItem?.race;
-  const retired = Number(race?.retired) || 0;
-  const replacement = Number(race?.replacement) || 0;
+  const retired = parseAmount(race?.retired) ?? Number(race?.retired) ?? 0;
+  const replacement = parseAmount(race?.replacement) ?? Number(race?.replacement) ?? 0;
   const hasRace = !!race && retired > 0 && replacement > 0;
 
   const autoOddChips = useMemo(() => {
@@ -152,26 +152,36 @@ export default function BreakDialog({ hand, onChipRace, onResume, onClose, now, 
   const canApply = hasRace && totals.totalValue > 0;
   const showWinnerPick = hasRace && !useRound && totals.raceChips > 0;
 
+  const isColorUp = !!(hand?.isColorUp || brkItem?.type === 'color_up' || st.phase === 'color_up' || (!hand?.inBreak && hasRace));
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-[#2a2f37] bg-[#1e2227] p-6 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-white">Break</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={18} /></button>
+          <h2 className="text-lg font-semibold text-white">
+            {isColorUp ? 'Color Up' : 'Break'}
+          </h2>
+          <button onClick={dismissOverride || onClose} className="text-slate-400 hover:text-white cursor-pointer"><X size={18} /></button>
         </div>
-        {st.active && st.phase === 'break' && (
+        {st.active && (st.phase === 'break' || st.phase === 'color_up') && (
           <div className={`rounded-xl border px-4 py-3 mb-4 text-center ${
             st.expired ? 'bg-[#3a3320] border-[#8a7a3a]' : 'bg-[#1e2a1e] border-[#4a5a4a]'
           }`}>
-            <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">Break</div>
+            <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">
+              {isColorUp ? 'Color Up' : 'Break'}
+            </div>
             <div className="font-mono text-3xl font-bold text-white tabular-nums">
               {st.expired ? '0:00' : formatTimer(st)}
             </div>
-            <div className="text-[11px] text-slate-500 mt-1">Breaks keep running until the next hand – blinds update then.</div>
+            <div className="text-[11px] text-slate-500 mt-1">
+              {isColorUp ? 'Color up chips before resuming play.' : 'Breaks keep running until the next hand – blinds update then.'}
+            </div>
           </div>
         )}
         {!hasRace ? (
-          <div className="text-sm text-slate-300 mb-4">No chip race is scheduled for this break. Resume play whenever everyone is back.</div>
+          <div className="text-sm text-slate-300 mb-4">
+            {isColorUp ? 'Color up complete. Resume play whenever ready.' : 'No chip race is scheduled for this break. Resume play whenever everyone is back.'}
+          </div>
         ) : (
           <div className="border-t border-[#2a2f37] pt-4">
             <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">Chip race</div>

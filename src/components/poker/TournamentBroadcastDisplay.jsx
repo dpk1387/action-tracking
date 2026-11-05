@@ -17,9 +17,13 @@ import AllInView from '@/components/poker/AllInView';
 
 function formatNumber(num) {
   if (num == null || isNaN(num)) return '0';
-  if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-  if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
-  return num.toLocaleString();
+  const n = Math.abs(num);
+  const sign = num < 0 ? '-' : '';
+  if (n >= 1000000000) return `${sign}${Number((n / 1000000000).toFixed(1))}B`;
+  if (n >= 10000000) return `${sign}${Math.round(n / 1000000)}M`;
+  if (n >= 1000000) return `${sign}${(n / 1000000).toFixed(1)}M`;
+  if (n > 100000) return `${sign}${Math.round(n / 1000)}K`;
+  return `${sign}${n.toLocaleString()}`;
 }
 
 export default function TournamentBroadcastDisplay({
@@ -111,7 +115,7 @@ export default function TournamentBroadcastDisplay({
           <div className="flex items-center gap-3 text-xs sm:text-sm text-slate-300">
             <span className="font-bold text-white">Level {currentLevelNum}</span>
             <span className="text-slate-500">·</span>
-            <span className="font-mono text-emerald-400 font-bold">{formatBlinds(hand)}</span>
+            <span className="tabular-nums text-emerald-400 font-bold">{formatBlinds(hand)}</span>
             {showFullscreenButton && (
               <button
                 onClick={toggleFullscreen}
@@ -212,7 +216,7 @@ export default function TournamentBroadcastDisplay({
               {hand && (hand.anteAmount > 0 || hand.anteType === 'bba') && (
                 <div className="mt-3 text-lg sm:text-2xl font-bold text-amber-300 flex items-center gap-2">
                   <span>Ante:</span>
-                  <span className="font-mono">{formatNumber(hand.anteAmount || hand.bigBlind)}</span>
+                  <span className="tabular-nums">{formatNumber(hand.anteAmount || hand.bigBlind)}</span>
                 </div>
               )}
             </div>
@@ -220,7 +224,7 @@ export default function TournamentBroadcastDisplay({
             {nextBlindsStr && (
               <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs sm:text-sm">
                 <span className="text-slate-400 font-semibold">Next Level Blinds:</span>
-                <span className="font-mono font-bold text-slate-200">{nextBlindsStr}</span>
+                <span className="tabular-nums font-bold text-slate-200">{nextBlindsStr}</span>
               </div>
             )}
           </div>
@@ -240,7 +244,7 @@ export default function TournamentBroadcastDisplay({
             </div>
 
             <div className="my-auto py-2 flex flex-col items-center justify-center text-center">
-              <div className={`text-5xl sm:text-7xl md:text-8xl font-black font-mono tracking-tight ${
+              <div className={`text-5xl sm:text-7xl md:text-8xl font-black tabular-nums tracking-tight ${
                 inBreak
                   ? 'text-amber-300 animate-pulse'
                   : isPaused
@@ -276,7 +280,7 @@ export default function TournamentBroadcastDisplay({
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">
                 Players Remaining
               </span>
-              <div className="text-3xl sm:text-4xl font-black text-white font-mono">
+              <div className="text-3xl sm:text-4xl font-black text-white tabular-nums">
                 {remainingPlayers}
                 <span className="text-slate-500 text-lg sm:text-xl font-normal ml-1.5">
                   / {totalEntries}
@@ -292,7 +296,7 @@ export default function TournamentBroadcastDisplay({
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">
                 Average Stack
               </span>
-              <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono">
+              <div className="text-3xl sm:text-4xl font-black text-amber-300 tabular-nums">
                 {formatNumber(averageStack)}
               </div>
               <span className="text-[11px] text-amber-400/80 font-medium mt-2">
@@ -305,7 +309,7 @@ export default function TournamentBroadcastDisplay({
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">
                 Total Chips in Play
               </span>
-              <div className="text-3xl sm:text-4xl font-black text-emerald-300 font-mono">
+              <div className="text-3xl sm:text-4xl font-black text-emerald-300 tabular-nums">
                 {formatNumber(totalChips)}
               </div>
               <span className="text-[11px] text-slate-500 mt-2">
@@ -318,7 +322,7 @@ export default function TournamentBroadcastDisplay({
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-1">
                 Active Tables
               </span>
-              <div className="text-3xl sm:text-4xl font-black text-purple-300 font-mono">
+              <div className="text-3xl sm:text-4xl font-black text-purple-300 tabular-nums">
                 {activeTableCount}
               </div>
               <span className="text-[11px] text-purple-400/80 font-medium mt-2">

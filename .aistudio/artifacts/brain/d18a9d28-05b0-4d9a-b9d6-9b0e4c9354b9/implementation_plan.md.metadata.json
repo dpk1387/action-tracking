@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan for Tournament Director Mode with broadcast Clock View, flexible payout engine, control menu, and live TV/Spectator sync.",
-  "updatedAt": "2026-10-18T14:13:55.876711173Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Revised implementation plan addressing font issues (enforcing Inter with tabular numbers and eliminating Consolas), removing straddle amount customization in favor of 2x the largest blind, fixing the splitPct reference error, showing all outs without the 5-card cap, conditional split % display, and enabling board-by-board multi-run dealing in cash games.",
+  "updatedAt":  "2026-10-26T18:18:42.593165078Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

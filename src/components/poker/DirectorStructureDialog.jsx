@@ -15,7 +15,7 @@ import {
   Target,
   Gift,
 } from 'lucide-react';
-import { getDefaultPayoutConfig, calculateTournamentPayouts } from '@/lib/payoutEngine';
+import { getDefaultPayoutConfig, calculateTournamentPayouts, getOrdinalSuffix } from '@/lib/payoutEngine';
 import { defaultScheduleFor, defaultDenomsFor, ALL_DENOMINATIONS } from '@/lib/tournamentStructures';
 import ChipDenominationPicker from '@/components/poker/ChipDenominationPicker';
 import BlindScheduleEditor from '@/components/poker/BlindScheduleEditor';
@@ -86,18 +86,17 @@ export default function DirectorStructureDialog({
   onSave,
   onClose,
 }) {
-  if (!isOpen) return null;
-
   // Active Tab: 'general' | 'levels' | 'players' | 'payouts'
   const [activeTab, setActiveTab] = useState('general');
 
   // General Setup
   const [name, setName] = useState(initialData.name || 'Championship Tournament');
+  const [nameEntryMode, setNameEntryMode] = useState(initialData.nameEntryMode || 'now');
   const [totalPlayers, setTotalPlayers] = useState(
-    initialData.active ? (initialData.totalPlayers || 0) : (initialData.players?.length || 0)
+    initialData.totalPlayers || initialData.players?.length || 10
   );
   const [tablesCount, setTablesCount] = useState(initialData.tablesCount || 1);
-  const [startingStack, setStartingStack] = useState(initialData.startingStack || 10000);
+  const [startingStack, setStartingStack] = useState(initialData.startingStack || 5000);
   const [buyIn, setBuyIn] = useState(initialData.buyIn != null ? initialData.buyIn : 100);
   const [currency, setCurrency] = useState(initialData.currency || '$');
   const [levelDurationMinutes, setLevelDurationMinutes] = useState(
@@ -235,13 +234,25 @@ export default function DirectorStructureDialog({
     };
   }, [totalPlayers, tablesCount]);
 
+  const handleScheduleChange = (newSched) => {
+    setSchedule(newSched);
+    if (newSched && newSched.length > 0) {
+      const firstLevel = newSched.find((l) => l && l.type !== 'break') || newSched[0];
+      const rawBB = firstLevel?.bigBlind;
+      const lvl1BB = rawBB ? (parseFloat(String(rawBB).replace(/[^0-9.]/g, '')) || 0) : 0;
+      if (lvl1BB > 0) {
+        setStartingStack(lvl1BB * 100);
+      }
+    }
+  };
+
   // Handle Denominations Change
   const handleDenomsChange = (newDenoms) => {
     setChipDenominations(newDenoms);
     if (newDenoms.length > 0) {
       const lowest = Math.min(...newDenoms);
       const newSched = defaultScheduleFor(lowest);
-      setSchedule(newSched);
+      handleScheduleChange(newSched);
     }
   };
 
@@ -332,7 +343,9 @@ export default function DirectorStructureDialog({
       .split(/\n|,/)
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
-    setTotalPlayers(names.length);
+    if (names.length > 0) {
+      setTotalPlayers(names.length);
+    }
   };
 
   // Computed Player Roster automatically counted from entered entries
@@ -345,7 +358,7 @@ export default function DirectorStructureDialog({
     if (rawLines.length > 0) {
       return rawLines;
     }
-    const count = Number(totalPlayers) || 0;
+    const count = Math.max(2, Number(totalPlayers) || 10);
     const list = [];
     for (let i = 1; i <= count; i++) {
       list.push(`Player ${i}`);
@@ -387,11 +400,17 @@ export default function DirectorStructureDialog({
 
   const handleSubmit = (e) => {
     e?.preventDefault();
+    const hasTypedNames = playerNamesInput.trim().length > 0;
+    const finalCount = nameEntryMode === 'now'
+      ? (hasTypedNames ? parsedPlayerNames.length : Math.max(2, Number(totalPlayers) || 10))
+      : Math.max(2, Number(totalPlayers) || 10);
+
     onSave({
       name,
-      totalPlayers: parsedPlayerNames.length,
+      nameEntryMode,
+      totalPlayers: finalCount,
       tablesCount: Number(tablesCount) || 1,
-      startingStack: Number(startingStack) || 10000,
+      startingStack: Number(startingStack) || 5000,
       buyIn: Number(buyIn) || 100,
       currency,
       levelDurationMinutes: Number(levelDurationMinutes) || 15,
@@ -400,7 +419,7 @@ export default function DirectorStructureDialog({
       tournamentType,
       maxReEntries: Number(maxReEntries) || 0,
       rebuyCost: Number(rebuyCost) || Number(buyIn) || 100,
-      rebuyChips: Number(rebuyChips) || Number(startingStack) || 10000,
+      rebuyChips: Number(rebuyChips) || Number(startingStack) || 5000,
       rebuyRules: {
         timeCapEnabled: rebuyTimeCapEnabled,
         timeCapLevel: Number(rebuyTimeCapLevel) || 4,
@@ -408,12 +427,12 @@ export default function DirectorStructureDialog({
         maxRebuys: Number(rebuyMaxCount) || 0,
         stackCapEnabled: rebuyStackCapEnabled,
         stackCapUnit: rebuyStackCapUnit,
-        stackCapValue: Number(rebuyStackCapValue) || 10000,
+        stackCapValue: Number(rebuyStackCapValue) || Number(startingStack) || 5000,
       },
       anteType,
       chipDenominations,
       blindSchedule: schedule,
-      playerNames: parsedPlayerNames,
+      playerNames: nameEntryMode === 'now' && hasTypedNames ? parsedPlayerNames : [],
       splitSimultaneousTies,
       payoutConfig,
       bountyPercent: isBounty ? effectiveBountyPercent : undefined,
@@ -427,6 +446,8 @@ export default function DirectorStructureDialog({
       } : undefined,
     });
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-sm overflow-y-auto">
@@ -504,24 +525,49 @@ export default function DirectorStructureDialog({
                 </div>
 
                 <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Player Registration Method
+                  </label>
+                  <select
+                    value={nameEntryMode}
+                    onChange={(e) => setNameEntryMode(e.target.value)}
+                    className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="now">Enter player names now (Default)</option>
+                    <option value="itm">Enter when ITM / approaching money</option>
+                  </select>
+                </div>
+
+                <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
                       Total Starting Players
                     </label>
                     <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
-                      Auto-counted from Roster
+                      {nameEntryMode === 'now' ? 'Auto-counted from Roster' : 'Manual Field Count'}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm font-mono">
-                    <span className="text-white font-bold">{parsedPlayerNames.length} Players</span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('players')}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 underline font-sans cursor-pointer"
-                    >
-                      Edit Roster ({parsedPlayerNames.length}) →
-                    </button>
-                  </div>
+                  {nameEntryMode === 'now' ? (
+                    <div className="flex items-center justify-between w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm font-mono">
+                      <span className="text-white font-bold">{parsedPlayerNames.length} Players</span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('players')}
+                        className="text-xs text-emerald-400 hover:text-emerald-300 underline font-sans cursor-pointer"
+                      >
+                        Edit Roster ({parsedPlayerNames.length}) →
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      type="number"
+                      min="2"
+                      max="5000"
+                      value={totalPlayers}
+                      onChange={(e) => setTotalPlayers(Math.max(2, parseInt(e.target.value) || 2))}
+                      className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono"
+                    />
+                  )}
                 </div>
 
                 <div>
@@ -654,7 +700,6 @@ export default function DirectorStructureDialog({
                     <option value="rebuy">Rebuy (Active Players Add Chips to Existing Stacks)</option>
                     <option value="bounty">Bounty (Standard Knockout)</option>
                     <option value="mystery bounty">Mystery Bounty</option>
-                    <option value="shootout">Shootout (Table Winner Advances)</option>
                   </select>
                 </div>
 
@@ -815,17 +860,6 @@ export default function DirectorStructureDialog({
                     <div className="font-semibold text-slate-200">Freezeout Tournament</div>
                     <div className="text-slate-400 text-[11px] leading-relaxed">
                       Single entry format. Once eliminated, players cannot re-enter or rebuy. Re-entry controls are strictly disabled.
-                    </div>
-                  </div>
-                )}
-
-                {/* Shootout Notice */}
-                {tournamentType === 'shootout' && (
-                  <div className="p-3.5 bg-cyan-950/20 border border-cyan-800/40 rounded-xl text-xs space-y-1.5">
-                    <div className="font-bold text-cyan-300">Shootout Tournament Format</div>
-                    <div className="text-slate-300 text-[11px] leading-relaxed">
-                      Each table plays down until only 1 table winner remains. All table winners advance to the final table.
-                      Re-entries and rebuys are not permitted.
                     </div>
                   </div>
                 )}
@@ -1132,7 +1166,7 @@ export default function DirectorStructureDialog({
                     type="button"
                     onClick={() => {
                       const lowest = chipDenominations.length ? Math.min(...chipDenominations) : 25;
-                      setSchedule(defaultScheduleFor(lowest));
+                      handleScheduleChange(defaultScheduleFor(lowest));
                     }}
                     className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
                   >
@@ -1142,7 +1176,7 @@ export default function DirectorStructureDialog({
                 <div className="bg-[#10141c] p-3 rounded-xl border border-slate-800 max-h-72 overflow-y-auto">
                   <BlindScheduleEditor
                     schedule={schedule}
-                    onChange={setSchedule}
+                    onChange={handleScheduleChange}
                     anteType={anteType}
                     chipDenominations={chipDenominations}
                   />
@@ -1154,37 +1188,79 @@ export default function DirectorStructureDialog({
           {/* TAB 3: PLAYERS ROSTER */}
           {activeTab === 'players' && (
             <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Player Names Roster
+              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-2">
+                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                  Registration Method
                 </label>
-                <div className="text-xs text-slate-400 mb-2">
-                  Enter player names (one per line or separated by commas). The field player count will automatically update based on the number of names entered.
+                <select
+                  value={nameEntryMode}
+                  onChange={(e) => setNameEntryMode(e.target.value)}
+                  className="w-full bg-[#181d26] border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="now">Enter player names now (Default)</option>
+                  <option value="itm">Enter when ITM / approaching money</option>
+                </select>
+                <div className="text-[11px] text-slate-400">
+                  {nameEntryMode === 'now'
+                    ? 'Enter or paste roster names now. The "Enter Names" button will be hidden during the tournament.'
+                    : 'Field count only at start. Use "Field -" when players bust, then use "Enter Names" when approaching the money.'}
                 </div>
-                <textarea
-                  rows={6}
-                  value={playerNamesInput}
-                  onChange={(e) => handlePlayerNamesChange(e.target.value)}
-                  placeholder="e.g.&#10;Alice&#10;Bob&#10;Charlie&#10;Dave"
-                  className="w-full bg-[#181d26] border border-slate-700 rounded-xl p-3 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
-                />
               </div>
+
+              {nameEntryMode === 'now' ? (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Player Names Roster
+                  </label>
+                  <div className="text-xs text-slate-400 mb-2">
+                    Enter player names (one per line or separated by commas). The field player count will automatically update based on the number of names entered.
+                  </div>
+                  <textarea
+                    rows={6}
+                    value={playerNamesInput}
+                    onChange={(e) => handlePlayerNamesChange(e.target.value)}
+                    placeholder="e.g.&#10;Alice&#10;Bob&#10;Charlie&#10;Dave"
+                    className="w-full bg-[#181d26] border border-slate-700 rounded-xl p-3 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+                  <div className="text-xs font-semibold text-white">
+                    Approaching Money Mode Selected
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Total starting field is set to <span className="text-emerald-400 font-bold">{totalPlayers} players</span>. Placeholder slots (Player 1 to Player {totalPlayers}) are generated for now.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <label className="text-xs text-slate-300 font-medium">Starting Field Size:</label>
+                    <input
+                      type="number"
+                      min="2"
+                      max="5000"
+                      value={totalPlayers}
+                      onChange={(e) => setTotalPlayers(Math.max(2, parseInt(e.target.value) || 2))}
+                      className="w-24 bg-[#181d26] border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs font-mono"
+                    />
+                  </div>
+                  <p className="text-[11px] text-amber-300/80">
+                    You can use the "Enter Names" button during the tournament when approaching the money to paste the active players.
+                  </p>
+                </div>
+              )}
 
               {/* Live Roster Preview */}
               <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-2">
                 <div className="flex items-center justify-between text-xs text-slate-300 font-semibold">
                   <span>Current Field Roster ({parsedPlayerNames.length} Players):</span>
                   <span className="text-emerald-400 text-[11px]">
-                    {playerNamesInput.split(/\n|,/).filter((s) => s.trim().length > 0).length > 0
+                    {nameEntryMode === 'now' && playerNamesInput.split(/\n|,/).filter((s) => s.trim().length > 0).length > 0
                       ? `${parsedPlayerNames.length} named entries`
-                      : parsedPlayerNames.length > 0
-                      ? `Using ${parsedPlayerNames.length} default player slots`
-                      : 'No players in roster'}
+                      : `${parsedPlayerNames.length} player slots`}
                   </span>
                 </div>
-                {parsedPlayerNames.length === 0 ? (
-                  <div className="py-6 text-center text-xs text-slate-500 italic">
-                    No players registered yet. Enter player names above to populate the tournament roster.
+                {parsedPlayerNames.length > 10 ? (
+                  <div className="py-4 text-center text-sm font-bold text-white bg-[#181d26] rounded-xl border border-slate-800">
+                    {parsedPlayerNames.length} Players Registered
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-h-44 overflow-y-auto pr-1">
@@ -1331,7 +1407,7 @@ export default function DirectorStructureDialog({
                       key={i}
                       className="p-1.5 bg-[#171c26] rounded border border-slate-800 flex justify-between"
                     >
-                      <span className="text-slate-400">{p.label || `${p.place}th`}:</span>
+                      <span className="text-slate-400">{p.label || `${p.place}${getOrdinalSuffix(p.place)}`}:</span>
                       <span className="text-emerald-400 font-bold">
                         {currency}{p.amount} ({p.percent.toFixed(p.percent % 1 === 0 ? 0 : 1)}%)
                       </span>

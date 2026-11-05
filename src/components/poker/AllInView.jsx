@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useState, useEffect, useLayoutEffect } from 're
 import { Clock } from 'lucide-react';
 import {
   money,
+  formatPotAmount,
+  getMultipleBoardWinPercentages,
   formatSidePotAmount,
   formatPlayerTagAmount,
   formatBetAmount,
@@ -15,6 +17,8 @@ import {
   STREET_LABEL,
   sortHoleCards,
   bettingFrozen,
+  evaluateWinners,
+  effectiveHoleSize,
 } from '@/lib/poker';
 
 const POSITION_ORDER = {
@@ -27,10 +31,14 @@ const POSITION_ORDER = {
   '+2': 5,
   'UTG+3': 6,
   '+3': 6,
-  LJ: 7,
-  HJ: 8,
-  CO: 9,
-  BTN: 10,
+  'UTG+4': 7,
+  '+4': 7,
+  'UTG+5': 8,
+  '+5': 8,
+  LJ: 9,
+  HJ: 10,
+  CO: 11,
+  BTN: 12,
 };
 
 function formatPosition(pos) {
@@ -38,6 +46,8 @@ function formatPosition(pos) {
   if (pos === 'UTG+1') return '+1';
   if (pos === 'UTG+2') return '+2';
   if (pos === 'UTG+3') return '+3';
+  if (pos === 'UTG+4') return '+4';
+  if (pos === 'UTG+5') return '+5';
   return pos;
 }
 
@@ -87,7 +97,7 @@ function AllInOutCard({ card }) {
   const isRed = SUIT_RED[card.suit];
   const suitSym = SUIT_SYMBOL[card.suit] || card.suit;
   return (
-    <div className="px-1 h-5 min-w-[24px] rounded bg-white border border-slate-300 flex items-center justify-center gap-0.5 select-none shadow-sm leading-none shrink-0">
+    <div className="px-1.5 h-5 min-w-[26px] rounded bg-white border border-slate-300 flex items-center justify-center gap-0.5 select-none shadow-sm leading-none shrink-0">
       <span className={`text-[11px] font-black ${isRed ? 'text-rose-600' : 'text-slate-900'}`}>
         {rankDisplay(card.rank)}
       </span>
@@ -98,10 +108,10 @@ function AllInOutCard({ card }) {
   );
 }
 
-function AllInBoardCard({ card, highlight = null, anim = null, delay = 0, style = {} }) {
+function AllInBoardCard({ card, highlight = null, anim = null, delay = 0, style = {}, compact = false }) {
   if (!card || card.hidden) {
     return (
-      <div className="w-10 h-14 rounded-lg border-2 border-dashed border-[#2a2f37] bg-[#161a22]/50 flex items-center justify-center text-slate-600 text-xs font-mono">
+      <div className={`${compact ? 'w-9 h-11' : 'w-12 h-14'} rounded-lg border-2 border-dashed border-[#2a2f37] bg-[#161a22]/50 flex items-center justify-center text-slate-600 text-xs font-mono`}>
         —
       </div>
     );
@@ -113,7 +123,7 @@ function AllInBoardCard({ card, highlight = null, anim = null, delay = 0, style 
   return (
     <div
       style={{ ...style, animationDelay: `${delay}s` }}
-      className={`relative w-10 h-14 rounded-lg border flex flex-col items-center justify-between py-1 select-none shadow-lg transition-transform ${
+      className={`relative ${compact ? 'w-9 h-11 px-1' : 'w-12 h-14 px-1.5'} rounded-lg border flex flex-row items-center justify-center gap-1 select-none shadow-lg transition-transform ${
         anim || ''
       } ${
         isHl
@@ -121,22 +131,32 @@ function AllInBoardCard({ card, highlight = null, anim = null, delay = 0, style 
           : 'bg-white border-slate-300'
       }`}
     >
-      <span className={`text-xs font-black leading-none self-center ${isRed ? 'text-red-600' : 'text-slate-900'}`}>
+      <span className={`${compact ? 'text-xs' : 'text-base'} font-black leading-none ${isRed ? 'text-red-600' : 'text-slate-900'}`}>
         {rankDisplay(card.rank)}
       </span>
-      <span className={`text-base leading-none ${isRed ? 'text-red-600' : 'text-slate-900'}`}>
+      <span className={`${compact ? 'text-xs' : 'text-base'} leading-none ${isRed ? 'text-red-600' : 'text-slate-900'}`}>
         {suitSym}
       </span>
     </div>
   );
 }
 
-function formatEquity(val, isSecured = false) {
-  if (isSecured) return '100%';
+function formatEquity(val, isSecured = false, isMultipleBoards = false) {
   if (val == null) return '—';
-  if (val <= 0.05 && val > 0) return '<1%';
-  if (val >= 99.95 && val < 100) return '>99%';
-  return `${Math.round(val)}%`;
+  const num = Number(val);
+  if (isNaN(num)) return '—';
+  if (isMultipleBoards) {
+    if (num >= 99.9) return '100%';
+    if (num > 0 && num < 1) return '<1%';
+    if (Math.round(num) === 33) return '33%';
+    if (Math.round(num) === 67 || Math.round(num) === 66) return '67%';
+    if (Math.round(num) === 50) return '50%';
+    return `${Math.round(num)}%`;
+  }
+  if (isSecured) return '100%';
+  if (num > 0 && num < 1) return '<1%';
+  if (num >= 99.95 && num < 100) return '>99%';
+  return `${Math.round(num)}%`;
 }
 
 function getPlayerLastActionText(player, currency, hand) {
@@ -160,12 +180,13 @@ function getPlayerLastActionText(player, currency, hand) {
     if (frozen) return isSoleDeepest ? '' : 'All-in';
     return 'Waiting';
   }
+  const callAmt = la.callAmount != null ? formatBetAmount(la.callAmount, currency) : (la.amount != null ? formatBetAmount(la.amount, currency) : '');
   const amt = la.amount != null ? formatBetAmount(la.amount, currency) : '';
   switch (la.type) {
     case 'fold': return 'Fold';
     case 'check': return 'Check';
-    case 'allin': return amt ? `All in for ${amt}` : 'All-in';
-    case 'call': return isAllInPlayer ? (amt ? `All in for ${amt}` : 'All-in') : (amt ? `Call ${amt}` : 'Call');
+    case 'allin': return (la.callAmount != null ? `All in for ${callAmt}` : (amt ? `All in for ${amt}` : 'All-in'));
+    case 'call': return isAllInPlayer ? (callAmt ? `All in for ${callAmt}` : 'All-in') : (callAmt ? `Call ${callAmt}` : 'Call');
     case 'bet':
     case 'raise': {
       if (isAllInPlayer) {
@@ -201,9 +222,11 @@ export default function AllInView({
   clockActive = false,
   clockType = null,
   onUseTimeBank = null,
+  displayUnit = 'chips',
 }) {
   const isTournament = hand?.mode === 'tournament';
   const cur = isTournament ? '' : (hand?.currency || '');
+  const activeUnit = displayUnit || hand?.displayUnit || 'chips';
   const n = hand?.players?.length || 0;
   const buttonIdx = getButtonIndex(hand);
   const isPreflop = hand?.street === 'preflop';
@@ -222,11 +245,13 @@ export default function AllInView({
   const tagDomRefs = useRef({});
   const prevTopsRef = useRef({});
   const prevStreetRef = useRef(hand?.street);
+  const lockedOrderRef = useRef(null);
 
   // Reset state on new hand
   useEffect(() => {
     if (hand?.handNumber !== handNumRef.current) {
       handNumRef.current = hand?.handNumber;
+      lockedOrderRef.current = null;
       setPreflopActorOrder([]);
       setFadingFoldIds(new Set());
       setCollapsingFoldIds(new Set());
@@ -234,35 +259,37 @@ export default function AllInView({
       setNewlyEnteredIds(new Set());
       tagDomRefs.current = {};
       prevTopsRef.current = {};
+      prevStreetRef.current = hand?.street;
     }
   }, [hand?.handNumber]);
 
-  // Snapshot tag positions before street changes for FLIP animation
+  // Snapshot tag positions before preflop->postflop street transition for FLIP animation
   useEffect(() => {
-    const tops = {};
-    const activeIds = new Set(
-      (hand?.players || []).filter((p) => p.status !== 'folded').map((p) => String(p.id))
-    );
-    Object.keys(tagDomRefs.current).forEach((id) => {
-      if (!activeIds.has(String(id))) return;
-      const el = tagDomRefs.current[id];
-      if (el) {
-        tops[id] = el.getBoundingClientRect().top;
-      }
-    });
-    prevTopsRef.current = tops;
+    if (hand?.street === 'preflop') {
+      const tops = {};
+      const activeIds = new Set(
+        (hand?.players || []).filter((p) => p.status !== 'folded').map((p) => String(p.id))
+      );
+      Object.keys(tagDomRefs.current).forEach((id) => {
+        if (!activeIds.has(String(id))) return;
+        const el = tagDomRefs.current[id];
+        if (el) {
+          tops[id] = el.getBoundingClientRect().top;
+        }
+      });
+      prevTopsRef.current = tops;
+    }
   }, [hand?.street, hand?.players, preflopActorOrder]);
 
-  // FLIP animate re-ordering when street changes
+  // FLIP animate re-ordering ONLY when leaving preflop to flop (one time shuffle, never on turn/river!)
   useLayoutEffect(() => {
     const prevStreet = prevStreetRef.current;
     const currentStreet = hand?.street;
 
-    if (prevStreet && currentStreet && prevStreet !== currentStreet) {
+    if (prevStreet === 'preflop' && currentStreet && currentStreet !== 'preflop') {
       setFadingFoldIds(new Set());
       setCollapsingFoldIds(new Set());
 
-      // Re-ordering after betting ends: animate each active player's tag smoothly to its new position
       const activeIds = new Set(
         (hand.players || []).filter((p) => p.status !== 'folded').map((p) => String(p.id))
       );
@@ -277,7 +304,7 @@ export default function AllInView({
             el.style.transform = `translateY(${deltaY}px)`;
             el.style.transition = 'none';
             requestAnimationFrame(() => {
-              el.style.transition = 'transform 800ms cubic-bezier(0.25, 1, 0.5, 1)';
+              el.style.transition = 'transform 700ms cubic-bezier(0.25, 1, 0.5, 1)';
               el.style.transform = '';
             });
           }
@@ -288,7 +315,7 @@ export default function AllInView({
     prevStreetRef.current = hand?.street;
   }, [hand?.street]);
 
-  // Actor updates and smooth fold collapse (both preflop and postflop)
+  // Actor updates and smooth fold collapse
   useEffect(() => {
     if (!hand?.players) return;
 
@@ -301,15 +328,12 @@ export default function AllInView({
       const shouldAnimateFold = p.status === 'folded' && (inPreflop || inPostflop) && !fadingFoldIds.has(p.id) && !dismissedFoldIds.has(p.id);
 
       if (shouldAnimateFold) {
-        // Step 1: Show "Fold" badge immediately
         setFadingFoldIds((prev) => new Set([...prev, p.id]));
 
-        // Step 2: After 400ms, start smoothly collapsing height/margin to 0
         setTimeout(() => {
           setCollapsingFoldIds((prev) => new Set([...prev, p.id]));
         }, 400);
 
-        // Step 3: After collapse finishes (900ms total), remove completely
         setTimeout(() => {
           setDismissedFoldIds((prev) => new Set([...prev, p.id]));
           if (isPreflop) {
@@ -330,7 +354,6 @@ export default function AllInView({
     });
 
     if (currId != null) {
-      // Trigger incoming / action animation for the active player
       if (!newlyEnteredIds.has(currId)) {
         setNewlyEnteredIds((n) => new Set([...n, currId]));
         setTimeout(() => {
@@ -357,32 +380,37 @@ export default function AllInView({
             return [...pastActed, currId];
           }
 
-          // DO NOT move player tags up and down around until preflop ends!
           if (prev.includes(currId)) {
             return prev;
           }
-
-          // Add new acting player right above existing tags (on top in flex-col-reverse)
           return [...prev, currId];
         });
       }
     }
   }, [hand?.street, hand?.currentPlayer, hand?.players, isPreflop, preflopActorOrder, fadingFoldIds, dismissedFoldIds, newlyEnteredIds]);
 
-  // Check if there is an actual all-in situation in progress
+  // Check if all-in condition or betting action has frozen/ended
   const isAllIn = useMemo(() => {
     if (!hand?.players) return false;
     const nonFolded = hand.players.filter((p) => p.status !== 'folded');
     return nonFolded.some((p) => p.status === 'allin' || p.stack <= 0);
   }, [hand]);
 
+  const frozen = hand ? bettingFrozen(hand) : false;
+  const actionEnded = Boolean(
+    isAllIn ||
+    frozen ||
+    hand?.currentPlayer === -1 ||
+    hand?.phase === 'ended' ||
+    hand?.phase === 'awarded'
+  );
+
   // List of players to display
   const contestants = useMemo(() => {
     if (!hand?.players) return [];
 
     let playersToInclude = [];
-    if (isPreflop) {
-      // Preflop: only show those who have acted or are currently acting
+    if (isPreflop && !actionEnded) {
       let order = preflopActorOrder;
       if (order.length === 0 && hand.currentPlayer >= 0) {
         order = [hand.players[hand.currentPlayer].id];
@@ -392,13 +420,12 @@ export default function AllInView({
       }
       playersToInclude = order.map((id) => hand.players.find((p) => p.id === id)).filter(Boolean);
     } else {
-      // Postflop: ONLY non-folded contenders still in the hand
       playersToInclude = hand.players.filter((p) => p.status !== 'folded');
     }
 
     return playersToInclude.map((p) => {
       const idx = hand.players.findIndex((x) => x.id === p.id);
-      const posLabel = positions[idx] || positionForSeat(n, buttonIdx, idx) || '';
+      const posLabel = positions[idx] || positionForSeat(n, buttonIdx, idx, hand?.variant) || '';
       const order = POSITION_ORDER[posLabel] ?? 99;
       const isAtRisk = (p.status === 'allin' || p.stack <= 0) &&
         !hand.players.some((o) => o.status !== 'folded' && o.status !== 'allin' && (o.initialStack - o.stack) >= (p.initialStack - p.stack));
@@ -409,30 +436,63 @@ export default function AllInView({
         isAtRisk,
       };
     });
-  }, [hand, positions, n, buttonIdx, isAllIn, isPreflop, preflopActorOrder, fadingFoldIds, collapsingFoldIds]);
+  }, [hand, positions, n, buttonIdx, isAllIn, isPreflop, preflopActorOrder, actionEnded]);
 
   const sortedContestants = useMemo(() => {
-    // If contestants have chipRank assigned by TD (e.g. 1st most chips, 2nd most chips):
     const hasChipRank = contestants.some((c) => c.player?.chipRank != null);
     if (hasChipRank) {
       return [...contestants].sort((a, b) => (a.player?.chipRank || 99) - (b.player?.chipRank || 99));
     }
-    if (isPreflop) {
-      // Preflop: keep the active actor order (newest acting on top, earlier acted below - no jumping)
+    if (isPreflop && !actionEnded) {
       return contestants;
     }
-    // Postflop: reordered so blinds (SB, BB) are on top, and late positions (CO, BTN) on bottom.
-    // In flex-col-reverse, item 0 renders at the bottom (BTN), and later items stack upward (blinds on top).
-    return [...contestants].sort((a, b) => b.posOrder - a.posOrder);
-  }, [contestants, isPreflop]);
+    // Lock the postflop order once determined so tags NEVER reorder or reverse on turn/river
+    if (!lockedOrderRef.current) {
+      const order = [...contestants].sort((a, b) => b.posOrder - a.posOrder).map((c) => c.player.id);
+      lockedOrderRef.current = order;
+    }
+    const idMap = new Map(contestants.map((c) => [c.player.id, c]));
+    const result = [];
+    lockedOrderRef.current.forEach((id) => {
+      const c = idMap.get(id);
+      if (c) result.push(c);
+    });
+    contestants.forEach((c) => {
+      if (!lockedOrderRef.current.includes(c.player.id)) result.push(c);
+    });
+    return result;
+  }, [contestants, isPreflop, actionEnded]);
 
   const totalPot = useMemo(() => {
     if (pot > 0) return pot;
     return (hand?.players || []).reduce((s, p) => s + (p.totalBet || 0), 0);
   }, [pot, hand]);
 
+  const isTriple = (Number(hand?.bombBoards) >= 3) || (hand?.boardC && hand?.boardC.length > 0) || (Number(hand?.runTimes) >= 3);
+  const isMultipleBoards = Boolean(hand?.doubleBoard || isTriple || (Number(hand?.runTimes) >= 2));
+
+  const multipleBoardWinPct = useMemo(() => {
+    const cardsALen = (hand?.communityCards || []).filter((c) => !c.hidden).length;
+    const cardsBLen = (hand?.boardB || []).filter((c) => !c.hidden).length;
+    const cardsCLen = (hand?.boardC || []).filter((c) => !c.hidden).length;
+    const isMultiRun = Number(hand?.runTimes) >= 2;
+    const isTripleRun = Number(hand?.runTimes) >= 3;
+    const allComplete = isTripleRun
+      ? (cardsALen === 5 && cardsBLen === 5 && cardsCLen === 5)
+      : isMultiRun
+      ? (cardsALen === 5 && cardsBLen === 5)
+      : (cardsALen === 5);
+    if (!allComplete && hand?.phase !== 'awarded') {
+      return null;
+    }
+    return getMultipleBoardWinPercentages(hand, holeCards);
+  }, [hand, holeCards]);
+
   const computedEquity = useMemo(() => {
-    if (!isAllIn) return null;
+    if (!isAllIn && !actionEnded) return null;
+    if (multipleBoardWinPct) {
+      return { byId: multipleBoardWinPct, split: 0, isComplete: true };
+    }
     if (equity?.byId) return equity;
     if (!hand || !holeCards) return null;
     const holes = contestants.map((c) => holeCards[c.player.id]);
@@ -440,23 +500,113 @@ export default function AllInView({
     const variant = hand.variant || 'nlh';
     const iters = 5000;
     try {
-      const res = calcEquity(holes, hand.communityCards || [], iters, variant);
       const byId = {};
-      contestants.forEach((c, i) => {
-        byId[c.player.id] = res.results[i].win;
-      });
-      return { byId, split: res.split };
+      let split = 0;
+      if (isTriple) {
+        const resA = calcEquity(holes, hand.communityCards || [], iters, variant);
+        const resB = calcEquity(holes, hand.boardB || [], iters, variant);
+        const resC = calcEquity(holes, hand.boardC || [], iters, variant);
+        contestants.forEach((c, i) => {
+          byId[c.player.id] = (resA.results[i].win + resB.results[i].win + resC.results[i].win) / 3;
+        });
+        split = (resA.split + resB.split + resC.split) / 3;
+      } else if (isMultipleBoards) {
+        const resA = calcEquity(holes, hand.communityCards || [], iters, variant);
+        const resB = calcEquity(holes, hand.boardB || [], iters, variant);
+        contestants.forEach((c, i) => {
+          byId[c.player.id] = (resA.results[i].win + resB.results[i].win) / 2;
+        });
+        split = (resA.split + resB.split) / 2;
+      } else {
+        const res = calcEquity(holes, hand.communityCards || [], iters, variant);
+        contestants.forEach((c, i) => {
+          byId[c.player.id] = res.results[i].win;
+        });
+        split = res.split;
+      }
+      return { byId, split };
     } catch {
       return null;
     }
-  }, [equity, hand, holeCards, contestants, isAllIn]);
+  }, [equity, hand, holeCards, contestants, isAllIn, isTriple, isMultipleBoards, multipleBoardWinPct, actionEnded]);
+
+  const boardWinningsInfo = useMemo(() => {
+    if (!isMultipleBoards || !hand) {
+      return { playerWinnings: {}, totalAwardedSoFar: 0 };
+    }
+    const numBoards = isTriple ? 3 : 2;
+    const boardShare = totalPot / numBoards;
+    const eligiblePids = contestants.map((c) => c.player.id).filter((id) => holeCards[id] && holeCards[id].length > 0);
+    if (eligiblePids.length < 2) {
+      return { playerWinnings: {}, totalAwardedSoFar: 0 };
+    }
+
+    const cardsA = (hand.communityCards || []).filter((c) => c && !c.hidden);
+    const cardsB = (hand.boardB || []).filter((c) => c && !c.hidden);
+    const cardsC = (hand.boardC || []).filter((c) => c && !c.hidden);
+
+    const playerWinnings = {};
+    let totalAwardedSoFar = 0;
+    const variant = hand.variant || 'nlh';
+    const holeSize = effectiveHoleSize(hand);
+
+    // Board 1 / A
+    if (cardsA.length === 5) {
+      const winnersA = evaluateWinners(eligiblePids, holeCards, cardsA, variant, holeSize);
+      if (winnersA && winnersA.length > 0) {
+        const splitAmount = Math.round((boardShare / winnersA.length) * 100) / 100;
+        winnersA.forEach((wId) => {
+          playerWinnings[wId] = (playerWinnings[wId] || 0) + splitAmount;
+        });
+        totalAwardedSoFar += boardShare;
+      }
+    }
+
+    // Board 2 / B
+    if (cardsB.length === 5) {
+      const winnersB = evaluateWinners(eligiblePids, holeCards, cardsB, variant, holeSize);
+      if (winnersB && winnersB.length > 0) {
+        const splitAmount = Math.round((boardShare / winnersB.length) * 100) / 100;
+        winnersB.forEach((wId) => {
+          playerWinnings[wId] = (playerWinnings[wId] || 0) + splitAmount;
+        });
+        totalAwardedSoFar += boardShare;
+      }
+    }
+
+    // Board 3 / C
+    if (isTriple && cardsC.length === 5) {
+      const winnersC = evaluateWinners(eligiblePids, holeCards, cardsC, variant, holeSize);
+      if (winnersC && winnersC.length > 0) {
+        const splitAmount = Math.round((boardShare / winnersC.length) * 100) / 100;
+        winnersC.forEach((wId) => {
+          playerWinnings[wId] = (playerWinnings[wId] || 0) + splitAmount;
+        });
+        totalAwardedSoFar += boardShare;
+      }
+    }
+
+    return { playerWinnings, totalAwardedSoFar };
+  }, [isMultipleBoards, hand, totalPot, isTriple, contestants, holeCards]);
 
   const allInOuts = useMemo(() => {
-    if (!isAllIn) return [];
+    if (!isAllIn && !actionEnded) return [];
     return calculateAllInOuts(hand, holeCards);
-  }, [hand, holeCards, isAllIn]);
+  }, [hand, holeCards, isAllIn, actionEnded]);
 
-  const boardLen = (hand?.communityCards || []).filter((c) => c && !c.hidden).length;
+  const cardsALen = (hand?.communityCards || []).filter((c) => c && !c.hidden).length;
+  const cardsBLen = (hand?.boardB || []).filter((c) => c && !c.hidden).length;
+  const cardsCLen = (hand?.boardC || []).filter((c) => c && !c.hidden).length;
+
+  const activeBoardLen = (
+    cardsALen < 5
+      ? cardsALen
+      : isMultipleBoards && cardsBLen < 5
+      ? cardsBLen
+      : isTriple && cardsCLen < 5
+      ? cardsCLen
+      : 5
+  );
 
   const outsByPlayerId = useMemo(() => {
     const map = {};
@@ -503,8 +653,267 @@ export default function AllInView({
 
   const boardAnim = animateBoard(hand?.communityCards || []);
 
+  // Compute active board and previous completed boards for multi-board runout
+  const { currentActiveBoard, currentActiveName, previousCompletedBoards } = useMemo(() => {
+    if (!isMultipleBoards) {
+      return {
+        currentActiveBoard: hand?.communityCards || [],
+        currentActiveName: 'Board',
+        previousCompletedBoards: [],
+      };
+    }
+
+    const completed = [];
+    let active = hand?.communityCards || [];
+    let activeName = 'Board 1';
+
+    if (cardsALen === 5) {
+      completed.push({ id: 'a', name: 'Board 1', cards: (hand?.communityCards || []).slice(0, 5) });
+      active = hand?.boardB || [];
+      activeName = 'Board 2';
+
+      if (cardsBLen === 5 && isTriple) {
+        completed.push({ id: 'b', name: 'Board 2', cards: (hand?.boardB || []).slice(0, 5) });
+        active = hand?.boardC || [];
+        activeName = 'Board 3';
+      }
+    }
+
+    return {
+      currentActiveBoard: active,
+      currentActiveName: activeName,
+      previousCompletedBoards: completed,
+    };
+  }, [isMultipleBoards, hand, cardsALen, cardsBLen, isTriple]);
+
+  // Dynamic tag width based on number of hole cards so 4+ card games don't truncate names to ...
+  const maxHoleCards = useMemo(() => {
+    let max = effectiveHoleSize(hand);
+    (contestants || []).forEach((c) => {
+      const h = holeCards?.[c.player?.id];
+      if (Array.isArray(h) && h.length > max) {
+        max = h.length;
+      }
+    });
+    return max;
+  }, [hand, contestants, holeCards]);
+
+  const tagWidthClass = maxHoleCards >= 6
+    ? 'w-[430px]'
+    : maxHoleCards === 5
+    ? 'w-[370px]'
+    : maxHoleCards === 4
+    ? 'w-[325px]'
+    : 'w-[260px]';
+
+  // Render individual player tag
+  const renderPlayerTag = (item) => {
+    const p = item.player;
+    const eqVal = computedEquity?.byId?.[p.id];
+    const isAtRisk = item.isAtRisk;
+    const cards = sortHoleCards(holeCards[p.id] || []);
+    const isFolded = p.status === 'folded';
+    const isFadingFold = fadingFoldIds.has(p.id);
+    const isCollapsing = collapsingFoldIds.has(p.id);
+    const isNewlyEntered = newlyEnteredIds.has(p.id);
+    const isCurrentActor = hand?.currentPlayer >= 0 && hand?.players[hand.currentPlayer]?.id === p.id;
+    const isWinner = Boolean(
+      winningPlayerIds?.has?.(p.id) ||
+      hand?.winners?.some?.((w) => w.playerId === p.id)
+    );
+    const isSoleDeepest = hand ? hasSoleDeepestStack(hand, p.id) : false;
+
+    const toCall = isCurrentActor ? Math.max(0, (hand.currentBet || 0) - (p.currentBet || 0)) : 0;
+    const rawAction = isFadingFold ? 'Fold' : getPlayerLastActionText(p, cur, hand);
+    const wonAmount = boardWinningsInfo.playerWinnings[p.id];
+    const hasWonBoard = wonAmount != null && wonAmount > 0;
+    const winText = hasWonBoard ? `Win ${money(wonAmount, cur)}` : null;
+
+    let wonTotal = 0;
+    if (hand?.winners && hand.winners.length > 0) {
+      hand.winners.forEach((w) => {
+        if (w.playerId === p.id) {
+          wonTotal += Number(w.amount) || 0;
+        }
+      });
+    } else if (hasWonBoard) {
+      wonTotal = wonAmount || 0;
+    }
+    const playerProfit = wonTotal - (p.totalBet || 0);
+
+    const displayActionText = winText || ((actionEnded && isSoleDeepest)
+      ? ''
+      : isCurrentActor && toCall > 0
+      ? `${money(toCall, cur)} TO CALL`
+      : rawAction);
+
+    const otherContestants = contestants.filter((c) => c.player.status !== 'folded' && c.player.id !== p.id);
+    const othersZeroEq = otherContestants.length > 0 && otherContestants.every((o) => {
+      const oEq = computedEquity?.byId?.[o.player.id];
+      return oEq == null || oEq <= 0.05;
+    });
+    const isScoop = eqVal != null && eqVal >= 99.9;
+    const isSecured = isMultipleBoards
+      ? isScoop
+      : (isWinner || (eqVal != null && eqVal >= 99 && othersZeroEq) || isScoop);
+
+    return (
+      <div
+        key={p.id}
+        ref={(el) => {
+          if (el) tagDomRefs.current[p.id] = el;
+          else delete tagDomRefs.current[p.id];
+        }}
+        style={{
+          maxHeight: isCollapsing ? '0px' : '90px',
+          opacity: isCollapsing ? 0 : 1,
+          transform: isCollapsing ? 'scaleY(0)' : 'none',
+          transformOrigin: 'bottom center',
+          overflow: isCollapsing ? 'hidden' : 'visible',
+          transition: 'max-height 400ms cubic-bezier(0.4, 0, 0.2, 1), opacity 350ms ease, transform 350ms ease',
+          pointerEvents: isCollapsing ? 'none' : undefined,
+        }}
+        className={`${tagWidthClass} shrink-0 rounded-lg border overflow-hidden shadow-lg flex flex-col justify-between select-none relative transition-all duration-300 ${
+          isNewlyEntered ? 'animate-[slideInDown_300ms_cubic-bezier(0.16,1,0.3,1)]' : ''
+        } ${
+          isFadingFold
+            ? 'border-rose-900 bg-rose-950/40 opacity-50'
+            : isWinner || hasWonBoard
+            ? 'border-emerald-400 bg-emerald-950/60 ring-2 ring-emerald-400/80 shadow-[0_0_14px_rgba(52,211,153,0.35)]'
+            : isCurrentActor
+            ? 'border-amber-400 ring-2 ring-amber-400/80 shadow-[0_0_14px_rgba(245,158,11,0.4)]'
+            : isFolded
+            ? 'border-slate-800 bg-[#14171d]/60 opacity-40'
+            : isAtRisk
+            ? 'border-rose-500/80 bg-[#281c1c] shadow-[0_0_10px_rgba(244,63,94,0.25)]'
+            : 'border-slate-800 bg-black'
+        }`}
+      >
+        {/* TOP SECTION */}
+        <div
+          className={`px-2.5 py-1.5 flex items-center justify-between min-h-[46px] transition-colors ${
+            isCurrentActor
+              ? 'bg-gradient-to-r from-[#cfac3e] via-[#f3d058] to-[#cfac3e]'
+              : 'bg-black border-b border-zinc-800'
+          }`}
+        >
+          {/* Left: Player Name */}
+          <div className="flex items-center min-w-0 pr-1">
+            <span
+              className={`font-black uppercase text-sm tracking-wide truncate ${
+                isCurrentActor ? 'text-black' : 'text-white'
+              }`}
+              title={p.name}
+            >
+              {p.name}
+            </span>
+          </div>
+
+          {/* Center: Hole cards */}
+          {(isAllIn || actionEnded) && cards.length > 0 && (
+            <div className="flex items-center gap-1 px-1">
+              {cards.map((c, j) => (
+                <AllInHoleCard key={j} card={c} highlight={highlightKeys} animate={isAllIn || actionEnded} />
+              ))}
+            </div>
+          )}
+
+          {/* Right: Equity % & Position */}
+          <div className="flex flex-col items-end shrink-0 pl-1 leading-none z-10 gap-0.5">
+            {(isAllIn || actionEnded) && (
+              <span
+                className={`font-black tabular-nums text-xs sm:text-[13px] ${
+                  isCurrentActor ? 'text-black' : 'text-white'
+                }`}
+              >
+                {formatEquity(eqVal, isSecured, isMultipleBoards)}
+              </span>
+            )}
+            <span
+              className={`text-[10px] uppercase tracking-wider font-extrabold ${
+                isCurrentActor ? 'text-black' : 'text-slate-300'
+              }`}
+            >
+              {formatPosition(item.position)}
+            </span>
+          </div>
+        </div>
+
+        {/* BOTTOM BAR: Left stack, right action area */}
+        <div className="bg-black px-2.5 py-1 relative flex items-center justify-between border-t border-black min-h-[30px]">
+          <div className="text-[#f3d058] font-black tabular-nums text-xs tracking-tight shrink-0 z-10">
+            {stackShown(p) ? formatPlayerTagAmount(p.stack, cur, hand, false, activeUnit) : '—'}
+          </div>
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-10">
+            {(isWinner || hasWonBoard) && wonTotal > 0 ? (
+              <span className="tabular-nums font-black text-xs text-emerald-400 flex items-center gap-1 font-extrabold tracking-wide">
+                ✓ {money(playerProfit, cur)}
+              </span>
+            ) : (
+              <span
+                className={`tabular-nums font-black text-[10px] uppercase tracking-wide truncate ${
+                  hasWonBoard
+                    ? 'text-emerald-300 font-extrabold'
+                    : displayActionText.startsWith('All in') || displayActionText.startsWith('All-in') || displayActionText === 'ALL-IN'
+                    ? 'text-rose-400'
+                    : displayActionText.includes('TO CALL')
+                    ? 'text-cyan-300 animate-pulse'
+                    : displayActionText === 'Fold'
+                    ? 'text-slate-400'
+                    : 'text-white'
+                }`}
+              >
+                {displayActionText}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Render outs display block for a player (multi-row wrap, NO scrollbar)
+  const renderPlayerOuts = (item) => {
+    const p = item.player;
+    const myOuts = outsByPlayerId[p.id];
+
+    if (activeBoardLen < 3 || activeBoardLen >= 5) {
+      return null;
+    }
+
+    if (myOuts && myOuts.length > 0) {
+      return (
+        <div className="flex flex-col gap-1 max-w-[340px] items-start shrink-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-black text-amber-400 tabular-nums">
+              {myOuts.length} {myOuts.length === 1 ? 'OUT' : 'OUTS'}
+            </span>
+          </div>
+          {/* Multi-row wrap with NO scrollbar */}
+          <div className="flex flex-wrap gap-1 justify-start">
+            {myOuts.map((c, ci) => (
+              <AllInOutCard key={ci} card={c} />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  // Split into left and right sides when 5+ players
+  const isFiveOrMore = sortedContestants.length >= 5;
+  const splitIndex = isFiveOrMore ? Math.ceil(sortedContestants.length / 2) : sortedContestants.length;
+  const leftContestants = sortedContestants.slice(0, splitIndex);
+  const rightContestants = isFiveOrMore ? sortedContestants.slice(splitIndex) : [];
+
+  const hasAwarded = isMultipleBoards && boardWinningsInfo.totalAwardedSoFar > 0;
+  const remainingPot = Math.max(0, Math.round(totalPot - boardWinningsInfo.totalAwardedSoFar));
+  const displayPot = hasAwarded ? remainingPot : totalPot;
+
   return (
-    <div className="relative w-full min-h-[480px] rounded-[2rem] border-2 border-[#364536] bg-gradient-to-b from-[#14181e] via-[#111419] to-[#0c0f13] overflow-hidden p-4 flex flex-col justify-between shadow-2xl select-none">
+    <div className="relative w-full min-h-[500px] rounded-[2rem] border-2 border-[#364536] bg-gradient-to-b from-[#14181e] via-[#111419] to-[#0c0f13] overflow-hidden p-4 flex flex-col justify-between shadow-2xl select-none transition-all duration-700 ease-in-out">
       <div className="absolute inset-4 rounded-[1.6rem] border border-[#273229]/50 pointer-events-none bg-[#182318]/10" />
 
       {/* Top Bar */}
@@ -522,10 +931,10 @@ export default function AllInView({
           <span className="text-xs font-semibold text-slate-400">
             Street: <span className="text-emerald-400 font-bold">{STREET_LABEL[hand?.street] || 'Preflop'}</span>
           </span>
-          {computedEquity && computedEquity.split > 0 && (
+          {computedEquity && Number(computedEquity.split) > 0 && (
             <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/50 bg-amber-950/60 px-2 py-0.5 text-[10px] font-bold text-amber-300 ml-1">
               <span>Split:</span>
-              <span className="font-mono text-amber-200">{formatEquity(computedEquity.split)}</span>
+              <span className="tabular-nums text-amber-200">{formatEquity(computedEquity.split)}</span>
             </span>
           )}
         </div>
@@ -540,290 +949,231 @@ export default function AllInView({
         )}
       </div>
 
-      {/* Main Content */}
-      <div className="relative z-10 flex-1 flex flex-col md:flex-row gap-4 items-stretch mt-3 min-h-0">
-        {/* Left: Player tags stacked vertically from bottom-left up, with 6th+ in column 2 to the right */}
-        <div className="flex-1 flex flex-row items-end gap-5 overflow-x-auto overflow-y-hidden pb-1 min-h-[380px]">
-          {(() => {
-            const col1 = sortedContestants.slice(0, 5);
-            const col2 = sortedContestants.slice(5, 10);
-
-            const renderPlayerRow = (item) => {
-              const p = item.player;
-              const eqVal = computedEquity?.byId?.[p.id];
-              const isAtRisk = item.isAtRisk;
-              const cards = sortHoleCards(holeCards[p.id] || []);
-              const myOuts = outsByPlayerId[p.id];
-              const hasZeroOuts = myOuts && myOuts.length === 0;
-              const isFolded = p.status === 'folded';
-              const isFadingFold = fadingFoldIds.has(p.id);
-              const isCollapsing = collapsingFoldIds.has(p.id);
-              const isNewlyEntered = newlyEnteredIds.has(p.id);
-              const isCurrentActor = hand?.currentPlayer >= 0 && hand?.players[hand.currentPlayer]?.id === p.id;
-              const isWinner = Boolean(
-                winningPlayerIds?.has?.(p.id) ||
-                hand?.winners?.some?.((w) => w.playerId === p.id)
-              );
-              const actionEnded = hand ? (bettingFrozen(hand) || hand.currentPlayer === -1 || hand.phase === 'ended' || hand.phase === 'awarded') : false;
-              const isSoleDeepest = hand ? hasSoleDeepestStack(hand, p.id) : false;
-
-              // Calculate to call if current actor
-              const toCall = isCurrentActor ? Math.max(0, (hand.currentBet || 0) - (p.currentBet || 0)) : 0;
-              const rawAction = isFadingFold ? 'Fold' : getPlayerLastActionText(p, cur, hand);
-              const displayActionText = (actionEnded && isSoleDeepest)
-                ? ''
-                : isCurrentActor && toCall > 0
-                ? `${money(toCall, cur)} TO CALL`
-                : rawAction;
-
-              // Determine if player has secured the pot
-              const otherContestants = contestants.filter((c) => c.player.status !== 'folded' && c.player.id !== p.id);
-              const othersZeroEq = otherContestants.length > 0 && otherContestants.every((o) => {
-                const oEq = computedEquity?.byId?.[o.player.id];
-                return oEq == null || oEq <= 0.05;
-              });
-              const isSecured = isWinner || (eqVal != null && eqVal >= 99 && othersZeroEq) || (eqVal != null && eqVal >= 100);
-
-              return (
-                <div
-                  key={p.id}
-                  ref={(el) => {
-                    if (el) tagDomRefs.current[p.id] = el;
-                    else delete tagDomRefs.current[p.id];
-                  }}
-                  style={{
-                    maxHeight: isCollapsing ? '0px' : '90px',
-                    opacity: isCollapsing ? 0 : 1,
-                    transform: isCollapsing ? 'scaleY(0)' : 'none',
-                    transformOrigin: 'bottom center',
-                    overflow: isCollapsing ? 'hidden' : 'visible',
-                    transition: 'max-height 400ms cubic-bezier(0.4, 0, 0.2, 1), opacity 350ms ease, transform 350ms ease',
-                    marginBottom: isCollapsing ? '0px' : undefined,
-                    pointerEvents: isCollapsing ? 'none' : undefined,
-                  }}
-                  className={`flex items-center gap-2 ${isNewlyEntered ? 'animate-[slideInDown_300ms_cubic-bezier(0.16,1,0.3,1)]' : ''}`}
-                >
-                  {/* Compact Player Tag (Fixed broadcast width) */}
-                  <div
-                    className={`w-[260px] shrink-0 rounded-lg border overflow-hidden shadow-lg flex flex-col justify-between select-none relative transition-all duration-200 ${
-                      isFadingFold
-                        ? 'border-rose-900 bg-rose-950/40 opacity-50'
-                        : isWinner
-                        ? 'border-emerald-400 bg-emerald-950/60 ring-2 ring-emerald-400/80 shadow-[0_0_14px_rgba(52,211,153,0.35)]'
-                        : isCurrentActor
-                        ? 'border-amber-400 ring-2 ring-amber-400/80 shadow-[0_0_14px_rgba(245,158,11,0.4)]'
-                        : isFolded
-                        ? 'border-slate-800 bg-[#14171d]/60 opacity-40'
-                        : isAtRisk
-                        ? 'border-rose-500/80 bg-[#281c1c] shadow-[0_0_10px_rgba(244,63,94,0.25)]'
-                        : 'border-slate-800 bg-black'
-                    }`}
-                  >
-                    {/* TOP SECTION: Yellow only when active turn, otherwise solid black */}
-                    <div
-                      className={`px-2.5 py-1.5 flex items-center justify-between min-h-[46px] transition-colors ${
-                        isCurrentActor
-                          ? 'bg-gradient-to-r from-[#cfac3e] via-[#f3d058] to-[#cfac3e]'
-                          : 'bg-black border-b border-zinc-800'
-                      }`}
-                    >
-                      {/* Left: Player Name */}
-                      <div className="flex items-center gap-1.5 min-w-0 pr-1">
-                        <span
-                          className={`font-black uppercase text-sm tracking-wide truncate ${
-                            isCurrentActor ? 'text-black' : 'text-white'
-                          }`}
-                          title={p.name}
-                        >
-                          {p.name}
-                        </span>
-                        {isWinner && (
-                          <span
-                            className={`px-1 py-0.2 rounded text-[8px] font-black uppercase ${
-                              isCurrentActor ? 'bg-black text-amber-300' : 'bg-zinc-800 text-emerald-400 border border-zinc-700'
-                            }`}
-                          >
-                            WIN
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Center: Hole cards (ONLY shown if isAllIn) */}
-                      {isAllIn && cards.length > 0 && (
-                        <div className="flex items-center gap-1 px-1">
-                          {cards.map((c, j) => (
-                            <AllInHoleCard key={j} card={c} highlight={highlightKeys} animate={isAllIn} />
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Right: Equity % on top & Position on bottom */}
-                      <div className="flex flex-col items-end shrink-0 pl-1 leading-none z-10 gap-0.5">
-                        {isAllIn && (
-                          <span
-                            className={`font-black font-mono text-xs sm:text-[13px] ${
-                              isCurrentActor ? 'text-black' : 'text-white'
-                            }`}
-                          >
-                            {formatEquity(eqVal, isSecured)}
-                          </span>
-                        )}
-                        <span
-                          className={`text-[10px] uppercase tracking-wider font-extrabold ${
-                            isCurrentActor ? 'text-black' : 'text-slate-300'
-                          }`}
-                        >
-                          {formatPosition(item.position)}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* BOTTOM BLACK BAR: Left stack, centered action */}
-                    <div className="bg-black px-2.5 py-1 relative flex items-center justify-between border-t border-black min-h-[30px]">
-                      <div className="text-[#f3d058] font-black font-mono text-xs tracking-tight shrink-0 z-10">
-                        {stackShown(p) ? formatPlayerTagAmount(p.stack, cur, hand) : '—'}
-                      </div>
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-10">
-                        <span
-                          className={`font-mono font-black text-[10px] uppercase tracking-wide truncate ${
-                            displayActionText.startsWith('All in') || displayActionText.startsWith('All-in') || displayActionText === 'ALL-IN'
-                              ? 'text-rose-400'
-                              : displayActionText.includes('TO CALL')
-                              ? 'text-cyan-300 animate-pulse'
-                              : displayActionText === 'Fold'
-                              ? 'text-slate-400'
-                              : 'text-white'
-                          }`}
-                        >
-                          {displayActionText}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Outs next to tag */}
-                  {isAllIn && myOuts && myOuts.length > 0 && boardLen >= 3 && boardLen < 5 && (
-                    <div className="flex items-center gap-1.5 shrink-0 bg-[#161a22]/90 border border-slate-700/80 rounded-lg px-2 py-1 shadow-lg">
-                      <span className="text-[11px] font-black text-amber-400 font-mono tracking-tight shrink-0">
-                        {myOuts.length} {myOuts.length === 1 ? 'OUT' : 'OUTS'}
-                      </span>
-                      <div className="flex items-center gap-1 max-w-[130px] overflow-x-auto py-0.5">
-                        {myOuts.slice(0, 5).map((c, ci) => (
-                          <AllInOutCard key={ci} card={c} />
-                        ))}
-                        {myOuts.length > 5 && (
-                          <span className="text-[10px] text-slate-400 font-mono">+{myOuts.length - 5}</span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {isAllIn && hasZeroOuts && eqVal != null && eqVal <= 0 && (
-                    <div className="px-2 py-1 rounded bg-rose-950/80 border border-rose-600/70 text-rose-400 text-[10px] font-bold uppercase tracking-wider shrink-0 shadow">
-                      Drawing Dead
-                    </div>
-                  )}
+      {/* WHEN ACTION HAS ENDED: Redesigned Layout (Graphics slide to new position) */}
+      {actionEnded ? (
+        <div className="relative z-10 flex-1 flex flex-col justify-between mt-3 gap-4 min-h-0 transition-all duration-700 ease-in-out">
+          {/* TOP / MIDDLE SECTION: Player Tags and Outs Area */}
+          <div className="flex-1 flex flex-row items-stretch justify-between gap-6 overflow-x-auto py-1 min-h-[280px]">
+            {/* Left Side: Player Tags (or Left half if 5+) */}
+            <div className="flex flex-col justify-start gap-2.5 shrink-0">
+              {leftContestants.map((item) => (
+                <div key={item.player.id} className="flex items-center gap-3">
+                  {renderPlayerTag(item)}
+                  {renderPlayerOuts(item)}
                 </div>
-              );
-            };
+              ))}
+            </div>
 
-            return (
-              <>
-                {/* Column 1: players 1..5, flex-col-reverse puts item 0 at bottom-left */}
-                <div className="flex flex-col-reverse justify-start gap-2.5">
-                  {col1.map((item) => renderPlayerRow(item))}
-                </div>
-
-                {/* Column 2: players 6..10, flex-col-reverse puts item 5 at bottom right next to item 0 */}
-                {col2.length > 0 && (
-                  <div className="flex flex-col-reverse justify-start gap-2.5">
-                    {col2.map((item) => renderPlayerRow(item))}
+            {/* Right Side: Second half of Player Tags (when 5+) */}
+            {isFiveOrMore && (
+              <div className="flex flex-col justify-start gap-2.5 shrink-0">
+                {rightContestants.map((item) => (
+                  <div key={item.player.id} className="flex items-center gap-3">
+                    {renderPlayerTag(item)}
+                    {renderPlayerOuts(item)}
                   </div>
-                )}
-              </>
-            );
-          })()}
-        </div>
-
-        {/* Right: Board & Pot & Action Clock */}
-        <div className="flex flex-col justify-end items-end gap-3 shrink-0">
-          {clockSecondsLeft != null && (
-            <div className="flex items-center justify-between w-full min-w-[200px] rounded-xl border border-emerald-500/80 bg-[#161d26]/95 px-3.5 py-2 shadow-xl backdrop-blur-md animate-pulse">
-              <div className="flex items-center gap-2">
-                <Clock size={16} className={clockSecondsLeft > 10 ? 'text-emerald-400' : clockSecondsLeft > 5 ? 'text-amber-400' : 'text-rose-400'} />
-                <span className="text-xs text-slate-300 font-semibold truncate max-w-[120px]">
-                  {hand?.players?.[hand?.currentPlayer]?.name || 'Action'}
-                </span>
+                ))}
               </div>
-              <span className={`text-xl font-black font-mono tracking-tight ${clockSecondsLeft > 10 ? 'text-emerald-400' : clockSecondsLeft > 5 ? 'text-amber-400' : 'text-rose-400'}`}>
-                {clockSecondsLeft}s
+            )}
+          </div>
+
+          {/* BOTTOM BAR: Pot on Bottom-Left, Active Board Bottom-Center, Previous Boards on Right */}
+          <div className="w-full rounded-2xl border border-[#2b3748] bg-gradient-to-r from-[#111620] via-[#141b26] to-[#111620] p-3.5 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4 shrink-0 transition-all duration-700">
+            {/* Bottom-Left: Pot Size */}
+            <div className="flex flex-col items-start min-w-[180px] shrink-0">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                {hasAwarded ? 'Remaining Pot' : 'Total Pot'}
               </span>
-            </div>
-          )}
-          <div className="flex flex-col items-end gap-1.5">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Board</span>
-              <span className="text-[11px] font-bold text-emerald-400">
-                {STREET_LABEL[hand?.street] || 'Preflop'}
-              </span>
-            </div>
-            <div className="relative flex gap-1.5">
-              {animKey > 0 && (
-                <div
-                  key={`burn-${animKey}`}
-                  className="burn-card absolute -left-2 top-0 w-10 h-14 rounded-lg bg-[#3a4a3a] border border-[#4a5a4a] flex items-center justify-center pointer-events-none z-20 shadow-md"
-                >
-                  <span className="text-[#7fae7f] text-xs font-bold">?</span>
+              <div className="text-2xl sm:text-3xl font-black text-white tabular-nums tracking-tight drop-shadow">
+                {potShown ? formatPotAmount(displayPot, cur, hand, activeUnit) : '—'}
+              </div>
+              {hasAwarded && potShown && (
+                <div className="text-[10px] text-emerald-400 font-bold mt-0.5">
+                  Awarded: {formatPotAmount(boardWinningsInfo.totalAwardedSoFar, cur, hand, activeUnit)}
                 </div>
               )}
-              {[0, 1, 2, 3, 4].map((i) => {
-                const c = hand?.communityCards?.[i];
-                const cardKey = c && !c.hidden ? `${c.rank}${c.suit}-${i}` : `slot-${i}`;
-                return (
-                  <AllInBoardCard
-                    key={cardKey}
-                    card={c}
-                    highlight={highlightKeys}
-                    anim={boardAnim[i]?.anim}
-                    delay={boardAnim[i]?.delay}
-                    style={boardAnim[i]?.style}
-                  />
-                );
-              })}
+              {potShown && sidePots.length > 0 && (
+                <div className="text-[10px] text-amber-300 font-semibold mt-0.5">
+                  Side pots: {sidePots.map((sp) => formatSidePotAmount(sp.amount, cur, hand, activeUnit)).join(' / ')}
+                </div>
+              )}
             </div>
-            {hand?.doubleBoard && (
-              <div className="flex gap-1.5 mt-1">
+
+            {/* Bottom-Center: Active Board */}
+            <div className="flex flex-col items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  {currentActiveName}
+                </span>
+                <span className="text-[11px] font-black text-emerald-400 uppercase">
+                  {STREET_LABEL[hand?.street] || 'Preflop'}
+                </span>
+              </div>
+              <div className="relative flex gap-1.5 items-center justify-center">
+                {animKey > 0 && (
+                  <div
+                    key={`burn-${animKey}`}
+                    className="burn-card absolute -left-3 top-0 w-10 h-14 rounded-lg bg-[#3a4a3a] border border-[#4a5a4a] flex items-center justify-center pointer-events-none z-20 shadow-md"
+                  >
+                    <span className="text-[#7fae7f] text-xs font-bold">?</span>
+                  </div>
+                )}
                 {[0, 1, 2, 3, 4].map((i) => {
-                  const c = (hand?.boardB || [])[i];
-                  const cardKey = c && !c.hidden ? `b-${c.rank}${c.suit}-${i}` : `b-slot-${i}`;
+                  const c = currentActiveBoard?.[i];
+                  const cardKey = c && !c.hidden ? `${c.rank}${c.suit}-${i}` : `slot-${i}`;
                   return (
-                    <AllInBoardCard key={cardKey} card={c} highlight={highlightKeys} />
+                    <AllInBoardCard
+                      key={cardKey}
+                      card={c}
+                      highlight={highlightKeys}
+                      anim={boardAnim[i]?.anim}
+                      delay={boardAnim[i]?.delay}
+                      style={boardAnim[i]?.style}
+                    />
                   );
                 })}
               </div>
-            )}
-            {((Number(hand?.bombBoards) >= 3) || (hand?.boardC && hand?.boardC.length > 0) || (Number(hand?.runTimes) >= 3)) && (
-              <div className="flex gap-1.5 mt-1">
-                {[0, 1, 2, 3, 4].map((i) => {
-                  const c = (hand?.boardC || [])[i];
-                  const cardKey = c && !c.hidden ? `c-${c.rank}${c.suit}-${i}` : `c-slot-${i}`;
-                  return (
-                    <AllInBoardCard key={cardKey} card={c} highlight={highlightKeys} />
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col items-end rounded-xl border border-[#2a3442] bg-[#161d26]/95 px-4 py-2.5 shadow-xl min-w-[190px]">
-            <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Total Pot</div>
-            <div className="text-2xl font-black text-white font-mono drop-shadow">{potShown ? money(totalPot, cur) : '—'}</div>
-            {potShown && sidePots.length > 0 && (
-              <div className="text-[11px] text-amber-300 font-semibold mt-0.5">
-                Side pots: {sidePots.map((sp) => formatSidePotAmount(sp.amount, cur)).join(' / ')}
-              </div>
-            )}
+            </div>
+
+            {/* Bottom-Right: Saved Previous Completed Boards (when running multiple times) */}
+            <div className="flex items-center justify-end min-w-[180px] shrink-0">
+              {previousCompletedBoards.length > 0 ? (
+                <div className="flex flex-col gap-1.5 items-end">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                    Completed Boards
+                  </span>
+                  <div className="flex flex-col gap-1">
+                    {previousCompletedBoards.map((b) => (
+                      <div key={b.id} className="flex items-center gap-1.5 bg-[#171f2c] border border-slate-700/80 rounded-xl px-2 py-1 shadow-md">
+                        <span className="text-[10px] font-extrabold text-amber-300 uppercase shrink-0">
+                          {b.name}:
+                        </span>
+                        <div className="flex gap-1">
+                          {b.cards.map((c, ci) => (
+                            <AllInBoardCard key={ci} card={c} compact={true} />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-right">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Showdown</div>
+                  <div className="text-xs font-semibold text-slate-300">Action Complete</div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        /* WHEN ACTION IS STILL IN PROGRESS: Standard Layout */
+        <div className="relative z-10 flex-1 flex flex-col md:flex-row gap-4 items-stretch mt-3 min-h-0">
+          {/* Left: Player tags stacked vertically */}
+          <div className="flex-1 flex flex-row items-end gap-5 overflow-x-auto overflow-y-hidden pb-1 min-h-[380px]">
+            {(() => {
+              const col1 = sortedContestants.slice(0, 5);
+              const col2 = sortedContestants.slice(5, 10);
+
+              return (
+                <>
+                  <div className="flex flex-col-reverse justify-start gap-2.5">
+                    {col1.map((item) => (
+                      <div key={item.player.id} className="flex items-center gap-2">
+                        {renderPlayerTag(item)}
+                      </div>
+                    ))}
+                  </div>
+
+                  {col2.length > 0 && (
+                    <div className="flex flex-col-reverse justify-start gap-2.5">
+                      {col2.map((item) => (
+                        <div key={item.player.id} className="flex items-center gap-2">
+                          {renderPlayerTag(item)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+
+          {/* Right: Board & Pot & Action Clock */}
+          <div className="flex flex-col justify-end items-end gap-3 shrink-0">
+            {clockSecondsLeft != null && (
+              <div className="flex items-center justify-between w-full min-w-[200px] rounded-xl border border-emerald-500/80 bg-[#161d26]/95 px-3.5 py-2 shadow-xl backdrop-blur-md animate-pulse">
+                <div className="flex items-center gap-2">
+                  <Clock size={16} className={clockSecondsLeft > 10 ? 'text-emerald-400' : clockSecondsLeft > 5 ? 'text-amber-400' : 'text-rose-400'} />
+                  <span className="text-xs text-slate-300 font-semibold truncate max-w-[120px]">
+                    {hand?.players?.[hand?.currentPlayer]?.name || 'Action'}
+                  </span>
+                </div>
+                <span className={`text-xl font-black tabular-nums tracking-tight ${clockSecondsLeft > 10 ? 'text-emerald-400' : clockSecondsLeft > 5 ? 'text-amber-400' : 'text-rose-400'}`}>
+                  {clockSecondsLeft}s
+                </span>
+              </div>
+            )}
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Board</span>
+                <span className="text-[11px] font-bold text-emerald-400">
+                  {STREET_LABEL[hand?.street] || 'Preflop'}
+                </span>
+              </div>
+              <div className="relative flex gap-1.5">
+                {animKey > 0 && (
+                  <div
+                    key={`burn-${animKey}`}
+                    className="burn-card absolute -left-2 top-0 w-10 h-14 rounded-lg bg-[#3a4a3a] border border-[#4a5a4a] flex items-center justify-center pointer-events-none z-20 shadow-md"
+                  >
+                    <span className="text-[#7fae7f] text-xs font-bold">?</span>
+                  </div>
+                )}
+                {[0, 1, 2, 3, 4].map((i) => {
+                  const c = hand?.communityCards?.[i];
+                  const cardKey = c && !c.hidden ? `${c.rank}${c.suit}-${i}` : `slot-${i}`;
+                  return (
+                    <AllInBoardCard
+                      key={cardKey}
+                      card={c}
+                      highlight={highlightKeys}
+                      anim={boardAnim[i]?.anim}
+                      delay={boardAnim[i]?.delay}
+                      style={boardAnim[i]?.style}
+                    />
+                  );
+                })}
+              </div>
+              {hand?.doubleBoard && (
+                <div className="flex gap-1.5 mt-1">
+                  {[0, 1, 2, 3, 4].map((i) => {
+                    const c = (hand?.boardB || [])[i];
+                    const cardKey = c && !c.hidden ? `b-${c.rank}${c.suit}-${i}` : `b-slot-${i}`;
+                    return (
+                      <AllInBoardCard key={cardKey} card={c} highlight={highlightKeys} />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col items-end rounded-xl border border-[#2a3442] bg-[#161d26]/95 px-4 py-2.5 shadow-xl min-w-[190px]">
+              <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                Total Pot
+              </div>
+              <div className="text-2xl font-black text-white tabular-nums drop-shadow">
+                {potShown ? formatPotAmount(displayPot, cur, hand, activeUnit) : '—'}
+              </div>
+              {potShown && sidePots.length > 0 && (
+                <div className="text-[11px] text-amber-300 font-semibold mt-0.5">
+                  Side pots: {sidePots.map((sp) => formatSidePotAmount(sp.amount, cur, hand, activeUnit)).join(' / ')}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

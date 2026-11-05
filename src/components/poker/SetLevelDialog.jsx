@@ -8,7 +8,22 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
   let levelCount = 0;
   schedule.forEach((item, i) => {
     if (item.type === 'break') {
-      segments.push({ idx: i, kind: 'break', label: `Break after level ${levelCount}`, minutes: item.minutes || 10, race: item.race });
+      const isCol = Boolean(item.isColorUp || (item.race && (item.race.retired || item.race.replacement)));
+      segments.push({
+        idx: i,
+        kind: isCol ? 'color_up' : 'break',
+        label: isCol ? `Color Up after level ${levelCount}` : `Break after level ${levelCount}`,
+        minutes: item.minutes || (isCol ? 2 : 10),
+        race: item.race,
+      });
+    } else if (item.type === 'color_up') {
+      segments.push({
+        idx: i,
+        kind: 'color_up',
+        label: `Color Up after level ${levelCount}`,
+        minutes: item.minutes || 2,
+        race: item.race,
+      });
     } else {
       levelCount++;
       segments.push({
@@ -30,8 +45,8 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
   const [minutesRemaining, setMinutesRemaining] = useState('');
   const selected = segments.find((s) => String(s.idx) === segIdx);
   const fullMinutes = selected
-    ? selected.kind === 'break'
-      ? Number(selected.minutes) || 10
+    ? (selected.kind === 'break' || selected.kind === 'color_up')
+      ? Number(selected.minutes) || (selected.kind === 'color_up' ? 2 : 10)
       : (Number(selected.minutes) > 0 ? Number(selected.minutes) : Number(cfg.value) || 20)
     : 20;
 
@@ -43,7 +58,7 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
     const out = [];
     for (let i = from + 1; i < to; i++) {
       const item = schedule[i];
-      if (item?.type === 'break' && item.race && Number(item.race.retired) > 0 && Number(item.race.replacement) > 0) {
+      if ((item?.type === 'break' || item?.type === 'color_up') && item.race && Number(item.race.retired) > 0 && Number(item.race.replacement) > 0) {
         out.push({ tLevel: i, retired: Number(item.race.retired), replacement: Number(item.race.replacement) });
       }
     }
@@ -55,10 +70,10 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
       <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-[#2a2f37] bg-[#1e2227] p-6 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-white">Set level & time</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={18} /></button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer"><X size={18} /></button>
         </div>
-        <div className="text-xs text-slate-500 mb-2">Jump the tournament to any level or break in the schedule.</div>
-        <label className="text-xs text-slate-400 block mb-1">Level / break</label>
+        <div className="text-xs text-slate-500 mb-2">Jump the tournament to any level, break, or color up in the schedule.</div>
+        <label className="text-xs text-slate-400 block mb-1">Level / break / color up</label>
         <select
           value={segIdx}
           onChange={(e) => setSegIdx(e.target.value)}
@@ -67,7 +82,11 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
           {segments.map((s) => (
             <option key={s.idx} value={String(s.idx)}>
               {s.label}
-              {s.kind === 'level' ? ` — ${formatKM(s.smallBlind)}/${formatKM(s.bigBlind)}` : ` — ${s.minutes} min`}
+              {s.kind === 'level'
+                ? ` — ${formatKM(s.smallBlind)}/${formatKM(s.bigBlind)}`
+                : s.kind === 'color_up'
+                ? ` — Color Up (${s.minutes} min${s.race ? ` ${formatKM(s.race.retired)}→${formatKM(s.race.replacement)}` : ''})`
+                : ` — ${s.minutes} min`}
             </option>
           ))}
         </select>
@@ -94,6 +113,15 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
           <div className="rounded-lg bg-[#15181d] border border-[#2a2f37] p-3 mb-4 text-sm text-slate-300">
             {selected.kind === 'break' ? (
               <div>This will start a {selected.minutes}-minute break.</div>
+            ) : selected.kind === 'color_up' ? (
+              <div>
+                <div>This will start a {selected.minutes}-minute Color Up break.</div>
+                {selected.race && (
+                  <div className="text-xs text-amber-300/80 mt-1">
+                    Chip race: {formatKM(selected.race.retired)} chips colored up to {formatKM(selected.race.replacement)}.
+                  </div>
+                )}
+              </div>
             ) : (
               <div>
                 <div>Blinds: {formatKM(selected.smallBlind)} / {formatKM(selected.bigBlind)}</div>
@@ -129,13 +157,19 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
             } else {
               levelStartEpoch = Date.now();
             }
+            let nextPlayable = selected.kind === 'level' ? tLevel : tLevel + 1;
+            while (nextPlayable < schedule.length && (schedule[nextPlayable]?.type === 'break' || schedule[nextPlayable]?.type === 'color_up')) {
+              nextPlayable++;
+            }
             onApply({
               tLevel,
-              inBreak: selected.kind === 'break',
+              inBreak: selected.kind === 'break' || selected.kind === 'color_up',
+              isColorUp: selected.kind === 'color_up',
               levelStartEpoch,
               levelHandsCompleted: 0,
-              pendingLevelIdx: selected.kind === 'level' ? tLevel : tLevel + 1,
+              pendingLevelIdx: nextPlayable,
               missedRaces,
+              pendingRace: selected.kind === 'color_up' && selected.race ? { ...selected.race, tLevel } : undefined,
             });
             onClose();
           }}

@@ -4,8 +4,11 @@ import { subscribeLive, readLive } from '@/lib/liveSync';
 import { db } from '@/api/base44Client';
 import {
   money,
+  formatPotAmount,
   formatBlinds,
   formatPlayerTagAmount,
+  formatBetAmount,
+  raiseLabel,
   VARIANTS,
   GAME_TYPES,
   STREET_LABEL,
@@ -16,10 +19,49 @@ import {
   isAllInShowdown,
   positionForSeat,
 } from '@/lib/poker';
-import { Eye } from 'lucide-react';
+import { levelTimerState, formatTimer, formatTimerLabel } from '@/lib/levelTimer';
+import { Eye, Clock } from 'lucide-react';
 import AllInView from '@/components/poker/AllInView';
 import TournamentClockView from '@/components/poker/TournamentClockView';
 import { useMTT } from '@/lib/mttStore';
+
+function getSpectatorAction(p, isTurn, hand, cur, activeUnit = 'chips') {
+  if (p.status === 'folded') {
+    return { text: 'FOLD', cls: 'bg-slate-900 border border-slate-700 text-slate-400' };
+  }
+  if (p.status === 'allin' || p.stack <= 0) {
+    const amt = p.lastAction?.amount || p.currentBet || p.totalBet;
+    return {
+      text: amt ? `ALL-IN ${formatBetAmount(amt, cur, hand, activeUnit)}` : 'ALL-IN',
+      cls: 'bg-rose-950 border border-rose-500 text-rose-300 animate-pulse',
+    };
+  }
+  if (isTurn) {
+    const toCall = Math.max(0, (hand.currentBet || 0) - (p.currentBet || 0));
+    return {
+      text: toCall > 0 ? `${formatBetAmount(toCall, cur, hand, activeUnit)} TO CALL` : 'TO ACT',
+      cls: 'bg-amber-950 border border-amber-500 text-amber-300 animate-pulse',
+    };
+  }
+  const la = p.lastAction;
+  if (la) {
+    if (la.type === 'check') return { text: 'CHECK', cls: 'bg-slate-800 text-slate-300' };
+    if (la.type === 'fold') return { text: 'FOLD', cls: 'bg-slate-900 border border-slate-700 text-slate-400' };
+    if (la.type === 'call') return { text: `CALL ${formatBetAmount(la.callAmount != null ? la.callAmount : la.amount, cur, hand, activeUnit)}`, cls: 'bg-emerald-950/80 border border-emerald-600 text-emerald-300 font-bold' };
+    if (la.type === 'bet' || la.type === 'raise') {
+      const lbl = la.raiseLevel === 2 ? 'RAISE' : la.raiseLevel > 2 ? `${la.raiseLevel}-BET` : 'BET';
+      return { text: `${lbl} ${formatBetAmount(la.amount, cur, hand, activeUnit)}`, cls: 'bg-amber-950/80 border border-amber-500 text-amber-300 font-black' };
+    }
+    if (la.type === '3b' || la.type === '4b') {
+      return { text: `${la.type.toUpperCase()} ${formatBetAmount(la.amount, cur, hand, activeUnit)}`, cls: 'bg-amber-950/80 border border-amber-500 text-amber-300 font-black' };
+    }
+    if (la.type === 'sb') return { text: `SB ${formatBetAmount(la.amount, cur, hand, activeUnit)}`, cls: 'bg-slate-800 text-slate-300' };
+    if (la.type === 'bb') return { text: `BB ${formatBetAmount(la.amount, cur, hand, activeUnit)}`, cls: 'bg-slate-800 text-slate-300' };
+    if (la.type === 'straddle') return { text: `STRADDLE ${formatBetAmount(la.amount, cur, hand, activeUnit)}`, cls: 'bg-purple-950 border border-purple-500 text-purple-300 font-bold' };
+    if (la.type === 'kill') return { text: `KILL ${formatBetAmount(la.amount, cur, hand, activeUnit)}`, cls: 'bg-rose-950 border border-rose-500 text-rose-300 font-bold' };
+  }
+  return null;
+}
 
 function SpectatorCard({ card }) {
   if (!card) return <div className="w-10 h-14 sm:w-12 sm:h-16 rounded-md border border-dashed border-slate-700" />;
@@ -44,6 +86,12 @@ export default function Spectator() {
   const [liveState, setLiveState] = useState(() => readLive());
   const localMTT = useMTT();
   const [loading, setLoading] = useState(!liveState);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // Subscribe to BroadcastChannel / local storage
   useEffect(() => {
@@ -98,6 +146,8 @@ export default function Spectator() {
   const holeCards = liveState?.holeCards || liveState?._holeCards || {};
   const equity = liveState?.equity || null;
 
+  const timerState = isTournament && hand ? levelTimerState(hand, now) : null;
+
   // Detect all-in situation reliably so spectator view ALWAYS switches to all in view
   const inAllIn = Boolean(
     hand && (
@@ -116,10 +166,10 @@ export default function Spectator() {
     return hand.players.map((p, originalIdx) => {
       const offset = (originalIdx - buttonIdx + n) % n;
       const posRank = offset === 0 ? n : offset; // 1: SB, 2: BB, ..., n: BTN
-      const posLabel = positionForSeat(n, buttonIdx, originalIdx) || '';
+      const posLabel = positionForSeat(n, buttonIdx, originalIdx, hand?.variant) || '';
       return { p, originalIdx, posRank, posLabel };
     }).sort((a, b) => a.posRank - b.posRank);
-  }, [hand?.players, buttonIdx, n]);
+  }, [hand?.players, hand?.variant, buttonIdx, n]);
 
   if (loading && !hand) {
     return (
@@ -146,7 +196,7 @@ export default function Spectator() {
     return (
       <div className="min-h-screen bg-[#121417] text-white p-3 sm:p-6 max-w-6xl mx-auto space-y-4">
         {/* Top Banner */}
-        <div className="flex items-center justify-between border-b border-[#2a2f37] pb-3">
+        <div className="flex items-center justify-between border-b border-[#2a2f37] pb-3 flex-wrap gap-2">
           <div>
             <span className="text-xs uppercase tracking-wider text-emerald-400 font-bold block">
               Spectator View
@@ -155,6 +205,20 @@ export default function Spectator() {
               Hand #{hand.handNumber} · {VARIANTS[hand.variant]?.label || "Hold'em"}
             </h1>
           </div>
+          {timerState && timerState.active && (
+            <div className="flex items-center gap-2 bg-[#1b222d] border border-emerald-500/40 rounded-xl px-3 py-1.5 shadow">
+              <Clock size={16} className="text-emerald-400" />
+              <div className="text-left">
+                <div className="text-[11px] font-bold text-slate-300 leading-tight">
+                  {formatTimerLabel(timerState)}
+                </div>
+                <div className="text-sm font-black font-mono text-emerald-300 leading-tight">
+                  {formatTimer(timerState.timeRemainingMs)}
+                  {timerState.paused && <span className="ml-1 text-[10px] text-amber-400 font-sans font-bold">(PAUSED)</span>}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="text-right text-xs text-slate-400">
             <div>{hand.bombPot ? formatBlinds(hand) : `Blinds: ${formatBlinds(hand)}`}</div>
           </div>
@@ -164,7 +228,7 @@ export default function Spectator() {
           hand={hand}
           holeCards={holeCards}
           equity={equity}
-          hideAmounts={hideAmounts}
+          hideAmounts={false}
           pot={potTotal}
         />
 
@@ -201,7 +265,7 @@ export default function Spectator() {
   return (
     <div className="min-h-screen bg-[#121417] text-white p-3 sm:p-6 max-w-6xl mx-auto space-y-4">
       {/* Top Banner */}
-      <div className="flex items-center justify-between border-b border-[#2a2f37] pb-3">
+      <div className="flex items-center justify-between border-b border-[#2a2f37] pb-3 flex-wrap gap-2">
         <div>
           <span className="text-xs uppercase tracking-wider text-emerald-400 font-bold block">
             Spectator View
@@ -210,6 +274,20 @@ export default function Spectator() {
             Hand #{hand.handNumber} · {VARIANTS[hand.variant]?.label || "Hold'em"}
           </h1>
         </div>
+        {timerState && timerState.active && (
+          <div className="flex items-center gap-2 bg-[#1b222d] border border-emerald-500/40 rounded-xl px-3 py-1.5 shadow">
+            <Clock size={16} className="text-emerald-400" />
+            <div className="text-left">
+              <div className="text-[11px] font-bold text-slate-300 leading-tight">
+                {formatTimerLabel(timerState)}
+              </div>
+              <div className="text-sm font-black font-mono text-emerald-300 leading-tight">
+                {formatTimer(timerState.timeRemainingMs)}
+                {timerState.paused && <span className="ml-1 text-[10px] text-amber-400 font-sans font-bold">(PAUSED)</span>}
+              </div>
+            </div>
+          </div>
+        )}
         <div className="text-right text-xs text-slate-400">
           <div>{hand.bombPot ? formatBlinds(hand) : `Blinds: ${formatBlinds(hand)}`}</div>
         </div>
@@ -222,7 +300,7 @@ export default function Spectator() {
           <div>
             <span className="text-xs uppercase text-slate-400 tracking-wider">Pot Size</span>
             <div className="text-4xl sm:text-5xl font-extrabold text-white mt-0.5">
-              {hideAmounts ? '—' : money(potTotal, cur)}
+              {formatPotAmount(potTotal, cur)}
             </div>
             <div className="text-xs sm:text-sm text-emerald-300 font-medium mt-1">
               Street: {STREET_LABEL[hand.street] || 'Preflop'}
@@ -265,12 +343,12 @@ export default function Spectator() {
                 const isTurn = hand.currentPlayer === originalIdx;
                 const isFolded = p.status === 'folded';
                 const isAllInPlayer = p.status === 'allin';
-                const isBtn = originalIdx === buttonIdx;
+                const action = getSpectatorAction(p, isTurn, hand, cur);
 
                 return (
                   <div
                     key={p.id}
-                    className={`p-2.5 rounded-lg border text-sm flex items-center justify-between transition-colors ${
+                    className={`p-2.5 rounded-lg border text-sm flex items-center justify-between transition-colors gap-2 ${
                       isTurn
                         ? 'bg-[#293628] border-emerald-400 shadow-md ring-1 ring-emerald-400/50'
                         : isAllInPlayer
@@ -280,22 +358,27 @@ export default function Spectator() {
                         : 'bg-[#15181d] border-[#2a2f37]'
                     }`}
                   >
-                    <div className="truncate mr-2 flex items-center gap-2">
+                    <div className="truncate flex items-center gap-2 min-w-0">
                       <span className="px-1.5 py-0.5 rounded bg-black/60 text-[10px] font-bold text-slate-300 uppercase shrink-0">
                         {posLabel || '—'}
                       </span>
-                      <div className="truncate">
-                        <div className="font-semibold text-white truncate flex items-center gap-1">
-                          {isBtn && <span className="bg-white text-black text-[9px] font-bold px-1 rounded">D</span>}
-                          {p.name}
-                        </div>
-                        <div className="text-[10px] text-slate-400">
-                          {isAllInPlayer ? 'ALL-IN' : isFolded ? 'Folded' : p.lastAction?.type || 'In hand'}
-                        </div>
-                      </div>
+                      <span className="font-semibold text-white truncate">
+                        {p.name}
+                      </span>
                     </div>
-                    <div className="font-mono font-bold text-emerald-400 text-right whitespace-nowrap">
-                      {hideAmounts ? '—' : formatPlayerTagAmount(p.stack, stackCurrency, hand)}
+
+                    {/* Middle: Action Badge with amount */}
+                    <div className="shrink-0 px-1">
+                      {action && (
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase shrink-0 ${action.cls}`}>
+                          {action.text}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Right: Stack Size */}
+                    <div className="font-mono font-bold text-emerald-400 text-right whitespace-nowrap shrink-0">
+                      {formatPlayerTagAmount(p.stack, stackCurrency, hand, !isTournament)}
                     </div>
                   </div>
                 );

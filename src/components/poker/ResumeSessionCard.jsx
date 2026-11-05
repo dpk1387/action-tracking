@@ -1,12 +1,13 @@
 import React from 'react';
 import { Play, Plus, Clock, Users } from 'lucide-react';
-import { money, VARIANTS } from '@/lib/poker';
+import { money, VARIANTS, formatSessionName } from '@/lib/poker';
 
 export default function ResumeSessionCard({ saved, updatedAt, onResume, onNew }) {
   const hand = saved?.hand;
   if (!hand) return null;
-  const variant = hand.variant || 'nlh';
+  const isTD = !!saved?.director || !!saved?.isDirector;
   const players = (hand.players || []).map((p) => p.name);
+  const playerText = isTD && players.length > 10 ? `${players.length} players` : (players.join(', ') || 'No players');
 
   return (
     <div className="w-full max-w-md rounded-2xl border border-[#4a5a4a] bg-[#1e2227] p-6 shadow-2xl">
@@ -15,7 +16,7 @@ export default function ResumeSessionCard({ saved, updatedAt, onResume, onNew })
         <span className="text-sm font-semibold uppercase tracking-wide">Saved session in progress</span>
       </div>
       <h2 className="text-xl font-semibold text-white mb-1">
-        {VARIANTS[variant]?.label || "Hold'em"} – Hand #{hand.handNumber}
+        {formatSessionName(hand)}
       </h2>
       <div className="text-sm text-slate-400 mb-1">
         {hand.mode === 'cash' ? 'Cash game' : 'Tournament'} – Blinds {money(hand.smallBlind, hand.currency)} / {money(hand.bigBlind, hand.currency)}
@@ -25,7 +26,7 @@ export default function ResumeSessionCard({ saved, updatedAt, onResume, onNew })
       )}
       <div className="flex items-start gap-2 text-sm text-slate-300 mb-5">
         <Users size={16} className="mt-0.5 text-slate-500" />
-        <span>{players.join(', ') || 'No players'}</span>
+        <span>{playerText}</span>
       </div>
       <div className="flex flex-col gap-2">
         <button onClick={onResume} className="w-full rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm py-2.5 flex items-center justify-center gap-2 cursor-pointer">

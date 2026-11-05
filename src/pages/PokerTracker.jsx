@@ -23,7 +23,10 @@ import BreakDialog from '@/components/poker/BreakDialog';
 import GameOverScreen from '@/components/poker/GameOverScreen';
 import SetLevelDialog from '@/components/poker/SetLevelDialog';
 import BombPotDialog from '@/components/poker/BombPotDialog';
-import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, Clock, UserPlus } from 'lucide-react';
+import CompactModeView from '@/components/poker/CompactModeView';
+import TemporaryGameModal from '@/components/poker/TemporaryGameModal';
+import { findPlanForHand } from '@/lib/tempGameScheduler';
+import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, Clock, UserPlus, Minimize2, Maximize2, Zap } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { sessionStore } from '@/lib/sessionStore';
 import { useAuth } from '@/lib/AuthContext';
@@ -34,7 +37,7 @@ import {
 } from '@/lib/liveSync';
 import {
   startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots,
-  positionForSeat, getButtonIndex, money, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone, calcAnteForType,
+  positionForSeat, getButtonIndex, money, formatPotAmount, formatPotOutcome, formatSessionName, getMultipleBoardWinPercentages, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone, calcAnteForType,
 } from '@/lib/poker';
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
@@ -58,10 +61,18 @@ export default function PokerTracker() {
   const [showReentry, setShowReentry] = useState(false);
   const [showLateEntry, setShowLateEntry] = useState(false);
   const [showBombPotModal, setShowBombPotModal] = useState(false);
+  const [showTempGameModal, setShowTempGameModal] = useState(false);
   const [runTimesInput, setRunTimesInput] = useState('2');
   const [runTimesApplied, setRunTimesApplied] = useState(1);
   const [freezeStacks, setFreezeStacks] = useState(true);
   const [frozenStacks, setFrozenStacks] = useState({});
+  const [displayUnit, setDisplayUnit] = useState(() => {
+    try {
+      return localStorage.getItem('poker_display_unit') || 'chips';
+    } catch (_) {
+      return 'chips';
+    }
+  });
   const [discards, setDiscards] = useState({});
   const [actionError, setActionError] = useState('');
   const [showShare, setShowShare] = useState(false);
@@ -77,6 +88,27 @@ export default function PokerTracker() {
   const [showSetLevel, setShowSetLevel] = useState(false);
   const [bonusApplied, setBonusApplied] = useState(false);
   const [sevenTwoFoldWinner, setSevenTwoFoldWinner] = useState(null);
+
+  // Compact Mode state (auto-enabled on small screens, persists preference)
+  const [isCompactMode, setIsCompactMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('poker_compact_mode');
+      if (saved !== null) return saved === 'true';
+    } catch (_) {}
+    return typeof window !== 'undefined' && window.innerWidth < 768;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('poker_compact_mode', String(isCompactMode));
+    } catch (_) {}
+  }, [isCompactMode]);
+
+  useEffect(() => {
+    if (hand) {
+      document.title = `${formatSessionName(hand)} | Poker Action Tracker`;
+    }
+  }, [hand?.variant, hand?.bombPot, hand?.handNumber]);
 
   // Action Clock System
   const [shotClockEnabled, setShotClockEnabled] = useState(true);
@@ -237,7 +269,15 @@ export default function PokerTracker() {
   const { isAuthenticated } = useAuth();
   const saveStatus = useSyncExternalStore(subscribeSaveStatus, getSaveStatus, getSaveStatus);
 
-  useEffect(() => { sessionStore.set({ config, hand, gameOver, hideAmounts }); }, [config, hand, gameOver, hideAmounts]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('poker_display_unit', displayUnit);
+    } catch (_) {}
+  }, [displayUnit]);
+
+  useEffect(() => {
+    sessionStore.set({ config, hand, gameOver, hideAmounts, displayUnit });
+  }, [config, hand, gameOver, hideAmounts, displayUnit]);
 
   useEffect(() => {
     if (!hand || hand.mode !== 'tournament') return;
@@ -251,8 +291,9 @@ export default function PokerTracker() {
   }, [hand]);
 
   useEffect(() => {
-    if (!hand || !hand.inBreak || !hand.pendingRace) return;
-    if (hand.phase !== 'awarded') return;
+    if (!hand || !hand.pendingRace) return;
+    const isIdle = !hand.actionHistory || hand.actionHistory.length === 0;
+    if (hand.phase !== 'awarded' && !isIdle) return;
     const rc = hand.pendingRace;
     const key = `${rc.tLevel}:${rc.retired}-${rc.replacement}`;
     if (offeredRaceRef.current === key) return;
@@ -327,6 +368,8 @@ export default function PokerTracker() {
       currency: h.currency,
       communityCards: h.communityCards,
       actions: h.actionHistory,
+      actionHistory: h.actionHistory,
+      holeCards: { ...holeCards },
       pots: h.pots,
       winners: h.winners,
       notes: h.sideNotes || [],
@@ -339,16 +382,40 @@ export default function PokerTracker() {
         seat: p.seat,
         initialStack: p.initialStack,
         stack: p.stack,
-        position: positionForSeat(h.players.length, bi, i),
+        position: positionForSeat(h.players.length, bi, i, h.variant),
       })),
     });
   };
+
+  const setupInitial = useMemo(() => {
+    if (!hand) return config;
+    return {
+      ...config,
+      ...hand,
+      isMidGame: true,
+      variant: hand.variant || config?.variant,
+      gameType: hand.gameType || config?.gameType,
+      smallBlind: hand.smallBlind ?? config?.smallBlind,
+      bigBlind: hand.bigBlind ?? config?.bigBlind,
+      anteAmount: hand.anteAmount ?? config?.anteAmount,
+      anteType: hand.anteType || config?.anteType,
+      doubleBoard: hand.doubleBoard ?? config?.doubleBoard,
+      bombPot: hand.bombPot ?? config?.bombPot,
+      bombAmount: hand.bombAmount ?? config?.bombAmount,
+      players: (hand.players || []).map((p) => ({
+        seat: p.seat,
+        name: p.name,
+        stack: p.stack, // MID-GAME ONLY: prefill with player's current stack size
+        occupied: p.status !== 'eliminated' && p.status !== 'out',
+      })),
+    };
+  }, [hand, config]);
 
   const positions = (h) => {
     if (!h) return [];
     const n = h.players.length;
     const bi = getButtonIndex(h);
-    return h.players.map((_, i) => positionForSeat(n, bi, i));
+    return h.players.map((_, i) => positionForSeat(n, bi, i, h.variant));
   };
 
   const resetHoleCards = () => { setHoleCards({}); setEquity(null); };
@@ -364,11 +431,11 @@ export default function PokerTracker() {
           id: idx,
           name: cp.name || (existing ? existing.name : `Player ${cp.seat}`),
           seat: cp.seat,
-          initialStack: cp.stack,
+          initialStack: existing?.initialStack != null ? existing.initialStack : cp.stack,
           stack: cp.stack,
           currentBet: existing?.currentBet || 0,
           totalBet: existing?.totalBet || 0,
-          status: existing?.status || 'active',
+          status: cp.stack > 0 ? (existing?.status === 'folded' ? 'folded' : 'active') : 'busted',
           lastAction: existing?.lastAction || null,
           timeBanks: existing?.timeBanks != null ? existing.timeBanks : (cfg.clockConfig?.initialTimeBanks ?? 3),
           usedBanks: existing?.usedBanks || 0,
@@ -390,15 +457,18 @@ export default function PokerTracker() {
           gameType: cfg.gameType || prev.gameType,
           mode: cfg.mode || prev.mode,
           variant: cfg.variant || prev.variant,
+          baseVariant: cfg.variant || prev.baseVariant || prev.variant,
           tableSize: cfg.tableSize || prev.tableSize,
           doubleBoard: !!cfg.doubleBoard,
+          baseDoubleBoard: !!cfg.doubleBoard,
           allowStraddle: !!cfg.allowStraddle,
           allowMultiStraddle: !!cfg.allowMultiStraddle,
           mandatoryStraddle: !!cfg.mandatoryStraddle,
           bombPot: !!cfg.bombPot,
+          baseBombPot: !!cfg.bombPot,
           bombAmount: cfg.bombAmount || prev.bombAmount,
-          smallBlind: cfg.smallBlind || prev.smallBlind,
-          bigBlind: cfg.bigBlind || prev.bigBlind,
+          smallBlind: cfg.smallBlind != null ? cfg.smallBlind : prev.smallBlind,
+          bigBlind: cfg.bigBlind != null ? cfg.bigBlind : prev.bigBlind,
           thirdBlind: cfg.thirdBlind != null ? cfg.thirdBlind : prev.thirdBlind,
           anteAmount: cfg.anteAmount != null ? cfg.anteAmount : prev.anteAmount,
           anteType: cfg.anteType || prev.anteType,
@@ -422,6 +492,12 @@ export default function PokerTracker() {
           tLevel: Math.min(prev.tLevel || 0, Math.max(0, newSchedule.length - 1)),
           clockConfig: cfg.clockConfig || prev.clockConfig,
         };
+        if (cfg.firstButton && cfg.firstButton !== 'random') {
+          const chosenSeat = Number(cfg.firstButton);
+          if (updated.players.some((p) => p.seat === chosenSeat)) {
+            updated.buttonSeat = chosenSeat;
+          }
+        }
         if (updated.actionHistory && updated.actionHistory.length === 0 && updated.street === 'preflop') {
           updated = recomputeBlindsForLevel(updated, updated.smallBlind, updated.bigBlind, updated.anteAmount);
         }
@@ -432,8 +508,17 @@ export default function PokerTracker() {
     }
 
     recordedHandNumbers.current.clear();
-    const sorted = cfg.players.slice().sort((a, b) => a.seat - b.seat);
-    const btn = sorted[0].seat;
+    const validPlayers = cfg.players.filter((p) => p.occupied !== false);
+    const pool = validPlayers.length ? validPlayers : cfg.players;
+    let btn;
+    if (cfg.firstButton === 'random' || cfg.firstButton == null) {
+      const randIdx = Math.floor(Math.random() * pool.length);
+      btn = pool[randIdx].seat;
+    } else {
+      const chosenSeat = Number(cfg.firstButton);
+      const exists = pool.some((p) => p.seat === chosenSeat);
+      btn = exists ? chosenSeat : pool[0].seat;
+    }
     const newHand = initLevelTimer(startHand(cfg, btn, 1), cfg.levelConfig);
     setHand(newHand);
     const initFrozen = {};
@@ -522,22 +607,98 @@ export default function PokerTracker() {
     return {};
   };
 
+  const handleDealBoard = (boardIndex, cards) => {
+    setHand((prev) => {
+      if (!prev) return prev;
+      pushHistory(prev);
+      const h = clone(prev);
+      if (boardIndex === 1) {
+        const existing = (h.communityCards || []).filter((c) => !c.hidden);
+        h.communityCards = [...existing, ...cards];
+        if (h.communityCards.length >= 5) {
+          h.street = 'river';
+        } else if (h.communityCards.length >= 4) {
+          h.street = 'turn';
+        } else if (h.communityCards.length >= 3) {
+          h.street = 'flop';
+        }
+      } else if (boardIndex === 2) {
+        const existing = (h.boardB || []).filter((c) => !c.hidden);
+        h.boardB = [...existing, ...cards];
+      } else if (boardIndex === 3) {
+        const existing = (h.boardC || []).filter((c) => !c.hidden);
+        h.boardC = [...existing, ...cards];
+      }
+
+      const aLen = (h.communityCards || []).filter((c) => !c.hidden).length;
+      const bLen = (h.boardB || []).filter((c) => !c.hidden).length;
+      const is3x = (Number(h.runTimes) >= 3) || (Number(h.bombBoards) >= 3);
+      const cLen = is3x ? (h.boardC || []).filter((c) => !c.hidden).length : 5;
+
+      if (aLen >= 5 && bLen >= 5 && cLen >= 5) {
+        h.phase = 'ended';
+        h.currentPlayer = -1;
+        h.street = 'river';
+        h.message = 'Hand complete – award the pots to finish.';
+      } else {
+        h.message = `Board ${boardIndex} updated.`;
+      }
+
+      return h;
+    });
+    return {};
+  };
+
+  const handleSetBoardCards = (boardIndex, cards) => {
+    setHand((prev) => {
+      if (!prev) return prev;
+      pushHistory(prev);
+      const h = clone(prev);
+      if (boardIndex === 1) {
+        h.communityCards = cards;
+        if (cards.length >= 5) h.street = 'river';
+        else if (cards.length >= 4) h.street = 'turn';
+        else if (cards.length >= 3) h.street = 'flop';
+      } else if (boardIndex === 2) {
+        h.boardB = cards;
+      } else if (boardIndex === 3) {
+        h.boardC = cards;
+      }
+
+      const aLen = (h.communityCards || []).filter((c) => !c.hidden).length;
+      const bLen = (h.boardB || []).filter((c) => !c.hidden).length;
+      const isMultiRun = Number(h.runTimes) >= 2;
+      const is3x = (Number(h.runTimes) >= 3) || (Number(h.bombBoards) >= 3);
+      const cLen = is3x ? (h.boardC || []).filter((c) => !c.hidden).length : 5;
+
+      const allComplete = is3x ? (aLen >= 5 && bLen >= 5 && cLen >= 5) : isMultiRun ? (aLen >= 5 && bLen >= 5) : (aLen >= 5);
+      if (allComplete) {
+        h.phase = 'ended';
+        h.currentPlayer = -1;
+        h.street = 'river';
+        h.message = 'Hand complete – award the pots to finish.';
+      }
+
+      return h;
+    });
+  };
+
   const handleRunIt = (times) => {
     setHand((prev) => {
       if (!prev) return prev;
-      const is3x = times === 3;
+      const is3x = Number(times) === 3;
       const bCount = is3x ? 3 : 2;
       const curA = prev.communityCards || [];
       const bB = curA.map((c) => ({ ...c }));
-      const bC = is3x ? curA.map((c) => ({ ...c })) : prev.boardC;
+      const bC = is3x ? curA.map((c) => ({ ...c })) : [];
       return {
         ...prev,
         doubleBoard: true,
         bombBoards: bCount,
-        runTimes: times,
-        runItSelected: times,
+        runTimes: Number(times),
+        runItSelected: Number(times),
         boardB: bB,
-        boardC: is3x ? bC : prev.boardC,
+        boardC: is3x ? bC : [],
       };
     });
   };
@@ -664,6 +825,65 @@ export default function PokerTracker() {
     });
   };
 
+  const handleSaveTemporaryPlan = (newPlan) => {
+    setHand((prev) => {
+      if (!prev) return prev;
+      const list = [...(prev.temporaryGames || []).filter((p) => p.id !== newPlan.id), newPlan];
+      if (newPlan.scheduleType === 'this_hand') {
+        return {
+          ...prev,
+          baseVariant: prev.baseVariant || prev.variant,
+          baseDoubleBoard: prev.baseDoubleBoard !== undefined ? prev.baseDoubleBoard : (prev.doubleBoard ?? false),
+          baseGameType: prev.baseGameType || prev.gameType || 'no_limit',
+          baseBombPot: prev.baseBombPot !== undefined ? prev.baseBombPot : (prev.bombPot ?? false),
+          baseBombBoards: prev.baseBombBoards || (prev.bombBoards || 1),
+          baseSmallBlind: prev.baseSmallBlind !== undefined ? prev.baseSmallBlind : prev.smallBlind,
+          baseBigBlind: prev.baseBigBlind !== undefined ? prev.baseBigBlind : prev.bigBlind,
+          variant: newPlan.variant,
+          gameType: newPlan.gameType || prev.gameType,
+          smallBlind: newPlan.smallBlind ?? prev.smallBlind,
+          bigBlind: newPlan.bigBlind ?? prev.bigBlind,
+          doubleBoard: !!newPlan.doubleBoard,
+          bombPot: !!newPlan.isBombPot,
+          bombBoards: newPlan.bombBoards || (newPlan.doubleBoard ? 2 : 1),
+          bombAmount: newPlan.bombAmount || prev.bombAmount || (newPlan.bigBlind ? newPlan.bigBlind * 5 : prev.bigBlind * 5),
+          isTemporaryGame: true,
+          temporaryGameTitle: newPlan.title,
+          temporaryGames: list,
+        };
+      }
+      return { ...prev, temporaryGames: list };
+    });
+  };
+
+  const handleDeleteTemporaryPlan = (planId) => {
+    setHand((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        temporaryGames: (prev.temporaryGames || []).filter((p) => p.id !== planId),
+      };
+    });
+  };
+
+  const handleRevertToBaseGame = () => {
+    setHand((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        variant: prev.baseVariant || config?.variant || 'holdem',
+        doubleBoard: prev.baseDoubleBoard !== undefined ? prev.baseDoubleBoard : Boolean(config?.doubleBoard),
+        gameType: prev.baseGameType || config?.gameType || 'no_limit',
+        bombPot: prev.baseBombPot !== undefined ? prev.baseBombPot : Boolean(config?.bombPot),
+        bombBoards: prev.baseBombBoards || ((prev.baseDoubleBoard ?? config?.doubleBoard) ? 2 : 1),
+        smallBlind: prev.baseSmallBlind !== undefined ? prev.baseSmallBlind : (config?.smallBlind ?? prev.smallBlind),
+        bigBlind: prev.baseBigBlind !== undefined ? prev.baseBigBlind : (config?.bigBlind ?? prev.bigBlind),
+        isTemporaryGame: false,
+        temporaryGameTitle: null,
+      };
+    });
+  };
+
   const proceedToNextHand = () => {
     if (hand && hand.phase === 'awarded') {
       updateFrozenStacks(hand);
@@ -674,21 +894,70 @@ export default function PokerTracker() {
     if (hand && hand.nextHandBombPot) {
       nextBombPot = hand.nextHandBombPot;
     }
-    if (currentHand && currentHand.bombPot && !nextBombPot) {
+
+    const nextHandNum = (currentHand?.handNumber || 1) + 1;
+    const nextPlan = findPlanForHand(nextHandNum, currentHand?.temporaryGames || []);
+
+    if (nextPlan) {
       currentHand = {
         ...currentHand,
-        bombPot: false,
-        doubleBoard: currentHand.baseDoubleBoard ?? false,
+        baseVariant: currentHand.baseVariant || currentHand.variant,
+        baseDoubleBoard: currentHand.baseDoubleBoard !== undefined ? currentHand.baseDoubleBoard : Boolean(currentHand.doubleBoard),
+        baseGameType: currentHand.baseGameType || currentHand.gameType || 'no_limit',
+        baseBombPot: currentHand.baseBombPot !== undefined ? currentHand.baseBombPot : Boolean(currentHand.bombPot),
+        baseBombBoards: currentHand.baseBombBoards || (currentHand.bombBoards || 1),
+        baseSmallBlind: currentHand.baseSmallBlind !== undefined ? currentHand.baseSmallBlind : currentHand.smallBlind,
+        baseBigBlind: currentHand.baseBigBlind !== undefined ? currentHand.baseBigBlind : currentHand.bigBlind,
+        variant: nextPlan.variant,
+        gameType: nextPlan.gameType || currentHand.gameType || 'no_limit',
+        smallBlind: nextPlan.isBombPot ? 0 : (nextPlan.smallBlind ?? currentHand.smallBlind),
+        bigBlind: nextPlan.isBombPot ? 0 : (nextPlan.bigBlind ?? currentHand.bigBlind),
+        anteAmount: nextPlan.variant === 'short_deck' ? (nextPlan.anteAmount || 1) : currentHand.anteAmount,
+        doubleBoard: !!nextPlan.doubleBoard,
+        bombPot: !!nextPlan.isBombPot,
+        bombBoards: nextPlan.bombBoards || (nextPlan.doubleBoard ? 2 : 1),
+        bombAmount: nextPlan.bombAmount || currentHand.bombAmount || (nextPlan.bigBlind ? nextPlan.bigBlind * 5 : currentHand.bigBlind * 5),
+        isTemporaryGame: true,
+        temporaryGameTitle: nextPlan.title,
+        temporaryGameId: nextPlan.id,
+        runTimes: 1,
+        runItSelected: null,
         boardB: [],
         boardC: [],
-        bombBoards: 1,
-        variant: currentHand.baseVariant || config?.variant || 'holdem',
       };
     } else if (nextBombPot) {
       currentHand = {
         ...currentHand,
-        ...nextBombPot,
-        nextHandBombPot: null,
+        nextHandBombPot: nextBombPot,
+        runTimes: 1,
+        runItSelected: null,
+      };
+    } else if (currentHand && (currentHand.bombPot || currentHand.isTemporaryGame)) {
+      currentHand = {
+        ...currentHand,
+        bombPot: currentHand.baseBombPot !== undefined ? currentHand.baseBombPot : Boolean(config?.bombPot),
+        doubleBoard: currentHand.baseDoubleBoard !== undefined ? currentHand.baseDoubleBoard : Boolean(config?.doubleBoard),
+        boardB: [],
+        boardC: [],
+        bombBoards: currentHand.baseBombBoards || ((currentHand.baseDoubleBoard ?? config?.doubleBoard) ? 2 : 1),
+        variant: currentHand.baseVariant || config?.variant || 'holdem',
+        gameType: currentHand.baseGameType || config?.gameType || 'no_limit',
+        smallBlind: currentHand.baseSmallBlind !== undefined ? currentHand.baseSmallBlind : (config?.smallBlind ?? currentHand.smallBlind),
+        bigBlind: currentHand.baseBigBlind !== undefined ? currentHand.baseBigBlind : (config?.bigBlind ?? currentHand.bigBlind),
+        isTemporaryGame: false,
+        temporaryGameTitle: null,
+        runTimes: 1,
+        runItSelected: null,
+      };
+    } else if (currentHand) {
+      currentHand = {
+        ...currentHand,
+        doubleBoard: currentHand.baseDoubleBoard !== undefined ? currentHand.baseDoubleBoard : Boolean(config?.doubleBoard),
+        boardB: [],
+        boardC: [],
+        bombBoards: (currentHand.baseDoubleBoard ?? config?.doubleBoard) ? 2 : 1,
+        runTimes: 1,
+        runItSelected: null,
       };
     }
     const res = advanceToNextHand(currentHand);
@@ -728,7 +997,7 @@ export default function PokerTracker() {
     }
     const w = tryAutoWinners(ended, holeCards);
     if (w) {
-      const awarded = awardPots(ended, w.winnersA, { winnersB: w.winnersB, holeCards });
+      const awarded = awardPots(ended, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, holeCards });
       updateFrozenStacks(awarded);
       setHand(awarded);
       advanceAfterAward(awarded);
@@ -806,18 +1075,51 @@ export default function PokerTracker() {
 
   const handleUndo = () => {
     if (!history.length) return;
-    const prev = history[history.length - 1];
+    let prev = history[history.length - 1];
     const timerFields = [
       'tLevel', 'inBreak', 'levelStartEpoch', 'levelHandsCompleted',
       'pendingLevelIdx', 'pausedMs', 'pauseStart', 'pendingRace',
     ];
     const preserved = {};
     timerFields.forEach((f) => { if (hand && hand[f] !== undefined) preserved[f] = hand[f]; });
+
+    // If undoing from awarded phase to fix a mistyped river card:
+    if (hand && hand.phase === 'awarded') {
+      const cCards = (prev.communityCards || []).filter((c) => !c.hidden);
+      if (cCards.length >= 5) {
+        prev = {
+          ...prev,
+          phase: 'playing',
+          street: 'turn',
+          communityCards: cCards.slice(0, 4),
+          winners: null,
+          pots: prev.pots ? prev.pots.map((p) => ({ ...p, winners: [] })) : prev.pots,
+        };
+      }
+    }
+
     setHand({ ...prev, ...preserved });
     setHistory(history.slice(0, -1));
     setShowEnd(false);
     setEquity(null);
   };
+
+  // Global Ctrl+Z / Cmd+Z Undo Listener
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      const activeEl = document.activeElement;
+      const isInput = activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA' || activeEl?.isContentEditable;
+      if (isInput) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        if (history.length > 0) {
+          e.preventDefault();
+          handleUndo();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [history.length, hand]);
 
   const handleHoleChange = (pid, cards) => {
     setHoleCards((prev) => {
@@ -857,17 +1159,65 @@ export default function PokerTracker() {
       const iters = meta.group === 'omaha' ? (meta.holeSize <= 4 ? 5000 : 3000) : 20000;
       const byId = {};
       let splitPct = 0;
-      if (hand.doubleBoard) {
+      const isMultiRun = Number(hand.runTimes) >= 2;
+      const isTripleRun = Number(hand.runTimes) >= 3;
+      const isTripleBomb = (Number(hand.bombBoards) >= 3) || (hand.boardC && hand.boardC.length > 0);
+
+      if (isMultiRun) {
+        // Multi-run (Run it 2x / 3x): Live equity is for the CURRENT BOARD ONLY!
+        const cardsA = (hand.communityCards || []).filter((c) => c && !c.hidden);
+        const cardsB = (hand.boardB || []).filter((c) => c && !c.hidden);
+        const cardsC = (hand.boardC || []).filter((c) => c && !c.hidden);
+
+        let activeBoard = cardsA;
+        let deadCards = [];
+        let currentBoardIndex = 1;
+
+        if (cardsA.length < 5) {
+          activeBoard = cardsA;
+          deadCards = [];
+          currentBoardIndex = 1;
+        } else if (cardsB.length < 5) {
+          activeBoard = cardsB;
+          deadCards = cardsA;
+          currentBoardIndex = 2;
+        } else if (isTripleRun && cardsC.length < 5) {
+          activeBoard = cardsC;
+          deadCards = [...cardsA, ...cardsB];
+          currentBoardIndex = 3;
+        } else {
+          // All boards complete: Show final board win percentages at the end!
+          const boardWinPcts = getMultipleBoardWinPercentages(hand, holeCards);
+          if (boardWinPcts) {
+            setEquity({ byId: boardWinPcts, split: 0, currentBoardIndex: 'final', isFinal: true });
+            return;
+          }
+          activeBoard = isTripleRun ? cardsC : cardsB;
+        }
+
+        const res = calcEquity(holes, activeBoard, iters, variant, drawSize, deadCards);
+        nf.forEach((p, i) => { byId[p.id] = res.results[i].win; });
+        splitPct = res.split;
+        setEquity({ byId, split: splitPct, currentBoardIndex, isFinal: false });
+      } else if (isTripleBomb) {
         const resA = calcEquity(holes, hand.communityCards, iters, variant, drawSize);
-        const resB = calcEquity(holes, hand.boardB, iters, variant, drawSize);
+        const resB = calcEquity(holes, hand.boardB || [], iters, variant, drawSize);
+        const resC = calcEquity(holes, hand.boardC || [], iters, variant, drawSize);
+        nf.forEach((p, i) => { byId[p.id] = (resA.results[i].win + resB.results[i].win + resC.results[i].win) / 3; });
+        splitPct = (resA.split + resB.split + resC.split) / 3;
+        setEquity({ byId, split: splitPct });
+      } else if (hand.doubleBoard) {
+        const resA = calcEquity(holes, hand.communityCards, iters, variant, drawSize);
+        const resB = calcEquity(holes, hand.boardB || [], iters, variant, drawSize);
         nf.forEach((p, i) => { byId[p.id] = (resA.results[i].win + resB.results[i].win) / 2; });
         splitPct = (resA.split + resB.split) / 2;
+        setEquity({ byId, split: splitPct });
       } else {
         const res = calcEquity(holes, hand.communityCards, iters, variant, drawSize);
         nf.forEach((p, i) => { byId[p.id] = res.results[i].win; });
         splitPct = res.split;
+        setEquity({ byId, split: splitPct });
       }
-      setEquity({ byId, split: splitPct });
     }, 20);
     return () => clearTimeout(t);
   }, [hand, holeCards]);
@@ -881,13 +1231,14 @@ export default function PokerTracker() {
     if (!sched.length) return;
     const target = hand.pendingLevelIdx ?? hand.tLevel ?? 0;
     let idx = target;
-    while (idx < sched.length && sched[idx]?.type === 'break') idx++;
+    while (idx < sched.length && (sched[idx]?.type === 'break' || sched[idx]?.type === 'color_up')) idx++;
     if (idx >= sched.length) return;
     if (idx === (hand.blindLevel || 0)) return;
     const lvl = sched[idx];
-    if (!lvl || lvl.type === 'break') return;
+    if (!lvl || lvl.type === 'break' || lvl.type === 'color_up') return;
     const bbVal = parseAmount(lvl.bigBlind) ?? Number(lvl.bigBlind) ?? 0;
     const sbVal = parseAmount(lvl.smallBlind) ?? Number(lvl.smallBlind) ?? 0;
+    if (bbVal <= 0 || sbVal <= 0) return;
     const ante = calcAnteForType(hand.anteType, bbVal, lvl.ante);
     const newSB = sbVal;
     const newBB = bbVal;
@@ -912,7 +1263,7 @@ export default function PokerTracker() {
     const w = tryAutoWinners(hand, holeCards);
     if (!w) return;
     pushHistory(hand);
-    const awarded = awardPots(hand, w.winnersA, { winnersB: w.winnersB, holeCards });
+    const awarded = awardPots(hand, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, holeCards });
     updateFrozenStacks(awarded);
     setHand(awarded);
     if (sevenTwoActive(awarded)) {
@@ -996,19 +1347,36 @@ export default function PokerTracker() {
         stack: Math.max(0, p.stack + (adjustments[p.id] || 0)),
       }));
       const remaining = (prev.pendingMissedRaces || []).slice(1);
-      const wasLastMissed = (prev.pendingMissedRaces || []).length > 0 && remaining.length === 0;
-      const unpause = wasLastMissed ? resumeLevelTimer({
-        ...prev,
-        players,
-        pendingRace: null,
-        pendingMissedRaces: null,
-      }) : null;
-      return unpause || {
+      const schedule = prev.blindSchedule || [];
+      let nextIdx = (prev.tLevel || 0) + 1;
+      while (nextIdx < schedule.length && (schedule[nextIdx]?.type === 'break' || schedule[nextIdx]?.type === 'color_up')) nextIdx++;
+      const nextLevel = schedule[nextIdx];
+      const isStandaloneRace = !prev.inBreak;
+
+      const base = {
         ...prev,
         players,
         pendingRace: null,
         pendingMissedRaces: remaining.length > 0 ? remaining : null,
       };
+
+      if (isStandaloneRace) {
+        base.pauseStart = null;
+        base.tLevel = nextIdx < schedule.length ? nextIdx : prev.tLevel;
+        base.pendingLevelIdx = nextIdx < schedule.length ? nextIdx : prev.tLevel;
+        base.levelStartEpoch = Date.now();
+        base.levelHandsCompleted = 0;
+        if (nextLevel && nextLevel.type !== 'break' && nextLevel.type !== 'color_up') {
+          const nextBB = parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0;
+          const nextSB = parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0;
+          const ante = calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
+          base.smallBlind = nextSB;
+          base.bigBlind = nextBB;
+          base.anteAmount = ante;
+          base.blindLevel = nextIdx;
+        }
+      }
+      return base;
     });
     setShowRaceOverride(null);
   };
@@ -1037,18 +1405,19 @@ export default function PokerTracker() {
       }
       const schedule = prev.blindSchedule || [];
       let nextIdx = (prev.tLevel || 0) + 1;
-      while (nextIdx < schedule.length && schedule[nextIdx]?.type === 'break') nextIdx++;
+      while (nextIdx < schedule.length && (schedule[nextIdx]?.type === 'break' || schedule[nextIdx]?.type === 'color_up')) nextIdx++;
       const nextLevel = schedule[nextIdx];
       const base = {
         ...prev,
         inBreak: false,
+        pauseStart: null,
         tLevel: nextIdx < schedule.length ? nextIdx : (prev.tLevel || 0) + 1,
         pendingLevelIdx: nextIdx < schedule.length ? nextIdx : (prev.tLevel || 0) + 1,
         levelStartEpoch: Date.now(),
         levelHandsCompleted: 0,
         pendingRace: null,
       };
-      if (nextLevel && nextLevel.type !== 'break') {
+      if (nextLevel && nextLevel.type !== 'break' && nextLevel.type !== 'color_up') {
         const nextBB = parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0;
         const nextSB = parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0;
         const ante = calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
@@ -1084,34 +1453,41 @@ export default function PokerTracker() {
     setShowBlinds(true);
   };
 
-  const handleSetLevel = ({ tLevel, inBreak, levelStartEpoch, levelHandsCompleted, pendingLevelIdx, missedRaces }) => {
+  const handleSetLevel = ({ tLevel, inBreak, isColorUp, levelStartEpoch, levelHandsCompleted, pendingLevelIdx, missedRaces, pendingRace }) => {
     setHand((prev) => {
       const schedule = prev.blindSchedule || [];
       let targetIdx = pendingLevelIdx;
-      while (targetIdx < schedule.length && schedule[targetIdx]?.type === 'break') targetIdx++;
+      while (targetIdx < schedule.length && (schedule[targetIdx]?.type === 'break' || schedule[targetIdx]?.type === 'color_up')) targetIdx++;
       const targetLevel = schedule[targetIdx];
       const noAction = !(prev.actionHistory && prev.actionHistory.length > 0);
+      const isPaused = (missedRaces && missedRaces.length > 0) || isColorUp;
       const base = {
         ...prev,
         tLevel,
         inBreak,
+        isColorUp: !!isColorUp,
         levelStartEpoch,
         levelHandsCompleted,
-        pendingLevelIdx,
-        pauseStart: missedRaces && missedRaces.length > 0 ? Date.now() : null,
-        pausedMs: missedRaces && missedRaces.length > 0 ? 0 : prev.pausedMs,
+        pendingLevelIdx: targetIdx,
+        pauseStart: isPaused ? Date.now() : null,
+        pausedMs: isPaused ? 0 : prev.pausedMs,
       };
+      if (pendingRace) {
+        base.pendingRace = pendingRace;
+      }
       if (missedRaces && missedRaces.length > 0) {
         base.pendingMissedRaces = missedRaces;
       }
-      if (inBreak) {
+      if (inBreak && !base.pendingRace) {
         const brk = schedule[tLevel];
         const rc = brk?.race;
-        if (rc && Number(rc.retired) > 0 && Number(rc.replacement) > 0) {
-          base.pendingRace = { ...rc, tLevel };
+        const retiredNum = parseAmount(rc?.retired) ?? Number(rc?.retired);
+        const replacementNum = parseAmount(rc?.replacement) ?? Number(rc?.replacement);
+        if (rc && retiredNum > 0 && replacementNum > 0) {
+          base.pendingRace = { ...rc, retired: retiredNum, replacement: replacementNum, tLevel };
         }
       }
-      if (noAction && !inBreak && targetLevel && targetLevel.type !== 'break') {
+      if (noAction && !inBreak && targetLevel && targetLevel.type !== 'break' && targetLevel.type !== 'color_up') {
         const targetBB = parseAmount(targetLevel.bigBlind) ?? Number(targetLevel.bigBlind) ?? 0;
         const targetSB = parseAmount(targetLevel.smallBlind) ?? Number(targetLevel.smallBlind) ?? 0;
         const ante = calcAnteForType(prev.anteType, targetBB, targetLevel.ante);
@@ -1126,11 +1502,24 @@ export default function PokerTracker() {
     setNow(Date.now());
   };
 
-  const handleRebuy = (pid, amt) => {
-    setHand((prev) => ({
-      ...prev,
-      pendingAdjust: { ...(prev.pendingAdjust || {}), [pid]: ((prev.pendingAdjust || {})[pid] || 0) + amt },
-    }));
+  const handleRebuy = (pid, amt, isAddOn = false) => {
+    setHand((prev) => {
+      const updatedPlayers = (prev.players || []).map((p) => {
+        if (p.id === pid) {
+          return {
+            ...p,
+            rebuys: isAddOn ? (p.rebuys || 0) : ((p.rebuys || 0) + 1),
+            addOns: isAddOn ? ((p.addOns || 0) + 1) : (p.addOns || 0),
+          };
+        }
+        return p;
+      });
+      return {
+        ...prev,
+        players: updatedPlayers,
+        pendingAdjust: { ...(prev.pendingAdjust || {}), [pid]: ((prev.pendingAdjust || {})[pid] || 0) + amt },
+      };
+    });
   };
 
   const handleLateEntry = (nm, stk, seat, leftOfPlayerId) => {
@@ -1416,12 +1805,41 @@ export default function PokerTracker() {
 
   return (
     <div className="min-h-screen bg-[#121417] text-white">
-      <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
-        {/* Header */}
+      {isCompactMode ? (
+        <div className="max-w-2xl mx-auto p-2 sm:p-4">
+          <CompactModeView
+            hand={hand}
+            onAction={handleAction}
+            onUndo={handleUndo}
+            canUndo={history.length > 0}
+            onExitCompact={() => setIsCompactMode(false)}
+            hideAmounts={hideAmounts}
+            onToggleHideAmounts={() => setHideAmounts((v) => !v)}
+            onDeal={handleDeal}
+            onDealBoard={handleDealBoard}
+            onFillBoard={handleFillBoard}
+            onDealHidden={handleDealHidden}
+            onRunIt={handleRunIt}
+            onNextHand={proceedToNextHand}
+            now={now}
+            actionClockSecondsLeft={actionClockSecondsLeft}
+            actionClockType={actionClockType}
+            handleCallClock={handleCallClock}
+            onEndHand={handleEndHand}
+            holeCards={holeCards}
+            onHoleChange={handleHoleChange}
+            equity={equity}
+            onSetBoardCards={handleSetBoardCards}
+            onOpenTempGameModal={() => setShowTempGameModal(true)}
+          />
+        </div>
+      ) : (
+        <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
+          {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold">Live Hand #{hand.handNumber}</h1>
-            <span className="text-xs text-slate-500 uppercase">{VARIANTS[variant]?.label || "Hold'em"} · {GAME_TYPES[hand.gameType] || 'No Limit'}{hand.doubleBoard ? ' · Double board' : ''}{hand.bombPot ? ' · Bomb pot' : ''}</span>
+            <h1 className="text-xl font-semibold">{formatSessionName(hand)}</h1>
+            <span className="text-xs text-slate-500 uppercase">{GAME_TYPES[hand.gameType] || 'No Limit'}{hand.doubleBoard ? ' · Double board' : ''}{hand.bombPot ? ' · Bomb pot' : ''}</span>
             {hand.blindSchedule?.length > 0 && (
               <span className="text-xs text-slate-400">
                 Level {scheduledLevelNumber(hand)}{hand.inBreak ? ' · Break' : ''}
@@ -1445,6 +1863,13 @@ export default function PokerTracker() {
             })()}
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setIsCompactMode(true)}
+              className="rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95"
+              title="Switch to Compact Mode (mobile-optimized, direct action buttons & keyboard shortcuts)"
+            >
+              <Minimize2 size={16} /> Compact Mode
+            </button>
             <button onClick={handleUndo} disabled={!history.length} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer">
               <Undo2 size={16} /> Undo
             </button>
@@ -1459,7 +1884,31 @@ export default function PokerTracker() {
               <Save size={16} /> {saveStatus.saving ? 'Saving…' : 'Save session'}
             </button>
             <Link to="/history" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2">Hand history</Link>
-            <Link to="/variant" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2">Variant & side games</Link>
+            {isCash && (
+              <Link to="/variant" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2">Variant & side games</Link>
+            )}
+            {isCash && (
+              <button
+                type="button"
+                onClick={() => setShowTempGameModal(true)}
+                className={`rounded-lg text-sm px-3 py-2 font-semibold flex items-center gap-1.5 cursor-pointer border transition-colors shadow ${
+                  hand?.isTemporaryGame
+                    ? 'bg-amber-950/80 border-amber-500 text-amber-200 animate-pulse'
+                    : (hand?.temporaryGames || []).length > 0
+                    ? 'bg-amber-950/40 border-amber-600/60 text-amber-300 hover:bg-amber-900/60'
+                    : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-200 border-slate-700'
+                }`}
+                title="Temporarily change game or schedule temporary games (e.g. PLO6 Bomb pot every 5 hands)"
+              >
+                <Zap size={15} className="text-amber-400" />
+                <span>Temp Game</span>
+                {(hand?.temporaryGames || []).length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-black font-black font-mono">
+                    {(hand?.temporaryGames || []).length}
+                  </span>
+                )}
+              </button>
+            )}
             {isCash && (
               <>
                 <button onClick={() => setShowRebuy(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">Rebuy / Cash out</button>
@@ -1616,37 +2065,49 @@ export default function PokerTracker() {
           )}
         </div>
 
-        {/* Stacks Bar */}
+        {/* Stacks Bar Header with Chip Count / Big Blinds selector */}
         <div className="flex items-center justify-between mb-1">
           <span className="text-xs text-slate-500 uppercase tracking-wider">Stacks</span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-[#1a1d22] border border-[#2a2f37] rounded-lg p-0.5">
             <button
-              onClick={() => setFreezeStacks((v) => !v)}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
-                freezeStacks
-                  ? 'bg-sky-900/50 border border-sky-700 text-sky-300'
-                  : 'bg-[#2a2f37] border border-[#2a2f37] text-slate-400 hover:text-slate-200'
+              type="button"
+              onClick={() => setDisplayUnit('chips')}
+              className={`px-2.5 py-0.5 rounded text-xs font-semibold transition-colors cursor-pointer ${
+                displayUnit === 'chips'
+                  ? 'bg-[#363c45] text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {freezeStacks ? <Snowflake size={12} /> : <Eye size={12} />}
-              {freezeStacks ? 'Frozen' : 'Live'}
+              Chips
+            </button>
+            <button
+              type="button"
+              onClick={() => setDisplayUnit('bb')}
+              className={`px-2.5 py-0.5 rounded text-xs font-semibold transition-colors cursor-pointer ${
+                displayUnit === 'bb'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Big Blinds
             </button>
           </div>
         </div>
         <StacksBar
-          hand={hand}
+          hand={{ ...hand, displayUnit }}
           players={hand.players}
           positions={positions(hand)}
           currency={hand.currency}
           hideAmounts={hideAmounts}
           tableSize={hand.tableSize}
-          freezeStacks={freezeStacks}
+          freezeStacks={true}
           frozenStacks={frozenStacks}
+          displayUnit={displayUnit}
         />
 
         {/* Poker Table Graphic */}
         <PokerTable
-          hand={hand}
+          hand={{ ...hand, displayUnit }}
           positions={positions(hand)}
           pot={mainPot}
           sidePots={sidePots}
@@ -1655,6 +2116,7 @@ export default function PokerTracker() {
           hideAmounts={hideAmounts}
           highlightKeys={highlightKeys}
           winningPlayerIds={winningPlayerIds}
+          displayUnit={displayUnit}
           helpMode={false}
           clockSecondsLeft={actionClockSecondsLeft}
           clockActive={actionClockSecondsLeft != null}
@@ -1673,6 +2135,7 @@ export default function PokerTracker() {
                 onFillBoard={handleFillBoard}
                 holeCards={holeCards}
                 onRunIt={handleRunIt}
+                onDealBoard={handleDealBoard}
               />
             )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1686,7 +2149,7 @@ export default function PokerTracker() {
                 )}
 
                 {/* 2. Action */}
-                <ActionRecorder hand={hand} onAction={handleAction} />
+                <ActionRecorder hand={hand} onAction={handleAction} onUndo={handleUndo} canUndo={history.length > 0} />
 
                 {/* 3. Time Controls: Active Clock Banner & Dedicated Time Banks Bar */}
                 {actionClockSecondsLeft != null && hand?.currentPlayer >= 0 && (
@@ -1845,12 +2308,11 @@ export default function PokerTracker() {
           <div className="rounded-xl border border-[#4a5a4a] bg-[#1e2227] p-4">
             <div className="text-sm font-semibold text-emerald-300 mb-2">Pots awarded</div>
             {hand.pots.map((pot, i) => {
-              const ws = hand.winners.filter((w) => w.potIndex === i);
-              if (!ws.length) return null;
-              const names = ws.map((w) => hand.players.find((p) => p.id === w.playerId)?.name).join(' & ');
+              const summary = formatPotOutcome(pot, i, hand.winners, hand.players, hand.currency);
+              if (!summary) return null;
               return (
                 <div key={i} className="text-sm text-slate-300">
-                  {i === 0 ? 'Main pot' : `Side pot ${i}`}: {names} {ws.length > 1 ? 'split' : 'wins'} {money(pot.amount, hand.currency)}
+                  {summary}
                 </div>
               );
             })}
@@ -1868,6 +2330,15 @@ export default function PokerTracker() {
               >
                 <span>Next Hand</span>
                 <span className="text-emerald-200">→</span>
+              </button>
+              <button
+                onClick={handleUndo}
+                disabled={!history.length}
+                className="rounded-xl bg-[#2a2f37] hover:bg-[#363c45] text-slate-200 font-semibold text-sm px-4 py-2.5 flex items-center gap-1.5 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                title="Undo river card or pot award in case the river was mistyped"
+              >
+                <Undo2 size={16} />
+                <span>Undo (Fix Mistyped River)</span>
               </button>
             </div>
             {sevenTwoActive(hand) && !bonusApplied && (() => {
@@ -1888,9 +2359,10 @@ export default function PokerTracker() {
           </div>
         )}
       </div>
+      )}
 
       {showSetup && (
-        <SetupDialog initial={config} onSave={handleSave} onClose={() => setShowSetup(false)} />
+        <SetupDialog initial={setupInitial} onSave={handleSave} onClose={() => setShowSetup(false)} />
       )}
       {showBlinds && hand && (
         <NextLevelDialog
@@ -1923,6 +2395,9 @@ export default function PokerTracker() {
       {showRebuy && !isCash && (
         <RebuyDialog
           players={hand.players}
+          hand={hand}
+          currentLevel={hand.blindLevel || 0}
+          rebuyRules={hand.rebuyRules}
           rebuyChips={hand.rebuyChips || hand.startingStack}
           rebuyPrice={hand.rebuyPrice}
           allowAddOn={hand.allowAddOn}
@@ -1990,17 +2465,35 @@ export default function PokerTracker() {
           dismissOverride={showRaceOverride ? () => {
             setHand((prev) => {
               const remaining = (prev.pendingMissedRaces || []).slice(1);
-              const wasLastMissed = (prev.pendingMissedRaces || []).length > 0 && remaining.length === 0;
-              const unpause = wasLastMissed ? resumeLevelTimer({
-                ...prev,
-                pendingRace: null,
-                pendingMissedRaces: null,
-              }) : null;
-              return unpause || {
+              const schedule = prev.blindSchedule || [];
+              let nextIdx = (prev.tLevel || 0) + 1;
+              while (nextIdx < schedule.length && (schedule[nextIdx]?.type === 'break' || schedule[nextIdx]?.type === 'color_up')) nextIdx++;
+              const nextLevel = schedule[nextIdx];
+              const isStandaloneRace = !prev.inBreak;
+
+              const base = {
                 ...prev,
                 pendingRace: null,
                 pendingMissedRaces: remaining.length > 0 ? remaining : null,
               };
+
+              if (isStandaloneRace) {
+                base.pauseStart = null;
+                base.tLevel = nextIdx < schedule.length ? nextIdx : prev.tLevel;
+                base.pendingLevelIdx = nextIdx < schedule.length ? nextIdx : prev.tLevel;
+                base.levelStartEpoch = Date.now();
+                base.levelHandsCompleted = 0;
+                if (nextLevel && nextLevel.type !== 'break' && nextLevel.type !== 'color_up') {
+                  const nextBB = parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0;
+                  const nextSB = parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0;
+                  const ante = calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
+                  base.smallBlind = nextSB;
+                  base.bigBlind = nextBB;
+                  base.anteAmount = ante;
+                  base.blindLevel = nextIdx;
+                }
+              }
+              return base;
             });
             setShowRaceOverride(null);
             setShowBreak(false);
@@ -2023,6 +2516,18 @@ export default function PokerTracker() {
           onDismiss={handleDismissMysteryBounty}
         />
       )}
+
+      {/* Temporary Game Scheduling Modal */}
+      <TemporaryGameModal
+        isOpen={showTempGameModal}
+        onClose={() => setShowTempGameModal(false)}
+        currentHandNumber={hand?.handNumber || 1}
+        currentHand={hand}
+        existingPlans={hand?.temporaryGames || []}
+        onSavePlan={handleSaveTemporaryPlan}
+        onDeletePlan={handleDeleteTemporaryPlan}
+        onRevertToBaseGame={handleRevertToBaseGame}
+      />
     </div>
   );
 }

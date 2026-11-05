@@ -8,8 +8,6 @@ export default function DirectorPreplanDialog({
   levelDurationMinutes = 15,
   onSaveLevel,
 }) {
-  if (!isOpen) return null;
-
   const lastLevel = currentSchedule[currentSchedule.length - 1] || { smallBlind: 1000, bigBlind: 2000, ante: 0 };
   const nextLvlNum = currentSchedule.length + 1;
 
@@ -37,6 +35,8 @@ export default function DirectorPreplanDialog({
     });
     onClose();
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">

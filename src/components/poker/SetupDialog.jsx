@@ -46,16 +46,22 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [lateRegEnabled, setLateRegEnabled] = useState(initial?.lateRegEnabled ?? true);
   const [lateRegLevel, setLateRegLevel] = useState(() => {
     if (initial?.lateRegLevel != null) return initial.lateRegLevel;
-    const sched = initial?.blindSchedule?.length
-      ? initial.blindSchedule
-      : defaultScheduleFor(initial?.chipDenominations?.length ? Math.min(...initial.chipDenominations) : 25);
-    return firstBreakLevelNum(sched);
+    return 4; // Default late reg to level 4
   });
+  const [buyIn, setBuyIn] = useState(initial?.buyIn ?? 50);
   const [rebuyPrice, setRebuyPrice] = useState(initial?.rebuyPrice ?? '');
   const [rebuyChips, setRebuyChips] = useState(initial?.rebuyChips ?? '');
   const [allowAddOn, setAllowAddOn] = useState(initial?.allowAddOn || false);
   const [addOnPrice, setAddOnPrice] = useState(initial?.addOnPrice ?? '');
   const [addOnChips, setAddOnChips] = useState(initial?.addOnChips ?? '');
+  const [rebuyTimeEnabled, setRebuyTimeEnabled] = useState(initial?.rebuyRules?.timeLimitEnabled ?? true);
+  const [rebuyCutoffLevel, setRebuyCutoffLevel] = useState(initial?.rebuyRules?.timeCutoffLevel ?? 4);
+  const [rebuyStackCapEnabled, setRebuyStackCapEnabled] = useState(initial?.rebuyRules?.stackCapEnabled ?? true);
+  const [rebuyStackCapAmount, setRebuyStackCapAmount] = useState(initial?.rebuyRules?.stackCapAmount ?? '');
+  const [rebuyCappedEnabled, setRebuyCappedEnabled] = useState(initial?.rebuyRules?.cappedRebuysEnabled ?? false);
+  const [rebuyMaxRebuys, setRebuyMaxRebuys] = useState(initial?.rebuyRules?.maxRebuys ?? 1);
+  const [bbaEarlyHalfAnte, setBbaEarlyHalfAnte] = useState(initial?.bbaEarlyHalfAnte || false);
+  const [bbaEarlyHalfAnteLevel, setBbaEarlyHalfAnteLevel] = useState(initial?.bbaEarlyHalfAnteLevel ?? 2);
   const [bulkStack, setBulkStack] = useState('');
   const [chipDenoms, setChipDenoms] = useState(() => {
     if (initial?.chipDenominations?.length) return initial.chipDenominations;
@@ -71,7 +77,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [fourthBlindCustomized, setFourthBlindCustomized] = useState(initial?.fourthBlind != null);
   const [anteType, setAnteType] = useState(initial?.anteType || 'bba');
   const [anteAmount, setAnteAmount] = useState(initial?.anteAmount ?? 50);
-  const [sbHalfAnteShortHanded, setSbHalfAnteShortHanded] = useState(initial?.sbHalfAnteShortHanded ?? true);
+  const [sbHalfAnteShortHanded, setSbHalfAnteShortHanded] = useState(initial?.sbHalfAnteShortHanded ?? false);
   const [shortHandedThreshold, setShortHandedThreshold] = useState(initial?.shortHandedThreshold ?? 5);
   const [cashBlindsTouched, setCashBlindsTouched] = useState(false);
   const [allowStraddle, setAllowStraddle] = useState(initial ? !!initial.allowStraddle : false);
@@ -83,7 +89,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [mandatoryDoubleStraddleAmount, setMandatoryDoubleStraddleAmount] = useState(initial?.mandatoryDoubleStraddleAmount ?? '');
   const [bombPot, setBombPot] = useState(initial?.bombPot || false);
   const [bombAmount, setBombAmount] = useState(initial?.bombAmount ?? (initial?.bigBlind ? initial.bigBlind * 5 : 10));
-  const [doubleBoard, setDoubleBoard] = useState(initial?.doubleBoard || false);
+  const [doubleBoard, setDoubleBoard] = useState(false);
+  const [firstButton, setFirstButton] = useState(initial?.firstButton ?? initial?.buttonSeat ?? 'random');
   const [schedule, setSchedule] = useState(() => {
     if (initial?.blindSchedule?.length) return initial.blindSchedule;
     const denoms = initial?.chipDenominations || chipDenoms;
@@ -95,6 +102,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const omahaVariants = ['plo', 'plo5', 'plo6', 'plo8'];
   const handleVariantChange = (v) => {
     setVariant(v);
+    if (v === 'short_deck') {
+      if (!anteAmount || Number(anteAmount) <= 0 || Number(anteAmount) === 50) {
+        setAnteAmount(isCash ? 1 : 25);
+      }
+    }
     if (!gameTypeTouched) setGameType(omahaVariants.includes(v) ? 'pl' : 'nl');
   };
   const handleGameTypeChange = (gt) => { setGameType(gt); setGameTypeTouched(true); };
@@ -135,12 +147,13 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   };
 
   const buildStructureData = () => ({
-    mode, variant, gameType, currency, stackInBB, seatCount,
+    mode, variant: isCash ? variant : 'nlh', gameType, currency, stackInBB, seatCount,
     smallBlind, bigBlind, thirdBlind, fourthBlind, anteType, anteAmount,
     sbHalfAnteShortHanded, shortHandedThreshold,
     smallBet, bigBet, flMaxRaises,
-    doubleBoard, allowStraddle, allowMultiStraddle, mandatoryStraddle,
+    doubleBoard: false, allowStraddle, allowMultiStraddle, mandatoryStraddle,
     bombPot, bombAmount,
+    firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
     levelMethod, levelValue,
     chipDenoms,
     tournamentFormat, maxReEntries, lateRegEnabled, lateRegLevel,
@@ -259,7 +272,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const isThreeBlinds = isCash && anteType === 'three_blinds';
   const sym = isCash ? currency || '$' : '';
   const stackUnit = !isCash && stackInBB ? 'bb' : sym;
-  const isLow = variant === 'ace_to_five' || variant === 'deuce_to_seven';
+  const isLow = false;
+  const isShortDeck = variant === 'short_deck';
   const effBB = isCash ? Number(bigBlind || 0) : Number(schedule[0]?.bigBlind || bigBlind || 0);
   const bb = effBB || (isCash ? 2 : 50);
   const smallestChip = !isCash && chipDenoms.length ? Math.min(...chipDenoms.map(Number).filter((d) => d > 0)) : effBB;
@@ -283,6 +297,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       }
       setAllowStraddle(true);
     } else {
+      if (seatCount > 10) setSeatCount(10);
+      setPlayers((prev) => {
+        if (prev.length > 10) return prev.slice(0, 10);
+        return prev;
+      });
       setAnteType('bba');
       setAnteAmount(Number(schedule[0]?.bigBlind) || 50);
     }
@@ -295,7 +314,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   };
 
   const adjustSeats = (delta) => {
-    const next = Math.min(10, Math.max(2, seatCount + delta));
+    const maxSeats = isCash ? 12 : 10;
+    const next = Math.min(maxSeats, Math.max(2, seatCount + delta));
     setSeatCount(next);
     setPlayers((prev) => {
       const arr = [...prev];
@@ -353,35 +373,46 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       ? players.map((p, idx) => ({ ...p, seat: idx + 1, occupied: true }))
       : players.filter((p) => p.occupied);
     if (occupiedPlayers.length < 2) return setError('At least 2 active players are required.');
-    const sb = isFL ? Math.max(1, Math.round((parseAmount(smallBet) ?? Number(smallBet)) / 2)) : useScheduleBlinds ? (parseAmount(schedFirst.smallBlind) ?? Number(schedFirst.smallBlind)) : (parseAmount(smallBlind) ?? Number(smallBlind));
-    const bb = isFL ? (parseAmount(smallBet) ?? Number(smallBet)) : useScheduleBlinds ? (parseAmount(schedFirst.bigBlind) ?? Number(schedFirst.bigBlind)) : (parseAmount(bigBlind) ?? Number(bigBlind));
+    const effAnte = parseAmount(anteAmount) ?? Number(anteAmount) ?? (isCash ? 1 : 25);
+    if (isShortDeck && effAnte <= 0) return setError('Ante must be positive.');
+
+    const sb = isShortDeck ? 0 : isFL ? Math.max(1, Math.round((parseAmount(smallBet) ?? Number(smallBet)) / 2)) : useScheduleBlinds ? (parseAmount(schedFirst.smallBlind) ?? Number(schedFirst.smallBlind)) : (parseAmount(smallBlind) ?? Number(smallBlind));
+    const bb = isShortDeck ? effAnte : isFL ? (parseAmount(smallBet) ?? Number(smallBet)) : useScheduleBlinds ? (parseAmount(schedFirst.bigBlind) ?? Number(schedFirst.bigBlind)) : (parseAmount(bigBlind) ?? Number(bigBlind));
     const toChips = (val) => {
       let s = parseAmount(val);
       if (s == null) s = Number(val);
       const blank = s == null || isNaN(s) || s <= 0;
       if (!isCash && stackInBB) return (blank ? 100 : s) * bb;
-      return blank ? 100 * bb : s;
+      return blank ? (isShortDeck ? 100 * effAnte : 100 * bb) : s;
     };
-    const startingStack = toChips(occupiedPlayers[0].stack);
-    onSave({
+      const tbVal = (!isShortDeck && (anteType === 'three_blinds' || anteType === 'four_blinds')) ? (parseAmount(thirdBlind) ?? Number(thirdBlind) ?? (bb * 2)) : 0;
+      const fbVal = (!isShortDeck && anteType === 'four_blinds') ? (parseAmount(fourthBlind) ?? Number(fourthBlind) ?? (bb * 4)) : 0;
+      const highestBlind = Math.max(bb, tbVal || 0, fbVal || 0);
+      const finalPlayers = occupiedPlayers.map((p) => ({ ...p, name: (p.name || '').trim() || `Player ${p.seat}`, stack: toChips(p.stack) }));
+      const determinedStartingStack = initial?.startingStack || (finalPlayers.length ? finalPlayers[0].stack : (bulkStack ? toChips(bulkStack) : 100 * bb));
+
+      onSave({
       mode,
       variant,
+      firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
       gameType,
       currency: sym,
       stackInBB: !isCash && stackInBB,
       tableSize: isCash ? occupiedPlayers.length : seatCount,
-      players: occupiedPlayers.map((p) => ({ ...p, name: (p.name || '').trim() || `Player ${p.seat}`, stack: toChips(p.stack) })),
+      players: finalPlayers,
       smallBlind: sb,
       bigBlind: bb,
-      thirdBlind: (anteType === 'three_blinds' || anteType === 'four_blinds') ? (parseAmount(thirdBlind) ?? Number(thirdBlind) ?? (bb * 2)) : undefined,
-      fourthBlind: anteType === 'four_blinds' ? (parseAmount(fourthBlind) ?? Number(fourthBlind) ?? (bb * 4)) : undefined,
+      thirdBlind: (!isShortDeck && (anteType === 'three_blinds' || anteType === 'four_blinds')) ? tbVal : undefined,
+      fourthBlind: (!isShortDeck && anteType === 'four_blinds') ? fbVal : undefined,
       smallBet: isFL ? (parseAmount(smallBet) ?? Number(smallBet)) : undefined,
       bigBet: isFL ? (parseAmount(bigBet) ?? Number(bigBet)) : undefined,
       flMaxRaises: isFL ? Number(flMaxRaises) : undefined,
-      anteType,
-      sbHalfAnteShortHanded: anteType === 'bba' ? sbHalfAnteShortHanded : false,
+      anteType: isShortDeck ? 'btn_ante' : anteType,
+      sbHalfAnteShortHanded: isShortDeck ? false : (anteType === 'bba' ? sbHalfAnteShortHanded : false),
       shortHandedThreshold: Number(shortHandedThreshold) || 5,
-      anteAmount: (anteType === 'bba' || anteType === 'btn_ante')
+      anteAmount: isShortDeck
+        ? effAnte
+        : (anteType === 'bba' || anteType === 'btn_ante')
         ? bb
         : anteType === 'sb_half_ante'
         ? Math.max(1, Math.round(bb * 0.5))
@@ -390,10 +421,10 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         : anteType === 'traditional'
         ? (parseAmount(schedFirst.ante) ?? Number(schedFirst.ante))
         : 0,
-      doubleBoard: !isLow && doubleBoard,
-      allowStraddle: isCash && !isFL && allowStraddle,
-      straddleAmount: isCash && !isFL && allowStraddle && straddleAmount ? Number(straddleAmount) : (bb * 2),
-      allowMultiStraddle: isCash && !isFL && allowMultiStraddle,
+      doubleBoard: false,
+      allowStraddle: isShortDeck ? false : (isCash && !isFL && allowStraddle),
+      straddleAmount: isCash && !isFL && allowStraddle ? (highestBlind * 2) : (bb * 2),
+      allowMultiStraddle: isShortDeck ? false : (isCash && !isFL && allowMultiStraddle),
       mandatoryStraddle: false,
       mandatoryStraddleAmount: undefined,
       mandatoryDoubleStraddle: false,
@@ -402,16 +433,27 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       bombAmount: isCash ? (parseAmount(bombAmount) ?? Number(bombAmount)) || (bb * 5) : 0,
       levelConfig: isCash ? null : { method: levelMethod, value: Number(levelValue) > 0 ? Number(levelValue) : LEVEL_PRESETS[levelMethod] },
       chipDenominations: isCash ? null : chipDenoms.filter((d) => Number(d) > 0).map((d) => Number(d)).sort((a, b) => a - b),
+      bbaEarlyHalfAnte: anteType === 'bba' ? bbaEarlyHalfAnte : false,
+      bbaEarlyHalfAnteLevel: anteType === 'bba' ? Number(bbaEarlyHalfAnteLevel) || 2 : 2,
+      buyIn: isCash ? undefined : (Number(buyIn) || 50),
       tournamentFormat: isCash ? undefined : tournamentFormat,
       maxReEntries: isCash ? undefined : (tournamentFormat === 'reentry' ? Number(maxReEntries) : 0),
       lateRegEnabled: isCash ? undefined : lateRegEnabled,
       lateRegLevel: isCash ? undefined : Number(lateRegLevel),
-      startingStack: isCash ? undefined : startingStack,
-      rebuyPrice: isCash || tournamentFormat !== 'rebuy' ? undefined : (rebuyPrice ? (parseAmount(rebuyPrice) ?? Number(rebuyPrice)) : undefined),
-      rebuyChips: isCash || tournamentFormat !== 'rebuy' ? undefined : (rebuyChips ? (parseAmount(rebuyChips) ?? Number(rebuyChips)) : startingStack),
+      startingStack: isCash ? undefined : determinedStartingStack,
+      rebuyPrice: isCash || tournamentFormat !== 'rebuy' ? undefined : (rebuyPrice !== '' ? (parseAmount(rebuyPrice) ?? Number(rebuyPrice)) : (Number(buyIn) || 50)),
+      rebuyChips: isCash || tournamentFormat !== 'rebuy' ? undefined : (rebuyChips !== '' ? (parseAmount(rebuyChips) ?? Number(rebuyChips)) : determinedStartingStack),
       allowAddOn: isCash || tournamentFormat !== 'rebuy' ? undefined : allowAddOn,
-      addOnPrice: isCash || tournamentFormat !== 'rebuy' || !allowAddOn ? undefined : (addOnPrice ? (parseAmount(addOnPrice) ?? Number(addOnPrice)) : undefined),
-      addOnChips: isCash || tournamentFormat !== 'rebuy' || !allowAddOn ? undefined : (addOnChips ? (parseAmount(addOnChips) ?? Number(addOnChips)) : Math.round(startingStack * 1.5)),
+      addOnPrice: isCash || tournamentFormat !== 'rebuy' || !allowAddOn ? undefined : (addOnPrice !== '' ? (parseAmount(addOnPrice) ?? Number(addOnPrice)) : (Number(buyIn) || 50)),
+      addOnChips: isCash || tournamentFormat !== 'rebuy' || !allowAddOn ? undefined : (addOnChips !== '' ? (parseAmount(addOnChips) ?? Number(addOnChips)) : Math.round(determinedStartingStack * 1.5)),
+      rebuyRules: isCash || tournamentFormat !== 'rebuy' ? undefined : {
+        timeLimitEnabled: !!rebuyTimeEnabled,
+        timeCutoffLevel: Number(rebuyCutoffLevel) || 4,
+        stackCapEnabled: !!rebuyStackCapEnabled,
+        stackCapAmount: rebuyStackCapAmount !== '' ? (parseAmount(rebuyStackCapAmount) ?? Number(rebuyStackCapAmount)) : determinedStartingStack,
+        cappedRebuysEnabled: !!rebuyCappedEnabled,
+        maxRebuys: Number(rebuyMaxRebuys) || 1,
+      },
       blindSchedule: isCash ? [] : schedule.map((l) => {
         if (l.type === 'break') {
           return {
@@ -431,15 +473,15 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         };
       }),
       bountyConfig: {
-        bounty: !isCash && tournamentBounty,
-        bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
-        mysteryBounty: !isCash && mysteryBounty,
+        bounty: !isCash && tournamentFormat === 'bounty',
+        bountyAmount: !isCash && tournamentFormat === 'bounty' ? (Number(bountyAmount) || 50) : 0,
+        mysteryBounty: !isCash && tournamentFormat === 'mystery bounty',
       },
       sideGames: {
         ...(initial?.sideGames || {}),
-        bounty: !isCash && tournamentBounty,
-        bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
-        mysteryBounty: !isCash && mysteryBounty,
+        bounty: !isCash && tournamentFormat === 'bounty',
+        bountyAmount: !isCash && tournamentFormat === 'bounty' ? (Number(bountyAmount) || 50) : 0,
+        mysteryBounty: !isCash && tournamentFormat === 'mystery bounty',
       },
       clockConfig: {
         clockSystem,
@@ -495,7 +537,6 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           <select value={gameType} onChange={(e) => handleGameTypeChange(e.target.value)} className="rounded-lg border border-[#2a2f37] bg-[#15181d] px-3 py-2 text-sm text-white">
             <option value="nl">No Limit</option>
             <option value="pl">Pot Limit</option>
-            <option value="fl">Fixed Limit</option>
           </select>
           <select value={variant} onChange={(e) => handleVariantChange(e.target.value)} className="rounded-lg border border-[#2a2f37] bg-[#15181d] px-3 py-2 text-sm text-white">
             <option value="nlh">Hold'em</option>
@@ -508,8 +549,6 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             <option value="plo5">Omaha 5</option>
             <option value="plo6">Omaha 6</option>
             <option value="plo8">Omaha Hi/Lo</option>
-            <option value="ace_to_five">A-5 Lowball</option>
-            <option value="deuce_to_seven">2-7 Lowball</option>
           </select>
           {isCash && (
             <div className="flex items-center gap-2">
@@ -517,12 +556,21 @@ export default function SetupDialog({ initial, onSave, onClose }) {
               <input value={currency} onChange={(e) => setCurrency(e.target.value)} placeholder="$" className="w-16 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
             </div>
           )}
-          {!isLow && (
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" checked={doubleBoard} onChange={(e) => setDoubleBoard(e.target.checked)} className="w-4 h-4 accent-[#4a5a4a]" />
-              <span className="text-sm text-slate-300">Double board</span>
-            </label>
-          )}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">Button</span>
+            <select
+              value={firstButton}
+              onChange={(e) => setFirstButton(e.target.value)}
+              className="rounded-lg border border-[#2a2f37] bg-[#15181d] px-3 py-2 text-sm text-white"
+            >
+              <option value="random">Random (Default)</option>
+              {players.map((p, i) => (
+                <option key={p.seat} value={p.seat}>
+                  {isCash ? `Player ${i + 1}` : `Seat ${p.seat}`}{p.name ? ` (${p.name})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-4 mb-4">
           <div className="flex items-center gap-3">
@@ -591,160 +639,207 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             </div>
           ))}
         </div>
-        {isCash && players.length < 10 && (
+        {isCash && players.length < 12 && (
           <div className="mb-5">
             <button
               type="button"
               onClick={() => adjustSeats(1)}
               className="px-3.5 py-2 rounded-lg border border-dashed border-[#2a2f37] hover:border-emerald-500/50 bg-[#15181d] hover:bg-[#1a2027] text-xs font-semibold text-emerald-400 flex items-center gap-1.5 cursor-pointer transition-colors"
             >
-              <Plus size={14} /> Add Player ({players.length + 1} of 10)
+              <Plus size={14} /> Add Player ({players.length + 1} of 12)
             </button>
           </div>
         )}
         {!isCash && gameType !== 'fl' && (
           <div className="text-xs text-slate-500 mb-3">Blinds come from level 1 of the schedule below.</div>
         )}
-        <div className="flex flex-wrap items-end gap-3 mb-4">
-          {(isCash || gameType === 'fl') && (
-            <>
-              <div className="flex-1 min-w-[120px]">
-                <label className="text-xs text-slate-400 block mb-1">{gameType === 'fl' ? 'Small bet' : 'Small blind'}</label>
-                <input type="text" inputMode="decimal" value={gameType === 'fl' ? smallBet : smallBlind} onChange={(e) => { if (gameType === 'fl') setSmallBet(e.target.value); else { setSmallBlind(e.target.value); setCashBlindsTouched(true); } }} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-              </div>
-              <div className="flex-1 min-w-[120px]">
-                <label className="text-xs text-slate-400 block mb-1">{gameType === 'fl' ? 'Big bet' : 'Big blind'}</label>
-                <input type="text" inputMode="decimal" value={gameType === 'fl' ? bigBet : bigBlind} onChange={(e) => {
-                  const v = e.target.value;
-                  if (gameType === 'fl') {
-                    setBigBet(v);
-                  } else {
-                    setBigBlind(v);
-                    setCashBlindsTouched(true);
-                    const parsedBB = parseAmount(v) ?? Number(v);
-                    if (parsedBB && parsedBB > 0) {
-                      if (!thirdBlindCustomized) setThirdBlind(parsedBB * 2);
-                      if (!fourthBlindCustomized) setFourthBlind(parsedBB * 4);
-                    }
-                    if (anteType === 'traditional') setAnteAmount(suggestAnte(v));
-                  }
-                }} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-              </div>
-              {(anteType === 'three_blinds' || anteType === 'four_blinds') && (
-                <div className="flex-1 min-w-[120px]">
-                  <label className="text-xs text-amber-300 font-semibold block mb-1">Third blind</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={thirdBlind}
-                    onChange={(e) => {
-                      setThirdBlind(e.target.value);
-                      setThirdBlindCustomized(true);
-                    }}
-                    placeholder={String((parseAmount(bigBlind) ?? Number(bigBlind) ?? 2) * 2)}
-                    className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
-                  />
-                </div>
-              )}
-              {anteType === 'four_blinds' && (
-                <div className="flex-1 min-w-[120px]">
-                  <label className="text-xs text-amber-300 font-semibold block mb-1">Fourth blind</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={fourthBlind}
-                    onChange={(e) => {
-                      setFourthBlind(e.target.value);
-                      setFourthBlindCustomized(true);
-                    }}
-                    placeholder={String((parseAmount(bigBlind) ?? Number(bigBlind) ?? 2) * 4)}
-                    className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
-                  />
-                </div>
-              )}
-            </>
-          )}
-          <div className="min-w-[160px] flex-1">
-            <label className="text-xs text-slate-400 block mb-1">Ante / Blind Structure</label>
-            <select
-              value={anteType}
-              onChange={(e) => {
-                const t = e.target.value;
-                setAnteType(t);
-                const bbVal = parseAmount(bigBlind) ?? Number(bigBlind) ?? 2;
-                if (t === 'three_blinds') {
-                  if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
-                    setThirdBlind(bbVal * 2);
-                  }
-                } else if (t === 'four_blinds') {
-                  if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
-                    setThirdBlind(bbVal * 2);
-                  }
-                  if (!fourthBlindCustomized || Number(fourthBlind) === 10 || Number(fourthBlind) === 0) {
-                    setFourthBlind(bbVal * 4);
-                  }
-                }
-                if (t === 'traditional') setAnteAmount(suggestAnte(bigBlind));
-                else if (t === 'bba' || t === 'btn_ante') setAnteAmount(Number(bigBlind));
-                else if (t === 'sb_half_ante') setAnteAmount(Math.max(1, Math.round(Number(bigBlind) * 0.5)));
-                else setAnteAmount(0);
-              }}
-              className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-            >
-              <option value="none">No ante</option>
-              <option value="traditional">Traditional ante</option>
-              <option value="bba">Big blind ante (BBA)</option>
-              <option value="sb_half_ante">Small blind half ante (SB 0.5 BB)</option>
-              <option value="btn_ante">Button ante (BTN 1 BB)</option>
-              <option value="three_blinds">3 blinds</option>
-              <option value="four_blinds">4 blinds</option>
-            </select>
-          </div>
-          {isCash && anteType !== 'three_blinds' && anteType !== 'four_blinds' && (
-            <div className="flex-1 min-w-[120px]">
-              <label className="text-xs text-slate-400 block mb-1">Ante amount</label>
+        {isShortDeck ? (
+          <div className="flex flex-wrap items-end gap-3 mb-4">
+            <div className="flex-1 min-w-[140px]">
+              <label className="text-xs text-amber-300 font-semibold block mb-1">
+                Ante {sym && `(${sym})`}
+              </label>
               <input
                 type="text"
                 inputMode="decimal"
-                value={anteAmount}
-                disabled={anteType === 'none' || isBBA || isBtnAnte || isSBHalfAnte}
+                value={anteAmount !== '' ? anteAmount : (isCash ? '1' : '25')}
                 onChange={(e) => setAnteAmount(e.target.value)}
-                className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40"
+                placeholder={isCash ? '1' : '25'}
+                className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
               />
-              {isBBA && <div className="text-[10px] text-slate-500 mt-1">= 1 BB ({effBB}) for table</div>}
-              {isBtnAnte && <div className="text-[10px] text-emerald-400/80 mt-1">= 1 BB ({effBB}) paid by BTN</div>}
-              {isSBHalfAnte && <div className="text-[10px] text-amber-400/80 mt-1">= 0.5 BB ({Math.max(1, Math.round(effBB * 0.5))}) paid by SB</div>}
+              <span className="text-[11px] text-slate-400 block mt-1">
+                Everyone pays {sym}{anteAmount || (isCash ? '1' : '25')} ante; BTN pays double ({sym}{(Number(anteAmount) || (isCash ? 1 : 25)) * 2}). Action starts left of button (UTG).
+              </span>
             </div>
-          )}
-        </div>
-        {anteType === 'bba' && (
-          <div className="rounded-lg border border-[#2a2f37] bg-[#12161c] p-3 mb-4 space-y-2">
-            <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200">
-              <input
-                type="checkbox"
-                checked={sbHalfAnteShortHanded}
-                onChange={(e) => setSbHalfAnteShortHanded(e.target.checked)}
-                className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
-              />
-              <span>Small blind half ante when table gets short (SB pays 0.5 BB ante for whole table)</span>
-            </label>
-            {sbHalfAnteShortHanded && (
-              <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
-                <span>When remaining players are fewer than:</span>
-                <input
-                  type="number"
-                  min="2"
-                  max="10"
-                  value={shortHandedThreshold}
-                  onChange={(e) => setShortHandedThreshold(Math.max(2, Math.min(10, Number(e.target.value) || 5)))}
-                  className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
-                />
-                <span className="text-[11px] text-slate-500">
-                  (Default: 5 — if less than {shortHandedThreshold} players remain, SB half ante is used instead of BBA)
-                </span>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-end gap-3 mb-4">
+              {(isCash || gameType === 'fl') && (
+                <>
+                  <div className="flex-1 min-w-[120px]">
+                    <label className="text-xs text-slate-400 block mb-1">{gameType === 'fl' ? 'Small bet' : 'Small blind'}</label>
+                    <input type="text" inputMode="decimal" value={gameType === 'fl' ? smallBet : smallBlind} onChange={(e) => { if (gameType === 'fl') setSmallBet(e.target.value); else { setSmallBlind(e.target.value); setCashBlindsTouched(true); } }} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                  </div>
+                  <div className="flex-1 min-w-[120px]">
+                    <label className="text-xs text-slate-400 block mb-1">{gameType === 'fl' ? 'Big bet' : 'Big blind'}</label>
+                    <input type="text" inputMode="decimal" value={gameType === 'fl' ? bigBet : bigBlind} onChange={(e) => {
+                      const v = e.target.value;
+                      if (gameType === 'fl') {
+                        setBigBet(v);
+                      } else {
+                        setBigBlind(v);
+                        setCashBlindsTouched(true);
+                        const parsedBB = parseAmount(v) ?? Number(v);
+                        if (parsedBB && parsedBB > 0) {
+                          if (!thirdBlindCustomized) setThirdBlind(parsedBB * 2);
+                          if (!fourthBlindCustomized) setFourthBlind(parsedBB * 4);
+                        }
+                        if (anteType === 'traditional') setAnteAmount(suggestAnte(v));
+                      }
+                    }} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                  </div>
+                  {(anteType === 'three_blinds' || anteType === 'four_blinds') && (
+                    <div className="flex-1 min-w-[120px]">
+                      <label className="text-xs text-amber-300 font-semibold block mb-1">Third blind</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={thirdBlind}
+                        onChange={(e) => {
+                          setThirdBlind(e.target.value);
+                          setThirdBlindCustomized(true);
+                        }}
+                        placeholder={String((parseAmount(bigBlind) ?? Number(bigBlind) ?? 2) * 2)}
+                        className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
+                      />
+                    </div>
+                  )}
+                  {anteType === 'four_blinds' && (
+                    <div className="flex-1 min-w-[120px]">
+                      <label className="text-xs text-amber-300 font-semibold block mb-1">Fourth blind</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={fourthBlind}
+                        onChange={(e) => {
+                          setFourthBlind(e.target.value);
+                          setFourthBlindCustomized(true);
+                        }}
+                        placeholder={String((parseAmount(bigBlind) ?? Number(bigBlind) ?? 2) * 4)}
+                        className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="min-w-[160px] flex-1">
+                <label className="text-xs text-slate-400 block mb-1">Ante / Blind Structure</label>
+                <select
+                  value={anteType}
+                  onChange={(e) => {
+                    const t = e.target.value;
+                    setAnteType(t);
+                    const bbVal = parseAmount(bigBlind) ?? Number(bigBlind) ?? 2;
+                    if (t === 'three_blinds') {
+                      if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
+                        setThirdBlind(bbVal * 2);
+                      }
+                    } else if (t === 'four_blinds') {
+                      if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
+                        setThirdBlind(bbVal * 2);
+                      }
+                      if (!fourthBlindCustomized || Number(fourthBlind) === 10 || Number(fourthBlind) === 0) {
+                        setFourthBlind(bbVal * 4);
+                      }
+                    }
+                    if (t === 'traditional') setAnteAmount(suggestAnte(bigBlind));
+                    else if (t === 'bba' || t === 'btn_ante') setAnteAmount(Number(bigBlind));
+                    else if (t === 'sb_half_ante') setAnteAmount(Math.max(1, Math.round(Number(bigBlind) * 0.5)));
+                    else setAnteAmount(0);
+                  }}
+                  className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                >
+                  <option value="none">No ante</option>
+                  <option value="traditional">Traditional ante</option>
+                  <option value="bba">Big blind ante (BBA)</option>
+                  <option value="btn_ante">Button ante (BTN 1 BB)</option>
+                  {isCash && <option value="three_blinds">3 blinds</option>}
+                  {isCash && <option value="four_blinds">4 blinds</option>}
+                </select>
+              </div>
+              {isCash && anteType !== 'three_blinds' && anteType !== 'four_blinds' && (
+                <div className="flex-1 min-w-[120px]">
+                  <label className="text-xs text-slate-400 block mb-1">Ante amount</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={anteAmount}
+                    disabled={anteType === 'none' || isBBA || isBtnAnte || isSBHalfAnte}
+                    onChange={(e) => setAnteAmount(e.target.value)}
+                    className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40"
+                  />
+                  {isBBA && <div className="text-[10px] text-slate-500 mt-1">= 1 BB ({effBB}) for table</div>}
+                  {isBtnAnte && <div className="text-[10px] text-emerald-400/80 mt-1">= 1 BB ({effBB}) paid by BTN</div>}
+                  {isSBHalfAnte && <div className="text-[10px] text-amber-400/80 mt-1">= 0.5 BB ({Math.max(1, Math.round(effBB * 0.5))}) paid by SB</div>}
+                </div>
+              )}
+            </div>
+            {anteType === 'bba' && (
+              <div className="rounded-lg border border-[#2a2f37] bg-[#12161c] p-3 mb-4 space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={sbHalfAnteShortHanded}
+                    onChange={(e) => setSbHalfAnteShortHanded(e.target.checked)}
+                    className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                  />
+                  <span>Short-handed BBA reduction (BB pays 0.5 BB ante for table when fewer than X players remain)</span>
+                </label>
+                {sbHalfAnteShortHanded && (
+                  <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
+                    <span>When remaining players are fewer than:</span>
+                    <input
+                      type="number"
+                      min="2"
+                      max="10"
+                      value={shortHandedThreshold}
+                      onChange={(e) => setShortHandedThreshold(Math.max(2, Math.min(10, Number(e.target.value) || 5)))}
+                      className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
+                    />
+                    <span className="text-[11px] text-slate-500">
+                      (Default: 5 — if less than {shortHandedThreshold} players remain, BB pays 1/2 ante instead of full BBA)
+                    </span>
+                  </div>
+                )}
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200 pt-1 border-t border-[#2a2f37]/60">
+                  <input
+                    type="checkbox"
+                    checked={bbaEarlyHalfAnte}
+                    onChange={(e) => setBbaEarlyHalfAnte(e.target.checked)}
+                    className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                  />
+                  <span>Early level BBA reduction (pays 0.5 BB ante through level X)</span>
+                </label>
+                {bbaEarlyHalfAnte && (
+                  <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
+                    <span>Pay 1/2 BB ante through level:</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={bbaEarlyHalfAnteLevel}
+                      onChange={(e) => setBbaEarlyHalfAnteLevel(Math.max(1, Number(e.target.value) || 2))}
+                      className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
+                    />
+                    <span className="text-[11px] text-slate-500">
+                      (Ante is 0.5 BB for levels 1 to {bbaEarlyHalfAnteLevel}; full 1 BB ante starts on level {Number(bbaEarlyHalfAnteLevel) + 1})
+                    </span>
+                  </div>
+                )}
               </div>
             )}
-          </div>
+          </>
         )}
         {gameType === 'fl' && (
           <div className="flex items-center gap-3 mb-4">
@@ -753,135 +848,222 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             <span className="text-[11px] text-slate-500">e.g. 3 – 4-bet is the cap</span>
           </div>
         )}
-        {isCash && (
+        {isCash && !isShortDeck && (
           <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4 space-y-2.5">
             <div className="text-xs font-semibold text-slate-300">Straddle Settings</div>
             <ToggleRow label="Allow straddle (UTG)" checked={allowStraddle} onChange={setAllowStraddle} />
-            {allowStraddle && (
-              <div className="flex items-center gap-2 pl-4 py-1">
-                <label className="text-xs text-slate-400">Straddle amount:</label>
-                <input
-                  type="number"
-                  value={straddleAmount}
-                  onChange={(e) => setStraddleAmount(e.target.value)}
-                  placeholder="Amount"
-                  className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1 text-white text-xs"
-                />
-              </div>
-            )}
             <ToggleRow label="Allow re-straddle" checked={allowMultiStraddle} onChange={setAllowMultiStraddle} disabled={!allowStraddle} />
           </div>
         )}
-        {!isCash && (
-          <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
-            <div className="text-xs text-slate-400 mb-2">Tournament format</div>
-            <div className="flex flex-wrap items-center gap-3 mb-3">
-              <select value={tournamentFormat} onChange={(e) => setTournamentFormat(e.target.value)} className="rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm">
-                <option value="freezeout">Freezeout</option>
-                <option value="reentry">Re-entry</option>
-                <option value="rebuy">Re-buy</option>
-                <option value="bounty">Bounty</option>
-                <option value="mystery bounty">Mystery Bounty</option>
-                <option value="shootout">Shootout</option>
-              </select>
-              {tournamentFormat === 'reentry' && (
+        {!isCash && (() => {
+          const effBuyIn = Number(buyIn) || 50;
+          const currentStartingChips = Math.round(Number(players[0]?.stack) || (stackInBB ? 100 * bb : (parseAmount(bulkStack) || 100 * bb)) || 10000);
+          const dynamicRebuyPrice = rebuyPrice !== '' ? rebuyPrice : effBuyIn;
+          const dynamicRebuyChips = rebuyChips !== '' ? rebuyChips : currentStartingChips;
+          const dynamicAddOnPrice = addOnPrice !== '' ? addOnPrice : effBuyIn;
+          const dynamicAddOnChips = addOnChips !== '' ? addOnChips : Math.round(currentStartingChips * 1.5);
+          const dynamicStackCapAmount = rebuyStackCapAmount !== '' ? rebuyStackCapAmount : currentStartingChips;
+
+          return (
+            <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
+              <div className="text-xs text-slate-400 mb-2">Tournament format</div>
+              <div className="flex flex-wrap items-center gap-3 mb-3">
+                <select value={tournamentFormat} onChange={(e) => setTournamentFormat(e.target.value)} className="rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm">
+                  <option value="freezeout">Freezeout</option>
+                  <option value="reentry">Re-entry</option>
+                  <option value="rebuy">Re-buy</option>
+                  <option value="bounty">Bounty</option>
+                  <option value="mystery bounty">Mystery Bounty</option>
+                </select>
                 <div className="flex items-center gap-2">
-                  <label className="text-xs text-slate-400">Max re-entries</label>
-                  <input type="number" min="0" value={maxReEntries} onChange={(e) => setMaxReEntries(e.target.value)} className="w-20 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-                  <span className="text-[11px] text-slate-500">0 = unlimited</span>
+                  <label className="text-xs text-slate-400">Buy-in</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={buyIn}
+                    onChange={(e) => setBuyIn(e.target.value)}
+                    className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                  />
                 </div>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-3 mb-3">
-              <ToggleRow label="Late registration" checked={lateRegEnabled} onChange={setLateRegEnabled} />
-              {lateRegEnabled && (
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-slate-400">Until level</label>
-                  <input type="number" min="1" value={lateRegLevel} onChange={(e) => setLateRegLevel(e.target.value)} className="w-20 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-                </div>
-              )}
-            </div>
-            {tournamentFormat === 'rebuy' && (
-              <div className="border-t border-[#2a2f37] pt-3 mt-2">
-                <div className="text-xs text-slate-400 mb-2">Re-buy</div>
-                <div className="flex flex-wrap items-center gap-3 mb-2">
+                {tournamentFormat === 'reentry' && (
                   <div className="flex items-center gap-2">
-                    <label className="text-xs text-slate-400">Price</label>
-                    <input type="number" value={rebuyPrice} onChange={(e) => setRebuyPrice(e.target.value)} placeholder="= buy-in" className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                    <label className="text-xs text-slate-400">Max re-entries</label>
+                    <input type="number" min="0" value={maxReEntries} onChange={(e) => setMaxReEntries(e.target.value)} className="w-20 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                    <span className="text-[11px] text-slate-500">0 = unlimited</span>
                   </div>
+                )}
+                {tournamentFormat === 'bounty' && (
                   <div className="flex items-center gap-2">
-                    <label className="text-xs text-slate-400">New chips</label>
-                    <input type="number" value={rebuyChips} onChange={(e) => setRebuyChips(e.target.value)} placeholder="= starting stack" className="w-28 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-                  </div>
-                </div>
-                <ToggleRow label="Allow add-on" checked={allowAddOn} onChange={setAllowAddOn} />
-                {allowAddOn && (
-                  <div className="flex flex-wrap items-center gap-3 mt-2">
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-slate-400">Add-on price</label>
-                      <input type="number" value={addOnPrice} onChange={(e) => setAddOnPrice(e.target.value)} placeholder="= buy-in" className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-slate-400">Add-on chips</label>
-                      <input type="number" value={addOnChips} onChange={(e) => setAddOnChips(e.target.value)} placeholder="1.5× starting stack" className="w-28 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-                    </div>
+                    <label className="text-xs text-amber-300 font-semibold">Bounty amount</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={bountyAmount}
+                      onChange={(e) => setBountyAmount(e.target.value)}
+                      placeholder="50"
+                      className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                    />
                   </div>
                 )}
               </div>
-            )}
-            {/* Tournament Bounties */}
-            <div className="border-t border-[#2a2f37] pt-3 mt-3">
-              <div className="flex items-center gap-1.5 text-xs text-amber-300 font-medium mb-2">
-                <Award size={14} className="text-amber-400" />
-                <span>Tournament Bounties</span>
+              {tournamentFormat === 'mystery bounty' && (
+                <div className="text-[11px] text-amber-300/90 mb-3 bg-amber-950/30 border border-amber-500/30 rounded-lg p-2.5">
+                  Mystery Bounty: Eliminating a player prompts host to enter the drawn envelope amount after the hand.
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-3 mb-3">
+                <ToggleRow label="Late registration" checked={lateRegEnabled} onChange={setLateRegEnabled} />
+                {lateRegEnabled && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-slate-400">Until level</label>
+                    <input type="number" min="1" value={lateRegLevel} onChange={(e) => setLateRegLevel(e.target.value)} className="w-20 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                  </div>
+                )}
               </div>
-              <div className="space-y-2">
-                <div>
-                  <ToggleRow label="Standard Knockout Bounty" checked={tournamentBounty} onChange={setTournamentBounty} />
-                  {tournamentBounty && (
-                    <div className="flex items-center gap-2 mt-2 ml-1">
-                      <label className="text-xs text-slate-400">Bounty amount:</label>
+
+              {tournamentFormat === 'rebuy' && (
+                <div className="border-t border-[#2a2f37] pt-3 mt-2 space-y-3">
+                  <div className="text-xs font-semibold text-slate-300">Re-buy Configuration</div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-slate-400">Rebuy price</label>
                       <input
                         type="number"
-                        min="1"
-                        value={bountyAmount}
-                        onChange={(e) => setBountyAmount(e.target.value)}
-                        placeholder="50"
-                        className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white text-sm"
+                        value={rebuyPrice}
+                        onChange={(e) => setRebuyPrice(e.target.value)}
+                        placeholder={String(dynamicRebuyPrice)}
+                        className="w-28 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
                       />
-                      <span className="text-[11px] text-slate-500">Fixed bounty awarded to the covering eliminator</span>
                     </div>
-                  )}
-                </div>
-                <div className="pt-1">
-                  <ToggleRow label="Mystery Bounty" checked={mysteryBounty} onChange={setMysteryBounty} />
-                  {mysteryBounty && (
-                    <div className="text-[11px] text-slate-400 mt-1 ml-1">
-                      Eliminating a player prompts host to enter the drawn envelope amount after the hand.
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-slate-400">Rebuy chips</label>
+                      <input
+                        type="number"
+                        value={rebuyChips}
+                        onChange={(e) => setRebuyChips(e.target.value)}
+                        placeholder={String(dynamicRebuyChips)}
+                        className="w-32 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                      />
                     </div>
-                  )}
+                  </div>
+
+                  {/* Rebuy Modifiers */}
+                  <div className="rounded-lg bg-[#12161c] border border-[#2a2f37] p-2.5 space-y-2">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rebuy Modifiers</div>
+
+                    {/* Modifier 1: Time Cutoff */}
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={rebuyTimeEnabled}
+                          onChange={(e) => setRebuyTimeEnabled(e.target.checked)}
+                          className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                        />
+                        <span>Cutoff level (time limit)</span>
+                      </label>
+                      {rebuyTimeEnabled && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-slate-400">Level:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={rebuyCutoffLevel}
+                            onChange={(e) => setRebuyCutoffLevel(e.target.value)}
+                            placeholder="4"
+                            className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-xs text-center font-bold"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Modifier 2: Stack Size Requirement */}
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={rebuyStackCapEnabled}
+                          onChange={(e) => setRebuyStackCapEnabled(e.target.checked)}
+                          className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                        />
+                        <span>Stack requirement (must be ≤ amount)</span>
+                      </label>
+                      {rebuyStackCapEnabled && (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min="0"
+                            value={rebuyStackCapAmount}
+                            onChange={(e) => setRebuyStackCapAmount(e.target.value)}
+                            placeholder={String(dynamicStackCapAmount)}
+                            className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-xs text-center font-bold"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Modifier 3: Capped Rebuys per Player */}
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={rebuyCappedEnabled}
+                          onChange={(e) => setRebuyCappedEnabled(e.target.checked)}
+                          className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                        />
+                        <span>Capped rebuys per player</span>
+                      </label>
+                      {rebuyCappedEnabled && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-slate-400">Max:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={rebuyMaxRebuys}
+                            onChange={(e) => setRebuyMaxRebuys(e.target.value)}
+                            placeholder="1"
+                            className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-xs text-center font-bold"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Add-on configuration */}
+                  <div className="pt-1">
+                    <ToggleRow label="Allow add-on (at break)" checked={allowAddOn} onChange={setAllowAddOn} />
+                    {allowAddOn && (
+                      <div className="flex flex-wrap items-center gap-3 mt-2">
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-slate-400">Add-on price</label>
+                          <input
+                            type="number"
+                            value={addOnPrice}
+                            onChange={(e) => setAddOnPrice(e.target.value)}
+                            placeholder={String(dynamicAddOnPrice)}
+                            className="w-28 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-slate-400">Add-on chips</label>
+                          <input
+                            type="number"
+                            value={addOnChips}
+                            onChange={(e) => setAddOnChips(e.target.value)}
+                            placeholder={String(dynamicAddOnChips)}
+                            className="w-32 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
         {!isCash && (
           <div className="mb-4">
-            <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-3">
-              <ChipDenominationPicker
-                selected={chipDenoms}
-                onChange={(denoms) => {
-                  setChipDenoms(denoms);
-                  if (denoms.length) {
-                    const lowest = [...denoms].sort((a, b) => a - b)[0];
-                    const newSched = defaultScheduleFor(lowest);
-                    setSchedule(newSched);
-                    setLateRegLevel(firstBreakLevelNum(newSched));
-                  }
-                }}
-              />
-              <div className="text-[11px] text-slate-500 mt-2">Bets and raises must be makeable with these chips. The blind schedule updates to match the lowest denomination.</div>
-            </div>
             <BlindScheduleEditor schedule={schedule} onChange={setSchedule} anteType={anteType} chipDenominations={chipDenoms} />
           </div>
         )}

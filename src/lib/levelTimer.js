@@ -26,8 +26,9 @@ function segmentExpired(hand, now) {
   const cfg = hand.levelConfig || defaultLevelConfig();
   const method = cfg.method || 'minutes';
 
-  if (item.type === 'break') {
-    const dur = (Number(item.minutes) || 0) * 60000;
+  if (item.type === 'break' || item.type === 'color_up') {
+    const isCol = Boolean(item.isColorUp || item.type === 'color_up' || (item.race && (item.race.retired || item.race.replacement)));
+    const dur = (Number(item.minutes) || (isCol ? 2 : 10)) * 60000;
     if (!dur) return true;
     return effectiveElapsed(hand, now) >= dur;
   }
@@ -66,13 +67,14 @@ export function levelTimerState(hand, now = Date.now()) {
   const item = schedule[tLevel];
   const cfg = hand.levelConfig || defaultLevelConfig();
   const method = cfg.method || 'minutes';
-  const phase = item?.type === 'break' ? 'break' : 'level';
+  const isColorUpBreak = Boolean(item?.isColorUp || item?.type === 'color_up' || (item?.type === 'break' && item?.race && (item?.race?.retired || item?.race?.replacement)));
+  const phase = (item?.type === 'break' || item?.type === 'color_up') ? (isColorUpBreak ? 'color_up' : 'break') : 'level';
   let remainingMs = null;
   let progress = null;
   let expired = false;
 
-  if (phase === 'break') {
-    const dur = (Number(item?.minutes) || 0) * 60000;
+  if (phase === 'break' || phase === 'color_up') {
+    const dur = (Number(item?.minutes) || (isColorUpBreak ? 2 : (phase === 'break' ? 10 : 0))) * 60000;
     const elapsed = effectiveElapsed(hand, now);
     remainingMs = dur > 0 ? Math.max(0, dur - elapsed) : 0;
     progress = { remainingMs };
@@ -109,7 +111,7 @@ export function levelTimerState(hand, now = Date.now()) {
 
 export function formatTimer(st) {
   if (!st || !st.active) return '';
-  if (st.method === 'minutes' || st.phase === 'break') {
+  if (st.method === 'minutes' || st.phase === 'break' || st.phase === 'color_up') {
     const s = Math.max(0, Math.ceil((st.remainingMs || 0) / 1000));
     const m = Math.floor(s / 60);
     const r = s % 60;
@@ -120,6 +122,7 @@ export function formatTimer(st) {
 
 export function formatTimerLabel(st) {
   if (!st || !st.active) return '';
+  if (st.phase === 'color_up') return 'color up';
   if (st.phase === 'break') return 'break';
   return st.method === 'minutes' ? 'level' : st.method === 'hands' ? 'hands' : 'orbits';
 }
@@ -131,7 +134,7 @@ export function scheduledLevelNumber(hand) {
   const tLevel = hand.tLevel || 0;
   let count = 0;
   for (let i = 0; i <= tLevel && i < schedule.length; i++) {
-    if (schedule[i]?.type !== 'break') count++;
+    if (schedule[i]?.type !== 'break' && schedule[i]?.type !== 'color_up') count++;
   }
   return Math.max(1, count);
 }
@@ -143,7 +146,7 @@ export function appliedLevelNumber(hand) {
   const blindLevel = hand.blindLevel || 0;
   let count = 0;
   for (let i = 0; i <= blindLevel && i < schedule.length; i++) {
-    if (schedule[i]?.type !== 'break') count++;
+    if (schedule[i]?.type !== 'break' && schedule[i]?.type !== 'color_up') count++;
   }
   return Math.max(1, count);
 }
@@ -183,7 +186,30 @@ export function advanceTimerSegment(hand, now = Date.now()) {
     const next = (h.tLevel || 0) + 1;
     if (next >= schedule.length) break;
     const nextItem = schedule[next];
-    if (nextItem?.type === 'break') {
+    if (nextItem?.type === 'color_up') {
+      const rc = nextItem.race;
+      const retiredNum = parseAmount(rc?.retired) ?? Number(rc?.retired);
+      const replacementNum = parseAmount(rc?.replacement) ?? Number(rc?.replacement);
+      const race = rc && retiredNum > 0 && replacementNum > 0
+        ? { ...rc, retired: retiredNum, replacement: replacementNum, tLevel: next }
+        : { retired: 25, replacement: 100, tLevel: next };
+      let nextPlayable = next + 1;
+      while (nextPlayable < schedule.length && (schedule[nextPlayable]?.type === 'break' || schedule[nextPlayable]?.type === 'color_up')) {
+        nextPlayable++;
+      }
+      h = {
+        ...h,
+        tLevel: next,
+        inBreak: true,
+        isColorUp: true,
+        pendingRace: race,
+        pauseStart: now,
+        levelStartEpoch: now,
+        levelHandsCompleted: 0,
+        pendingLevelIdx: nextPlayable,
+      };
+      break;
+    } else if (nextItem?.type === 'break') {
       const rc = nextItem.race;
       const race = rc && Number(rc.retired) > 0 && Number(rc.replacement) > 0
         ? { ...rc, tLevel: next }
@@ -214,7 +240,7 @@ export function advanceTimerSegment(hand, now = Date.now()) {
 export function applyNextLevel(hand) {
   const schedule = hand.blindSchedule || [];
   let target = hand.pendingLevelIdx ?? hand.blindLevel ?? 0;
-  while (target < schedule.length && schedule[target]?.type === 'break') target++;
+  while (target < schedule.length && (schedule[target]?.type === 'break' || schedule[target]?.type === 'color_up')) target++;
   if (target >= schedule.length) {
     return { ...hand, blindLevel: hand.blindLevel };
   }

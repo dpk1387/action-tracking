@@ -191,7 +191,7 @@ export default function DirectorControlDock({
             <RefreshCw size={17} className="text-purple-400" />
             <span>Rebuy</span>
           </button>
-        ) : tournamentType === 'freezeout' || tournamentType === 'shootout' ? (
+        ) : tournamentType === 'freezeout' ? (
           <button
             type="button"
             disabled
@@ -212,7 +212,7 @@ export default function DirectorControlDock({
           </button>
         )}
 
-        {/* 6. Record Bust & Manual Stepper */}
+        {/* 6. Record Bust & Quick Field - */}
         <div className="flex gap-2">
           {/* Record Bust */}
           <button
@@ -224,35 +224,25 @@ export default function DirectorControlDock({
             <span>Record Bust</span>
           </button>
 
-          {/* Field Stepper: Disabled - button when remaining <= 2 so it's not accidentally pressed! */}
-          <div className="flex flex-col bg-slate-800/50 border border-slate-700/60 rounded-xl p-1 justify-between w-20">
-            <span className="text-[9px] text-center font-bold text-slate-400 uppercase">Field</span>
-            <div className="flex items-center gap-0.5">
-              <button
-                type="button"
-                disabled={remainingPlayers <= 2}
-                onClick={() => onAdjustPlayerCount(-1)}
-                title={
-                  remainingPlayers <= 2
-                    ? '2 players left (heads-up). Record bust to end tournament.'
-                    : 'Manually decrease field count (-1)'
-                }
-                className={`flex-1 py-1.5 rounded bg-rose-900/40 hover:bg-rose-900/60 text-rose-300 flex items-center justify-center font-bold text-xs transition-colors ${
-                  remainingPlayers <= 2 ? 'opacity-20 cursor-not-allowed pointer-events-none' : 'cursor-pointer'
-                }`}
-              >
-                <Minus size={12} />
-              </button>
-              <button
-                type="button"
-                onClick={() => onAdjustPlayerCount(1)}
-                title="Manually increase field count (+1)"
-                className="flex-1 py-1.5 rounded bg-emerald-900/40 hover:bg-emerald-900/60 text-emerald-300 flex items-center justify-center font-bold text-xs cursor-pointer"
-              >
-                <Plus size={12} />
-              </button>
-            </div>
-          </div>
+          {/* Quick Field - Button (decrements remaining field count by 1) */}
+          <button
+            type="button"
+            disabled={remainingPlayers <= 2}
+            onClick={() => onAdjustPlayerCount(-1)}
+            title={
+              remainingPlayers <= 2
+                ? '2 players left (heads-up). Record bust to end tournament.'
+                : 'Quick bust: decrease remaining field count by 1'
+            }
+            className={`py-3 px-3 rounded-xl font-bold text-xs border transition-all flex flex-col items-center justify-center gap-1 ${
+              remainingPlayers <= 2
+                ? 'bg-slate-900/30 border-slate-800 text-slate-600 cursor-not-allowed opacity-30 pointer-events-none'
+                : 'bg-rose-950/40 border-rose-800/50 hover:bg-rose-900/60 text-rose-300 cursor-pointer'
+            }`}
+          >
+            <Minus size={16} />
+            <span>Field -</span>
+          </button>
         </div>
       </div>
     </div>

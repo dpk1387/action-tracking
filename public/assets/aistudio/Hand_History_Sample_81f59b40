@@ -1,0 +1,12 @@
+Hand #1   ·   $1/$2   ·   No ante   ·   Pot $63,,,,,,,,,,
+Board,,,,,,,,,,
+,[S1] · [pos],[S2] · [pos],[S3] · [pos],[S4] · [pos],[S5] · [pos],[S6] · [pos],[S7] · [pos],[S8] · [pos],[S9] · [pos],[S10] · [pos]
+Stack,[S1 stack],[S2 stack],[S3 stack],[S4 stack],[S5 stack],[S6 stack],[S7 stack],[S8 stack],[S9 stack],[S10 stack]
+Hand,[S1 hand],[S2 hand],[S3 hand],[S4 hand],[S5] hand,[S6] hand,[S7 hand],[S8 hand],[S9 hand],[S10 hand]
+Preflop,,,,,,,,SB $1,BB $2,Straddle $4
+,Fold,Fold,Fold,Call $4,Raise $8,3-bet $12,Fold,Fold,Fold,Call $8
+,,,,Fold,Call $4,,,,,
+Flop,,,,,,,,,,Check
+,,,,,Check,,,,,
+Turn,,,,,,,,,,Bet $20
+,,,,Fold,Fold,,,,,Win $63

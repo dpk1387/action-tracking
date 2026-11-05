@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Clock } from 'lucide-react';
-import { money, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown, hasSoleDeepestStack, bettingFrozen } from '@/lib/poker';
+import { money, formatPotAmount, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown, hasSoleDeepestStack, bettingFrozen } from '@/lib/poker';
 import AllInView from './AllInView';
 
 function raiseLabelLocal(level) {
@@ -81,11 +81,14 @@ function MiniCard({ card, highlight }) {
 export default function PokerTable({
   hand, positions, pot, sidePots = [], holeCards, equity, hideAmounts,
   highlightKeys, winningPlayerIds, stackVisibleIds, showPot, alwaysShow,
-  helpMode = false, clockSecondsLeft, clockActive, clockType, onUseTimeBank, onAdjustTimeBanks
+  helpMode = false, clockSecondsLeft, clockActive, clockType, onUseTimeBank, onAdjustTimeBanks,
+  displayUnit = 'chips'
 }) {
   const n = hand.players.length;
   const tableSize = hand.tableSize || n;
-  const cur = hand.currency;
+  const isTourney = hand.mode === 'tournament';
+  const cur = isTourney ? '' : hand.currency;
+  const activeUnit = displayUnit || hand?.displayUnit || 'chips';
   const lowGame = variantMeta(hand.variant).group === 'low';
 
   const stackFor = (p) => p.stack;
@@ -154,7 +157,12 @@ export default function PokerTable({
   const boardLenRef = useRef(-1);
   const [burnKey, setBurnKey] = useState(0);
 
-  useEffect(() => { seenRef.current = {}; boardLenRef.current = -1; }, [hand.handNumber]);
+  useEffect(() => {
+    seenRef.current = {};
+    boardLenRef.current = -1;
+    hadAllInRef.current = false;
+    setViewMode('classic');
+  }, [hand.handNumber]);
 
   useEffect(() => {
     const total = (hand.communityCards || []).filter((c) => !c.hidden).length +
@@ -198,6 +206,7 @@ export default function PokerTable({
         clockActive={clockActive}
         clockType={clockType}
         onUseTimeBank={onUseTimeBank}
+        displayUnit={activeUnit}
       />
     );
   }
@@ -260,7 +269,7 @@ export default function PokerTable({
           return (
             <div key={`empty-${seatNum}`} className="absolute" style={{ left: `${x}%`, top: `${y}%`, transform: 'translate(-50%, -50%)' }}>
               <div className="relative w-28 rounded-lg border-2 border-dashed border-[#2a2f37] bg-[#15181d]/40 px-2 py-2 text-center opacity-40">
-                <div className="text-[10px] text-slate-600">Seat {seatNum}</div>
+                <div className="text-[10px] text-slate-600">{hand.mode === 'cash' ? 'Open' : `Seat ${seatNum}`}</div>
                 <div className="text-[10px] text-slate-700 mt-0.5">Empty</div>
               </div>
             </div>
@@ -290,27 +299,27 @@ export default function PokerTable({
             : la.type === 'check'
             ? 'Check'
             : la.type === 'allin'
-            ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur)}`)
+            ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur, hand, activeUnit)}`)
             : la.type === 'straddle'
-            ? `Straddle ${formatBetAmount(la.amount, cur)}`
+            ? `Straddle ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === 'kill'
-            ? `Kill ${formatBetAmount(la.amount, cur)}`
+            ? `Kill ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === 'bet' || la.type === 'raise'
             ? (isAllInPlayer
-                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur)}`)
-                : `${raiseLabelLocal(la.raiseLevel)} ${formatBetAmount(la.amount, cur)}`)
+                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur, hand, activeUnit)}`)
+                : `${raiseLabelLocal(la.raiseLevel)} ${formatBetAmount(la.amount, cur, hand, activeUnit)}`)
             : la.type === 'call'
             ? (isAllInPlayer
-                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur)}`)
-                : `Call ${formatBetAmount(la.amount, cur)}`)
+                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.callAmount != null ? la.callAmount : la.amount, cur, hand, activeUnit)}`)
+                : `Call ${formatBetAmount(la.callAmount != null ? la.callAmount : la.amount, cur, hand, activeUnit)}`)
             : la.type === 'sb'
-            ? `SB ${formatBetAmount(la.amount, cur)}`
+            ? `SB ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === 'bb'
-            ? `BB ${formatBetAmount(la.amount, cur)}`
+            ? `BB ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === '3b'
-            ? `3B ${formatBetAmount(la.amount, cur)}`
+            ? `3B ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === '4b'
-            ? `4B ${formatBetAmount(la.amount, cur)}`
+            ? `4B ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : ''
           : isAllInPlayer
           ? (actionEnded && isSoleDeepest ? '' : 'All-in')
@@ -352,14 +361,14 @@ export default function PokerTable({
                 {isNit && <span className="shrink-0 rounded bg-amber-500/20 text-amber-300 px-1 text-[9px] font-semibold">NIT</span>}
               </div>
               {stackShown(p) && (
-                <div className={`text-sm font-semibold ${atRisk ? 'text-rose-300' : 'text-white'}`}>{formatPlayerTagAmount(p.stack, cur, hand)}</div>
+                <div className={`text-sm font-semibold ${atRisk ? 'text-rose-300' : 'text-white'}`}>{formatPlayerTagAmount(p.stack, cur, hand, false, activeUnit)}</div>
               )}
               {helpMode && hand.mode !== 'cash' && (() => {
                 const effM = calculateEffectiveM(p, hand);
                 if (effM == null) return null;
                 const formattedM = effM < 100 ? effM.toFixed(1) : Math.round(effM).toString();
                 return (
-                  <div className="text-[10px] font-mono font-medium text-cyan-300 mt-0.5">
+                  <div className="text-[10px] tabular-nums font-medium text-cyan-300 mt-0.5">
                     Eff M: {formattedM}
                   </div>
                 );
@@ -384,7 +393,7 @@ export default function PokerTable({
                   ? (() => {
                       const lvl = oot.raiseLevel || 1;
                       const tier = lvl <= 1 ? 'bet' : lvl === 2 ? 'raise' : `${lvl}-bet`;
-                      return `OOT: ${tier}${oot.amount ? ' ' + formatBetAmount(oot.amount, cur) : ''}`;
+                      return `OOT: ${tier}${oot.amount ? ' ' + formatBetAmount(oot.amount, cur, hand, activeUnit) : ''}`;
                     })()
                   : `OOT: ${oot.kind}`;
                 return (
@@ -405,17 +414,17 @@ export default function PokerTable({
             <span className="text-xs text-slate-300 font-semibold truncate max-w-[120px]">
               {hand.players[hand.currentPlayer]?.name}
             </span>
-            <span className={`text-base font-black font-mono tracking-tight ${clockSecondsLeft > 10 ? 'text-emerald-400' : clockSecondsLeft > 5 ? 'text-amber-400' : 'text-rose-400'}`}>
+            <span className={`text-base font-black tabular-nums tracking-tight ${clockSecondsLeft > 10 ? 'text-emerald-400' : clockSecondsLeft > 5 ? 'text-amber-400' : 'text-rose-400'}`}>
               {clockSecondsLeft}s
             </span>
           </div>
         )}
         <div className="text-center">
           <div className="text-xs text-slate-400 uppercase tracking-wider">Pot</div>
-          <div className="text-3xl font-bold text-white">{potShown ? money(pot, cur) : '—'}</div>
+          <div className="text-3xl font-bold text-white tabular-nums">{potShown ? formatPotAmount(pot, cur, hand, activeUnit) : '—'}</div>
           {potShown && sidePots.length > 0 && (
             <div className="text-[10px] text-amber-300/80 mt-0.5">
-              Side pots: {sidePots.map((sp) => formatSidePotAmount(sp.amount, cur)).join(' / ')}
+              Side pots: {sidePots.map((sp) => formatSidePotAmount(sp.amount, cur, hand, activeUnit)).join(' / ')}
             </div>
           )}
         </div>

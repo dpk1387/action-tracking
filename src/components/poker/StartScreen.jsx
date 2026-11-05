@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogIn, Play, Clock, Users, Spade, Trash2, Trophy, X, Sliders } from 'lucide-react';
+import { LogIn, Play, Clock, Users, Spade, Trash2, Trophy, X, Sliders, Plus } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
-import { money, VARIANTS } from '@/lib/poker';
+import { money, VARIANTS, formatSessionName } from '@/lib/poker';
 import { discardSavedSession, discardAllSavedSessions } from '@/lib/liveSync';
 import { db } from '@/api/base44Client';
+import { mttStore } from '@/lib/mttStore';
+import TournamentManagerModal from '@/components/poker/TournamentManagerModal';
 
 export default function StartScreen({ onNewSession, onResumeSession, savedGuestSession, savedGuestUpdatedAt, onDismissGuest }) {
   const { user, isAuthenticated, isLoadingAuth } = useAuth();
@@ -15,6 +17,16 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   const [deletingCode, setDeletingCode] = useState(null);
   const [confirmDeleteCode, setConfirmDeleteCode] = useState(null);
   const [showModeModal, setShowModeModal] = useState(false);
+  const [showDirectorTournamentsModal, setShowDirectorTournamentsModal] = useState(false);
+  const [activeTournaments, setActiveTournaments] = useState(() => mttStore.getTournaments().filter((t) => t.active));
+
+  useEffect(() => {
+    setActiveTournaments(mttStore.getTournaments().filter((t) => t.active));
+    const unsub = mttStore.subscribe(() => {
+      setActiveTournaments(mttStore.getTournaments().filter((t) => t.active));
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) { setSessions([]); return; }
@@ -89,48 +101,78 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
           {isAuthenticated ? 'Resume a saved session or launch a new game mode.' : 'Run a full hand action tracker or direct a tournament with broadcast clock and payouts.'}
         </p>
 
-        {/* Saved guest session banner */}
-        {savedGuestSession?.director ? (
-          <div className="rounded-xl border border-amber-500/40 bg-[#1e2227] p-4 mb-4 shadow-lg">
-            <div className="flex items-center justify-between mb-1.5">
+        {/* Active Tournament Director Sessions Banner */}
+        {activeTournaments.length > 0 ? (
+          <div className="rounded-xl border border-amber-500/40 bg-[#1e2227] p-4 mb-4 shadow-lg space-y-3">
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-amber-300">
-                <Trophy size={15} />
-                <span className="text-xs font-bold uppercase tracking-wider">Tournament Director Session In Progress</span>
+                <Trophy size={16} />
+                <span className="text-xs font-bold uppercase tracking-wider">
+                  {activeTournaments.length === 1 ? 'Tournament Director Session In Progress' : `Active Tournaments (${activeTournaments.length})`}
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDismissGuest();
-                }}
-                title="Discard and delete saved session"
-                className="text-slate-400 hover:text-rose-400 p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
-              >
-                <Trash2 size={15} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    mttStore.startNewTournament();
+                    navigate('/director?new=true');
+                  }}
+                  className="rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 text-xs px-2.5 py-1 font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Create and run another tournament"
+                >
+                  <Plus size={13} /> New Tournament
+                </button>
+              </div>
             </div>
-            <div className="text-sm font-semibold text-white mb-1">
-              {savedGuestSession.director.name || 'Tournament Director'} – {savedGuestSession.director.remainingPlayers ?? savedGuestSession.director.totalPlayers} Players Remaining
-            </div>
-            {savedGuestUpdatedAt && (
-              <div className="text-xs text-slate-500 mb-3">Last saved {new Date(savedGuestUpdatedAt).toLocaleString()}</div>
-            )}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => navigate('/director')}
-                className="flex-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm py-2 font-medium cursor-pointer transition-colors shadow"
-              >
-                Resume Tournament Director
-              </button>
-              <button
-                type="button"
-                onClick={onDismissGuest}
-                className="rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-rose-300 text-sm px-3.5 py-2 cursor-pointer font-medium flex items-center gap-1.5 transition-colors"
-                title="Discard this session permanently and start fresh"
-              >
-                <Trash2 size={14} /> Discard & Start New
-              </button>
+
+            <div className="space-y-2">
+              {activeTournaments.map((t) => (
+                <div
+                  key={t.id}
+                  className="p-3 rounded-lg bg-[#151922] border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-bold text-white truncate">{t.name}</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        t.isRunning ? 'bg-emerald-950 border border-emerald-600/50 text-emerald-300' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {t.isRunning ? 'Running' : 'Paused'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-400 flex items-center gap-3 mt-0.5 flex-wrap">
+                      <span>{t.remainingPlayers} / {t.totalPlayers} Players</span>
+                      <span>Level {t.levelNumber || (t.level + 1)} {t.blindsText ? `(${t.blindsText})` : ''}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        mttStore.switchTournament(t.id);
+                        navigate('/director');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold cursor-pointer transition-colors shadow"
+                    >
+                      Resume
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        mttStore.deleteTournament(t.id);
+                        setActiveTournaments(mttStore.getTournaments().filter((item) => item.active));
+                      }}
+                      title="Delete tournament"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         ) : savedGuestSession?.hand && (
@@ -153,7 +195,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
               </button>
             </div>
             <div className="text-sm font-semibold text-white mb-1">
-              {VARIANTS[savedGuestSession.hand.variant]?.label || "Hold'em"} – Hand #{savedGuestSession.hand.handNumber}
+              {formatSessionName(savedGuestSession.hand)}
             </div>
             {savedGuestUpdatedAt && (
               <div className="text-xs text-slate-500 mb-3">Last saved {new Date(savedGuestUpdatedAt).toLocaleString()}</div>
@@ -187,12 +229,20 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
             <Play size={18} /> Start New Session
           </button>
 
-          <Link
-            to="/director"
+          <button
+            type="button"
+            onClick={() => {
+              const list = mttStore.getTournaments().filter((t) => t.active);
+              if (list.length > 0) {
+                setShowDirectorTournamentsModal(true);
+              } else {
+                navigate('/director');
+              }
+            }}
             className="rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white py-3.5 px-4 flex items-center justify-center gap-2 font-medium cursor-pointer transition-colors"
           >
             <Trophy size={18} className="text-amber-400" /> Tournament Director Mode
-          </Link>
+          </button>
         </div>
 
         {!isAuthenticated && (
@@ -249,7 +299,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                         <div className="min-w-0 pr-8">
                           <div className="text-sm font-semibold text-white truncate flex items-center gap-1.5">
                             {s.isDirector && <Trophy size={14} className="text-amber-400 shrink-0" />}
-                            <span>{s.isDirector ? (s.tournamentName || 'Tournament Director') : `${VARIANTS[s.variant]?.label || "Hold'em"} – Hand #${s.handNumber}`}</span>
+                            <span>{s.isDirector ? (s.tournamentName || 'Tournament Director') : (s.bombPot ? `${s.variant === 'plo6' ? 'PLO6' : (VARIANTS[s.variant]?.label || "Hold'em")} Bomb Pot - Hand #${s.handNumber}` : `${VARIANTS[s.variant]?.label || "Hold'em"} - Hand #${s.handNumber}`)}</span>
                           </div>
                           <div className="text-xs text-slate-400">
                             {s.isDirector
@@ -258,7 +308,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                           </div>
                           <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500">
                             <Users size={12} />
-                            <span className="truncate">{s.playerNames?.join(', ') || (s.isDirector ? `${s.totalPlayers || 0} players` : 'No players')}</span>
+                            <span className="truncate">{s.isDirector ? ((s.playerNames?.length > 10 || s.totalPlayers > 10) ? `${s.playerNames?.length || s.totalPlayers} players` : (s.playerNames?.join(', ') || `${s.totalPlayers || 0} players`)) : (s.playerNames?.join(', ') || 'No players')}</span>
                           </div>
                         </div>
                         <div className="flex items-center gap-1.5 text-xs text-slate-500 shrink-0 text-right">
@@ -365,6 +415,14 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
           </div>
         </div>
       )}
+
+      {/* Tournament Director Multi-Tournament Manager Modal */}
+      <TournamentManagerModal
+        isOpen={showDirectorTournamentsModal}
+        onClose={() => setShowDirectorTournamentsModal(false)}
+        onSelectTournament={() => navigate('/director')}
+        onStartNewTournament={() => navigate('/director?new=true')}
+      />
     </div>
   );
 }

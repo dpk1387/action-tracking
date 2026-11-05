@@ -269,6 +269,35 @@ export function calculateTournamentPayouts({
   });
 
   individualRanks.sort((a, b) => a.place - b.place);
+
+  // Requirement: By default, the minimum payout ITM should be at least 1.5 buy-ins
+  const minCashTarget = Math.round(1.5 * bi);
+  if (bi > 0 && pool >= minCashTarget && individualRanks.length > 0) {
+    const minPaid = individualRanks[individualRanks.length - 1]?.amount || 0;
+    if (minPaid < minCashTarget) {
+      for (let i = individualRanks.length - 1; i >= 0; i--) {
+        if (individualRanks[i].amount < minCashTarget) {
+          individualRanks[i].amount = minCashTarget;
+          individualRanks[i].percent = pool > 0 ? (minCashTarget / pool) * 100 : 0;
+        }
+      }
+      // Rebalance top ranks if total allocated exceeds the pool
+      let totalAllocated = individualRanks.reduce((s, r) => s + r.amount, 0);
+      if (totalAllocated > pool) {
+        let excess = totalAllocated - pool;
+        for (let i = 0; i < individualRanks.length - 1 && excess > 0; i++) {
+          const reducible = individualRanks[i].amount - minCashTarget;
+          if (reducible > 0) {
+            const deduct = Math.min(reducible, excess);
+            individualRanks[i].amount -= deduct;
+            individualRanks[i].percent = pool > 0 ? (individualRanks[i].amount / pool) * 100 : 0;
+            excess -= deduct;
+          }
+        }
+      }
+    }
+  }
+
   return individualRanks;
 }
 
@@ -346,11 +375,12 @@ export function resolveSimultaneousEliminations({
     }, 0);
     const splitAmount = Math.round(pooledCash / count);
     const placeRangeLabel =
-      count > 1 ? `${places[0]}-${places[places.length - 1]}th (Tie)` : `${places[0]}th`;
+      count > 1 ? `T-${places[0]}${getOrdinalSuffix(places[0])}` : `${places[0]}${getOrdinalSuffix(places[0])}`;
 
     return eliminatedPlayers.map((player) => ({
       ...player,
       place: places[0],
+      finishPlaces: places,
       placeLabel: placeRangeLabel,
       payout: splitAmount,
       tied: count > 1,
@@ -367,7 +397,8 @@ export function resolveSimultaneousEliminations({
     return {
       ...player,
       place: assignedPlace,
-      placeLabel: `${assignedPlace}th`,
+      finishPlaces: [assignedPlace],
+      placeLabel: `${assignedPlace}${getOrdinalSuffix(assignedPlace)}`,
       payout: p ? p.amount : 0,
       tied: false,
     };

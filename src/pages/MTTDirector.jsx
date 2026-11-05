@@ -15,6 +15,8 @@ import {
   LogOut,
   Save,
   Trash2,
+  Plus,
+  ChevronDown,
 } from 'lucide-react';
 import { useMTT, mttStore } from '@/lib/mttStore';
 import { saveNow, ensureSaveCode, loadSavedSession, getShareCode, setShareCode } from '@/lib/liveSync';
@@ -28,6 +30,8 @@ import DirectorLateRegDialog from '@/components/poker/DirectorLateRegDialog';
 import DirectorReEntryDialog from '@/components/poker/DirectorReEntryDialog';
 import DirectorRebuyDialog from '@/components/poker/DirectorRebuyDialog';
 import DirectorTournamentEndDialog from '@/components/poker/DirectorTournamentEndDialog';
+import DirectorRosterModal from '@/components/poker/DirectorRosterModal';
+import TournamentManagerModal from '@/components/poker/TournamentManagerModal';
 
 export default function MTTDirector() {
   const mtt = useMTT();
@@ -35,6 +39,7 @@ export default function MTTDirector() {
 
   // Modals state - show setup modal if tournament is not yet active
   const [showStructureModal, setShowStructureModal] = useState(!mtt.active);
+  const [showTournamentsModal, setShowTournamentsModal] = useState(false);
   const [showBustModal, setShowBustModal] = useState(false);
   const [showSetLevelModal, setShowSetLevelModal] = useState(false);
   const [showPreplanModal, setShowPreplanModal] = useState(false);
@@ -43,12 +48,20 @@ export default function MTTDirector() {
   const [showRebuyModal, setShowRebuyModal] = useState(false);
   const [showEndTournamentModal, setShowEndTournamentModal] = useState(false);
   const [showEndSessionModal, setShowEndSessionModal] = useState(false);
+  const [showRosterModal, setShowRosterModal] = useState(false);
 
   const remainingPlayers = mtt.remainingPlayers ?? mtt.totalPlayers ?? 0;
 
-  // Resume / Load saved session from code
+  // Resume / Load saved session from code or handle ?new=true
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
+    const isNew = urlParams.get('new') === 'true';
+    if (isNew) {
+      mttStore.startNewTournament();
+      setShowStructureModal(true);
+      return;
+    }
+
     const code = urlParams.get('code') || urlParams.get('resume');
     if (code) {
       if (code !== getShareCode()) setShareCode(code);
@@ -102,6 +115,46 @@ export default function MTTDirector() {
                 Directing Mode
               </span>
             </div>
+
+            {/* Tournament Selector / Switcher */}
+            <button
+              type="button"
+              onClick={() => setShowTournamentsModal(true)}
+              className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-xl bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-600/50 cursor-pointer shadow-sm transition-colors"
+              title="Switch tournament or manage tournaments"
+            >
+              <Trophy size={14} className="text-amber-400" />
+              <span className="max-w-[140px] truncate">{mtt.name || 'Tournament'}</span>
+              <ChevronDown size={13} className="text-amber-400/80" />
+            </button>
+
+            {/* New Tournament Shortcut */}
+            <button
+              type="button"
+              onClick={() => {
+                mttStore.startNewTournament();
+                setShowStructureModal(true);
+              }}
+              className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer"
+              title="Start a new tournament"
+            >
+              <Plus size={13} />
+              <span className="hidden sm:inline">New Tournament</span>
+            </button>
+
+            {/* Enter Remaining Player Names Shortcut - only shown if nameEntryMode is 'itm' */}
+            {mtt.nameEntryMode === 'itm' && (
+              <button
+                type="button"
+                onClick={() => setShowRosterModal(true)}
+                className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer"
+                title="Enter or update player names for the remaining field approaching the money"
+              >
+                <Users size={13} className="text-emerald-400" />
+                <span className="hidden sm:inline">Enter Names</span>
+                <span className="text-[11px] text-slate-400">({remainingPlayers})</span>
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -173,6 +226,7 @@ export default function MTTDirector() {
           onOpenRebuy={() => setShowRebuyModal(true)}
           onAdjustPlayerCount={(delta) => mttStore.manualAdjustRemainingPlayers(delta)}
           onOpenStructureSetup={() => setShowStructureModal(true)}
+          onOpenRoster={() => setShowRosterModal(true)}
         />
       </main>
 
@@ -198,7 +252,19 @@ export default function MTTDirector() {
         payouts={mtt.payouts || []}
         splitSimultaneousTies={mtt.splitSimultaneousTies}
         onConfirmBust={(bustData) => mttStore.recordBust(bustData)}
+        onOpenRoster={() => {
+          setShowBustModal(false);
+          setShowRosterModal(true);
+        }}
         onClose={() => setShowBustModal(false)}
+      />
+
+      <DirectorRosterModal
+        isOpen={showRosterModal}
+        remainingPlayers={mtt.remainingPlayers ?? mtt.totalPlayers}
+        players={mtt.players || []}
+        onSaveNames={(names) => mttStore.updateRosterNames(names)}
+        onClose={() => setShowRosterModal(false)}
       />
 
       <DirectorSetLevelDialog
@@ -319,6 +385,21 @@ export default function MTTDirector() {
           </div>
         </div>
       )}
+
+      {/* Tournaments Manager Modal */}
+      <TournamentManagerModal
+        isOpen={showTournamentsModal}
+        onClose={() => setShowTournamentsModal(false)}
+        currentTournamentId={mtt.id}
+        onSelectTournament={(id) => {
+          setShowTournamentsModal(false);
+          setShowStructureModal(false);
+        }}
+        onStartNewTournament={(newId) => {
+          setShowTournamentsModal(false);
+          setShowStructureModal(true);
+        }}
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Trophy, Award, Home, RotateCcw, X, Users, DollarSign } from 'lucide-react';
+import { getOrdinalSuffix } from '@/lib/payoutEngine';
 
 export default function DirectorTournamentEndDialog({
   isOpen,
@@ -38,7 +39,7 @@ export default function DirectorTournamentEndDialog({
     },
     ...eliminations.map((e) => ({
       place: e.place,
-      placeLabel: e.placeLabel || `${e.place}th`,
+      placeLabel: e.placeLabel || `${e.place}${getOrdinalSuffix(e.place)}`,
       name: e.name,
       payout: e.payout || 0,
       isWinner: false,

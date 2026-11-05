@@ -109,7 +109,7 @@ export default function MTTDirectorModal({
             <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-0.5">
               <Users size={13} className="text-blue-400" /> Remaining Players
             </div>
-            <div className="text-lg font-bold text-white font-mono">
+            <div className="text-lg font-bold text-white font-work-sans">
               {summary.remainingPlayers} <span className="text-xs text-slate-400 font-normal">/ {summary.totalEntries}</span>
             </div>
           </div>
@@ -117,7 +117,7 @@ export default function MTTDirectorModal({
             <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-0.5">
               <Coins size={13} className="text-amber-400" /> Average Stack
             </div>
-            <div className="text-lg font-bold text-white font-mono">
+            <div className="text-lg font-bold text-white font-work-sans">
               {formatKM(summary.averageStack)}
             </div>
           </div>
@@ -125,7 +125,7 @@ export default function MTTDirectorModal({
             <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-0.5">
               <Trophy size={13} className="text-emerald-400" /> Total Chips in Play
             </div>
-            <div className="text-lg font-bold text-white font-mono">
+            <div className="text-lg font-bold text-white font-work-sans">
               {formatKM(summary.totalChips)}
             </div>
           </div>
@@ -133,7 +133,7 @@ export default function MTTDirectorModal({
             <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-0.5">
               <Layers size={13} className="text-purple-400" /> Current Level
             </div>
-            <div className="text-lg font-bold text-white font-mono">
+            <div className="text-lg font-bold text-white font-work-sans">
               {currentLevelInfo || 'Level 1'}
             </div>
           </div>
@@ -302,24 +302,30 @@ export default function MTTDirectorModal({
                       </div>
 
                       {/* Players Chips List */}
-                      <div className="space-y-1.5 max-h-44 overflow-y-auto mb-3 pr-1">
-                        {tbl.players.map((p) => (
-                          <div
-                            key={p.id}
-                            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#14161d] border border-[#222631] text-xs"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className="text-slate-500 font-mono text-[11px] w-5">
-                                #{p.seat}
+                      {tbl.players.length > 10 ? (
+                        <div className="py-3 px-3 rounded-lg bg-[#14161d] border border-[#222631] text-xs text-center font-bold text-slate-300 mb-3">
+                          {tbl.players.length} Players Seated
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-44 overflow-y-auto mb-3 pr-1">
+                          {tbl.players.map((p) => (
+                            <div
+                              key={p.id}
+                              className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#14161d] border border-[#222631] text-xs"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-500 font-mono text-[11px] w-5">
+                                  #{p.seat}
+                                </span>
+                                <span className="font-medium text-slate-200">{p.name}</span>
+                              </div>
+                              <span className="font-mono text-amber-300 font-semibold">
+                                {formatPlayerTagAmount(p.stack)}
                               </span>
-                              <span className="font-medium text-slate-200">{p.name}</span>
                             </div>
-                            <span className="font-mono text-amber-300 font-semibold">
-                              {formatPlayerTagAmount(p.stack)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
+                          ))}
+                        </div>
+                      )}
 
                       {/* Table Action Buttons */}
                       <div className="flex items-center gap-2 pt-2 border-t border-[#252a36]">

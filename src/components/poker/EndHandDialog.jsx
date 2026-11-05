@@ -5,8 +5,10 @@ export default function EndHandDialog({ hand, pots, holeCards, onHoleChange, onA
   const variant = hand.variant || 'nlh';
   const holeSize = effectiveHoleSize(hand);
   const nonFolded = hand.players.filter((p) => p.status !== 'folded');
-  const doubleBoard = !!hand.doubleBoard;
+  const isTriple = (Number(hand.bombBoards) >= 3) || (hand.boardC && hand.boardC.length > 0) || (Number(hand.runTimes) >= 3);
+  const doubleBoard = !!hand.doubleBoard || isTriple || (Number(hand.runTimes) >= 2);
   const boardB = hand.boardB || [];
+  const boardC = hand.boardC || [];
   const [text, setText] = useState(() => {
     const init = {};
     nonFolded.forEach((p) => {
@@ -16,6 +18,7 @@ export default function EndHandDialog({ hand, pots, holeCards, onHoleChange, onA
   });
   const [winnersA, setWinnersA] = useState({});
   const [winnersB, setWinnersB] = useState({});
+  const [winnersC, setWinnersC] = useState({});
 
   useEffect(() => {
     setWinnersA((prev) => {
@@ -40,7 +43,19 @@ export default function EndHandDialog({ hand, pots, holeCards, onHoleChange, onA
         return next;
       });
     }
-  }, [pots, holeCards, hand.communityCards, boardB, variant, doubleBoard, holeSize]);
+    if (isTriple) {
+      setWinnersC((prev) => {
+        const next = {};
+        pots.forEach((pot, i) => {
+          if (pot.eligible.length === 1) { next[i] = [pot.eligible[0]]; return; }
+          const auto = evaluateWinners(pot.eligible, holeCards, boardC, variant, holeSize);
+          if (auto) next[i] = auto;
+          else if (prev[i] && prev[i].length) next[i] = prev[i];
+        });
+        return next;
+      });
+    }
+  }, [pots, holeCards, hand.communityCards, boardB, boardC, variant, doubleBoard, isTriple, holeSize]);
 
   const onText = (pid, val) => {
     setText((prev) => ({ ...prev, [pid]: val }));
@@ -49,10 +64,14 @@ export default function EndHandDialog({ hand, pots, holeCards, onHoleChange, onA
     else onHoleChange(pid, null);
   };
 
-  const canAward = pots.every((_, i) => (winnersA[i] && winnersA[i].length > 0) && (!doubleBoard || (winnersB[i] && winnersB[i].length > 0)));
+  const canAward = pots.every((_, i) =>
+    (winnersA[i] && winnersA[i].length > 0) &&
+    (!doubleBoard || (winnersB[i] && winnersB[i].length > 0)) &&
+    (!isTriple || (winnersC[i] && winnersC[i].length > 0))
+  );
 
   const toggle = (which, i, pid) => {
-    const set = which === 'a' ? setWinnersA : setWinnersB;
+    const set = which === 'a' ? setWinnersA : which === 'b' ? setWinnersB : setWinnersC;
     set((prev) => {
       const cur = prev[i] || [];
       const arr = cur.includes(pid) ? cur.filter((x) => x !== pid) : [...cur, pid];
@@ -64,10 +83,11 @@ export default function EndHandDialog({ hand, pots, holeCards, onHoleChange, onA
 
   const renderEligible = (pot, i, which, board) => {
     const auto = pot.eligible.length > 1 && evaluateWinners(pot.eligible, holeCards, board, variant, holeSize);
-    const sel = (which === 'a' ? winnersA : winnersB)[i] || [];
+    const sel = (which === 'a' ? winnersA : which === 'b' ? winnersB : winnersC)[i] || [];
+    const label = which === 'a' ? 'Board A' : which === 'b' ? 'Board B' : 'Board C';
     return (
       <div>
-        {doubleBoard && <div className="text-xs text-slate-500 mb-1">{which === 'a' ? 'Board A' : 'Board B'}{auto ? ' – auto' : ''}</div>}
+        {doubleBoard && <div className="text-xs text-slate-500 mb-1">{label}{auto ? ' – auto' : ''}</div>}
         <div className="flex flex-wrap gap-2">
           {pot.eligible.map((pid) => {
             const p = hand.players.find((pl) => pl.id === pid);
@@ -101,19 +121,33 @@ export default function EndHandDialog({ hand, pots, holeCards, onHoleChange, onA
           {pots.map((pot, i) => (
             <div key={i} className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3">
               <div className="flex justify-between mb-2">
-                <span className="text-sm text-slate-300">{i === 0 ? 'Main pot' : `Side pot ${i}`}{doubleBoard ? ' (split across boards)' : ''}</span>
+                <span className="text-sm text-slate-300">
+                  {i === 0 ? 'Main pot' : `Side pot ${i}`}
+                  {isTriple ? ' (split 3 ways)' : doubleBoard ? ' (split 2 ways)' : ''}
+                </span>
                 <span className="text-sm font-semibold text-white">{money(pot.amount, hand.currency)}</span>
               </div>
               <div className={doubleBoard ? 'space-y-2' : ''}>
                 {renderEligible(pot, i, 'a', hand.communityCards)}
                 {doubleBoard && renderEligible(pot, i, 'b', boardB)}
+                {isTriple && renderEligible(pot, i, 'c', boardC)}
               </div>
             </div>
           ))}
         </div>
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} className="flex-1 rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-white text-sm py-2.5">Cancel</button>
-          <button onClick={() => canAward && onAward(winnersA, { winnersB: doubleBoard ? winnersB : undefined, holeCards })} disabled={!canAward} className="flex-1 rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm py-2.5 disabled:opacity-30">Award pots</button>
+          <button
+            onClick={() => canAward && onAward(winnersA, {
+              winnersB: doubleBoard ? winnersB : undefined,
+              winnersC: isTriple ? winnersC : undefined,
+              holeCards,
+            })}
+            disabled={!canAward}
+            className="flex-1 rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm py-2.5 disabled:opacity-30 cursor-pointer"
+          >
+            Award pots
+          </button>
         </div>
       </div>
     </div>

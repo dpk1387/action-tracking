@@ -1,21 +1,15 @@
 import React from 'react';
-import { ALL_DENOMINATIONS } from '@/lib/tournamentStructures';
+import { LOWEST_DENOMINATIONS, defaultDenomsFor } from '@/lib/tournamentStructures';
 
-const EXCLUDED_DENOMS = new Set([0.05, 0.1, 0.10, 0.25, 0.5, 0.50]);
+export default function ChipDenominationPicker({ selected = [], onChange }) {
+  const currentLowest = (() => {
+    const valid = (selected || []).map(Number).filter((d) => d > 0);
+    return valid.length > 0 ? Math.min(...valid) : 25;
+  })();
 
-export default function ChipDenominationPicker({ selected, onChange }) {
-  const selectedSet = new Set(
-    (selected || [])
-      .map((d) => Number(d))
-      .filter((d) => !EXCLUDED_DENOMS.has(d))
-  );
-
-  const toggle = (denom) => {
-    if (EXCLUDED_DENOMS.has(denom)) return;
-    const next = new Set(selectedSet);
-    if (next.has(denom)) next.delete(denom);
-    else next.add(denom);
-    onChange([...next].sort((a, b) => a - b));
+  const handleSelectLowest = (lowest) => {
+    const denoms = defaultDenomsFor(lowest);
+    onChange(denoms);
   };
 
   const fmt = (d) => {
@@ -25,33 +19,43 @@ export default function ChipDenominationPicker({ selected, onChange }) {
   };
 
   return (
-    <div>
-      <div className="text-xs text-slate-400 mb-2">Chip denominations in play – check all that apply</div>
-      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-        {ALL_DENOMINATIONS.map((d) => (
-          <label
-            key={d}
-            className={`flex items-center gap-1.5 rounded-md border px-2.5 py-2 cursor-pointer select-none transition-colors ${
-              selectedSet.has(d)
-                ? 'bg-[#4a5a4a] border-[#5a6a5a] text-white'
-                : 'bg-[#1e2227] border-[#2a2f37] text-slate-300 hover:border-[#3a4a3a]'
-            }`}
-          >
-            <input
-              type="checkbox"
-              checked={selectedSet.has(d)}
-              onChange={() => toggle(d)}
-              className="w-3.5 h-3.5 accent-[#4a5a4a] sr-only"
-            />
-            <span className="text-sm font-medium">{fmt(d)}</span>
-          </label>
-        ))}
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between">
+        <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+          Lowest Chip Denomination
+        </label>
+        <span className="text-[11px] text-slate-400">
+          Sets default schedule & chip denominations
+        </span>
       </div>
-      {selectedSet.size > 0 && (
-        <div className="text-[11px] text-slate-500 mt-1.5">
-          Lowest denomination: {fmt(Math.min(...selectedSet))} – sets the default blind schedule.
-        </div>
-      )}
+
+      <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+        {LOWEST_DENOMINATIONS.map((d) => {
+          const isSelected = currentLowest === d;
+          return (
+            <button
+              key={d}
+              type="button"
+              onClick={() => handleSelectLowest(d)}
+              className={`py-2.5 px-2 rounded-xl text-xs font-bold transition-all border flex flex-col items-center justify-center cursor-pointer ${
+                isSelected
+                  ? 'bg-emerald-600 border-emerald-400 text-white shadow-[0_0_12px_rgba(16,185,129,0.4)] scale-105'
+                  : 'bg-[#151922] border-slate-700/70 text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <span className="text-sm">{fmt(d)}</span>
+              <span className="text-[9px] uppercase tracking-wider opacity-75 font-normal">chip</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+        <span>Chips in play:</span>
+        <span className="font-mono text-emerald-300 font-bold">
+          {defaultDenomsFor(currentLowest).map(fmt).join(' · ')}
+        </span>
+      </div>
     </div>
   );
 }

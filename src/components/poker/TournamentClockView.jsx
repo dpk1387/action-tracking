@@ -44,14 +44,19 @@ export function isBreakLevel(levelObj) {
   );
 }
 
+export function isNonPlayLevel(levelObj) {
+  if (!levelObj) return false;
+  return isBreakLevel(levelObj) || levelObj.type === 'color_up';
+}
+
 /**
- * Returns the 1-based blind level count up to targetIdx (excluding scheduled breaks)
+ * Returns the 1-based blind level count up to targetIdx (excluding scheduled breaks and color-ups)
  */
 export function getLevelNumber(sched = [], targetIdx = 0) {
   if (!sched || !Array.isArray(sched) || targetIdx < 0) return 1;
   let count = 0;
   for (let i = 0; i <= targetIdx && i < sched.length; i++) {
-    if (!isBreakLevel(sched[i])) {
+    if (!isNonPlayLevel(sched[i])) {
       count++;
     }
   }
@@ -237,7 +242,7 @@ export default function TournamentClockView({
             </h1>
             <div className="text-xs text-slate-400">
               {mtt.tablesCount} {mtt.tablesCount === 1 ? 'Table' : 'Tables'} · Starting Stack:{' '}
-              {formatChips(startingStack)} ·{' '}
+              <span className="font-work-sans">{formatChips(startingStack)}</span> ·{' '}
               {mtt.tournamentType ? mtt.tournamentType.toUpperCase() : 'FREEZEOUT'}
             </div>
           </div>
@@ -288,7 +293,7 @@ export default function TournamentClockView({
                 }`}
               </span>
               {topEnvelope != null && topEnvelope > 0 && (
-                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-200 font-mono">
+                <span className="font-work-sans ml-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-200 tabular-nums">
                   Top: {mtt.currency || '$'}{formatChips(topEnvelope)}
                 </span>
               )}
@@ -313,11 +318,11 @@ export default function TournamentClockView({
               Field Remaining
             </div>
             {/* Players remaining number bolder and bigger than starting player count */}
-            <div className="flex items-baseline gap-2 font-mono">
-              <span className="text-5xl sm:text-6xl xl:text-7xl font-black text-white tracking-tighter drop-shadow-sm">
+            <div className="flex items-baseline gap-2 tabular-nums">
+              <span className="font-work-sans text-5xl sm:text-6xl xl:text-7xl font-black text-white tracking-tighter drop-shadow-sm">
                 {remaining}
               </span>
-              <span className="text-2xl sm:text-3xl font-medium text-slate-500">
+              <span className="font-work-sans text-2xl sm:text-3xl font-medium text-slate-500">
                 / {totalEntries}
               </span>
             </div>
@@ -330,7 +335,7 @@ export default function TournamentClockView({
             <div className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-1">
               Total Chips In Play
             </div>
-            <div className="text-3xl sm:text-4xl font-extrabold text-amber-300 font-mono tracking-tight">
+            <div className="font-work-sans text-3xl sm:text-4xl font-extrabold text-amber-300 tabular-nums tracking-tight">
               {formatChips(totalChips)}
             </div>
             <div className="text-xs text-slate-400 mt-1">
@@ -343,7 +348,7 @@ export default function TournamentClockView({
               <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
                 Average Stack
               </div>
-              <div className="text-xl sm:text-2xl font-bold text-slate-200 font-mono">
+              <div className="font-work-sans text-xl sm:text-2xl font-bold text-slate-200 tabular-nums">
                 {formatChips(avgStack)}
               </div>
             </div>
@@ -351,7 +356,7 @@ export default function TournamentClockView({
               <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
                 Avg BB
               </div>
-              <div className="text-xl sm:text-2xl font-bold text-emerald-400 font-mono">
+              <div className="font-work-sans text-xl sm:text-2xl font-bold text-emerald-400 tabular-nums">
                 {avgBB} BB
               </div>
             </div>
@@ -374,7 +379,7 @@ export default function TournamentClockView({
           {/* Time Remaining (Huge Tabular Figures) */}
           <div className="my-2">
             <span
-              className={`font-mono font-black tracking-tight tabular-nums drop-shadow-[0_10px_25px_rgba(0,0,0,0.6)] ${
+              className={`font-work-sans font-black tracking-tight tabular-nums drop-shadow-[0_10px_25px_rgba(0,0,0,0.6)] ${
                 clock.secondsLeft <= 60 && !isBreakActive
                   ? 'text-rose-500 animate-pulse text-7xl sm:text-8xl xl:text-9xl'
                   : 'text-white text-7xl sm:text-8xl xl:text-9xl'
@@ -410,11 +415,11 @@ export default function TournamentClockView({
               </span>
             </div>
             {isBreakActive ? (
-              <div className="text-2xl font-bold text-amber-300 font-mono">
+              <div className="font-work-sans text-2xl font-bold text-amber-300 tabular-nums">
                 Scheduled Break ({currentBreakDuration}m)
               </div>
             ) : (
-              <div className="text-2xl sm:text-3xl font-extrabold text-white font-mono tracking-tight">
+              <div className="font-work-sans text-2xl sm:text-3xl font-extrabold text-white tabular-nums tracking-tight">
                 {formatBlindsText(currentLevelObj, anteType)}
               </div>
             )}
@@ -438,7 +443,7 @@ export default function TournamentClockView({
                   <Coffee size={15} /> Scheduled Break ({parseChipValue(nextLevelObj.durationMinutes || nextLevelObj.minutes) || 10}m)
                 </div>
               ) : (
-                <div className="text-base sm:text-lg font-bold text-slate-300 font-mono">
+                <div className="font-work-sans text-base sm:text-lg font-bold text-slate-300 tabular-nums">
                   {formatBlindsText(nextLevelObj, anteType)}
                 </div>
               )
@@ -454,11 +459,11 @@ export default function TournamentClockView({
                 <span className="flex items-center gap-1">
                   <Trophy size={13} className="text-amber-400" />
                   Prize Pool ({mtt.currency || '$'}
-                  {formatChips(mtt.totalPrizePool || totalEntries * (mtt.buyIn || 100))})
+                  <span className="font-work-sans">{formatChips(mtt.totalPrizePool || totalEntries * (mtt.buyIn || 100))}</span>)
                 </span>
                 {mtt.bountyPool > 0 && (
                   <span className="text-[10px] text-slate-400 font-normal">
-                    Rank: {mtt.currency || '$'}{formatChips(mtt.rankPool || (mtt.totalPrizePool - mtt.bountyPool))} · Bounty: {mtt.currency || '$'}{formatChips(mtt.bountyPool)}
+                    Rank: {mtt.currency || '$'}<span className="font-work-sans">{formatChips(mtt.rankPool || (mtt.totalPrizePool - mtt.bountyPool))}</span> · Bounty: {mtt.currency || '$'}<span className="font-work-sans">{formatChips(mtt.bountyPool)}</span>
                   </span>
                 )}
               </div>
@@ -475,10 +480,37 @@ export default function TournamentClockView({
                   // PRIZE COLORING RULE:
                   // A place/bracket is CLAIMED when ALL its spots have finished (eliminated).
                   // Green ONLY shows when claimed!
+                  const matchingElims = (mtt.eliminations || []).filter(
+                    (e) => item.places.includes(e.place) || (e.finishPlaces && e.finishPlaces.some((fp) => item.places.includes(fp)))
+                  );
+
+                  const isChampion = item.startPlace === 1 && remaining === 1;
+                  const championPlayer = isChampion
+                    ? (mtt.players || []).find((p) => !p.eliminated && p.status !== 'eliminated')
+                    : null;
+
                   const isClaimed =
-                    item.startPlace === 1
+                    isChampion
+                      ? true
+                      : item.startPlace === 1
                       ? remaining === 1
-                      : remaining < item.startPlace;
+                      : remaining < item.startPlace || matchingElims.length > 0;
+
+                  let claimedPlayerName = '';
+                  if (isChampion) {
+                    claimedPlayerName = championPlayer?.name || 'Champion';
+                  } else if (matchingElims.length > 0) {
+                    claimedPlayerName = matchingElims.map((e) => e.name).filter(Boolean).join(' & ');
+                  }
+
+                  // If players chopped/split ITM, show what they actually received instead of the standard amount
+                  let displayAmount = item.perPlayerAmount;
+                  let isChopped = false;
+                  if (matchingElims.length > 0 && matchingElims.some((e) => e.tied || (e.payout != null && e.payout !== item.perPlayerAmount))) {
+                    const totalChopped = matchingElims.reduce((sum, e) => sum + (e.payout || 0), 0);
+                    displayAmount = Math.round(totalChopped / matchingElims.length);
+                    isChopped = true;
+                  }
 
                   // Money Bubble: only when remaining is exactly totalPaidSpots + 1, and this is the last paid spot
                   const isMoneyBubble =
@@ -489,7 +521,7 @@ export default function TournamentClockView({
                   return (
                     <div
                       key={idx}
-                      className={`flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg transition-colors font-mono ${
+                      className={`flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg transition-colors tabular-nums ${
                         isClaimed
                           ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-800/40 font-semibold'
                           : isMoneyBubble
@@ -497,28 +529,35 @@ export default function TournamentClockView({
                           : 'bg-slate-800/40 text-slate-300 border border-slate-700/30'
                       }`}
                     >
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-bold shrink-0">
                           {item.label}
                         </span>
-                        {item.percent > 0 && (
-                          <span className="text-slate-400 text-[11px]">
+                        {item.percent > 0 && !isChopped && (
+                          <span className="text-slate-400 text-[11px] shrink-0">
                             {item.percent.toFixed(item.percent % 1 === 0 ? 0 : 1)}%
                           </span>
                         )}
                         {isClaimed && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 font-bold flex items-center gap-0.5">
-                            <Check size={10} /> {item.startPlace === 1 ? 'Champion' : 'Claimed'}
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold flex items-center gap-1 truncate max-w-[140px] sm:max-w-[200px]">
+                            <Check size={11} className="text-emerald-400 shrink-0" />
+                            <span className="truncate">{claimedPlayerName || (item.startPlace === 1 ? 'Champion' : 'Claimed')}</span>
+                            {isChopped && <span className="text-[10px] text-amber-300 font-bold shrink-0 ml-0.5">(Chop)</span>}
                           </span>
                         )}
                       </div>
-                      <div className="text-right">
-                        <span className={`font-extrabold ${isClaimed ? 'text-emerald-300' : 'text-white'}`}>
-                          {mtt.currency || '$'}{formatChips(item.perPlayerAmount)}
+                      <div className="text-right shrink-0">
+                        <span className={`font-work-sans font-extrabold ${isClaimed ? 'text-emerald-300' : 'text-white'}`}>
+                          {mtt.currency || '$'}{formatChips(displayAmount)}
                         </span>
-                        {item.isBracket && (
-                          <span className="text-[10px] text-slate-400 block">
+                        {item.isBracket && !isChopped && (
+                          <span className="font-work-sans text-[10px] text-slate-400 block">
                             each (${formatChips(item.totalAmount)} total)
+                          </span>
+                        )}
+                        {isChopped && (
+                          <span className="font-work-sans text-[10px] text-emerald-400/80 block">
+                            split payout
                           </span>
                         )}
                       </div>
