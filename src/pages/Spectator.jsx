@@ -14,12 +14,14 @@ import {
   STREET_LABEL,
   SUIT_SYMBOL,
   SUIT_RED,
+  suitColorClass,
   rankDisplay,
   isAllInSituation,
   isAllInShowdown,
   positionForSeat,
+  getLastActionPlayerName,
 } from '@/lib/poker';
-import { levelTimerState, formatTimer, formatTimerLabel } from '@/lib/levelTimer';
+import { levelTimerState, formatTimer, formatTimerLabel, scheduledLevelNumber } from '@/lib/levelTimer';
 import { Eye, Clock } from 'lucide-react';
 import AllInView from '@/components/poker/AllInView';
 import TournamentClockView from '@/components/poker/TournamentClockView';
@@ -63,7 +65,7 @@ function getSpectatorAction(p, isTurn, hand, cur, activeUnit = 'chips') {
   return null;
 }
 
-function SpectatorCard({ card }) {
+function SpectatorCard({ card, suitColors = 2 }) {
   if (!card) return <div className="w-10 h-14 sm:w-12 sm:h-16 rounded-md border border-dashed border-slate-700" />;
   if (card.hidden) {
     return (
@@ -72,10 +74,10 @@ function SpectatorCard({ card }) {
       </div>
     );
   }
-  const red = SUIT_RED[card.suit];
+  const suitColor = suitColorClass(card.suit, suitColors);
   return (
-    <div className={`w-10 h-14 sm:w-12 sm:h-16 rounded-md bg-slate-100 flex flex-col items-center justify-center text-sm sm:text-base font-bold shadow ${red ? 'text-rose-600' : 'text-slate-900'}`}>
-      <span>{rankDisplay(card.rank)}{SUIT_SYMBOL[card.suit]}</span>
+    <div className={`w-10 h-14 sm:w-12 sm:h-16 rounded-md bg-slate-100 flex flex-col items-center justify-center text-sm sm:text-base font-bold shadow ${suitColor}`}>
+      <span><strong className="font-bold">{rankDisplay(card.rank)}</strong>{SUIT_SYMBOL[card.suit]}</span>
     </div>
   );
 }
@@ -124,19 +126,12 @@ export default function Spectator() {
   }, [code]);
 
   const director = liveState?.director?.active ? liveState.director : (localMTT?.active ? localMTT : null);
-
-  if (director) {
-    return (
-      <div className="min-h-screen bg-[#0a0d12]">
-        <TournamentClockView directorState={director} isSpectator={true} />
-      </div>
-    );
-  }
-
   const hand = liveState?.hand;
   const config = liveState?.config;
   // Spectator view: amounts should never be hidden because spectators are away from the venue
   const hideAmounts = false;
+  const showPosition = liveState?.showPosition !== false;
+  const suitColors = liveState?.suitColors || 2;
   const isTournament = hand?.mode === 'tournament' || config?.mode === 'tournament';
   const cur = isTournament ? '' : (hand?.currency || '$');
   const stackCurrency = cur;
@@ -170,6 +165,14 @@ export default function Spectator() {
       return { p, originalIdx, posRank, posLabel };
     }).sort((a, b) => a.posRank - b.posRank);
   }, [hand?.players, hand?.variant, buttonIdx, n]);
+
+  if (director) {
+    return (
+      <div className="min-h-screen bg-[#0a0d12]">
+        <TournamentClockView directorState={director} isSpectator={true} />
+      </div>
+    );
+  }
 
   if (loading && !hand) {
     return (
@@ -206,16 +209,18 @@ export default function Spectator() {
             </h1>
           </div>
           {timerState && timerState.active && (
-            <div className="flex items-center gap-2 bg-[#1b222d] border border-emerald-500/40 rounded-xl px-3 py-1.5 shadow">
-              <Clock size={16} className="text-emerald-400" />
-              <div className="text-left">
-                <div className="text-[11px] font-bold text-slate-300 leading-tight">
-                  {formatTimerLabel(timerState)}
-                </div>
-                <div className="text-sm font-black font-mono text-emerald-300 leading-tight">
-                  {formatTimer(timerState.timeRemainingMs)}
-                  {timerState.paused && <span className="ml-1 text-[10px] text-amber-400 font-sans font-bold">(PAUSED)</span>}
-                </div>
+            <div className="flex items-center gap-2.5 bg-[#141820] border border-slate-700/80 px-3.5 py-1.5 rounded-xl shadow-lg">
+              <span className={`font-mono text-lg sm:text-xl font-black ${timerState.expired ? 'text-rose-400' : 'text-amber-300'}`}>
+                {formatTimer(timerState)}
+                {timerState.paused && <span className="ml-1 text-[10px] text-amber-400 font-sans font-bold">(PAUSED)</span>}
+              </span>
+              <div className="flex flex-col text-left leading-tight border-l border-slate-700/80 pl-2.5">
+                <span className="text-xs font-bold text-white uppercase tracking-wide">
+                  {timerState.phase === 'break' || hand?.inBreak ? 'Break' : `Level ${scheduledLevelNumber(hand)}`}
+                </span>
+                <span className="text-[11px] font-mono text-emerald-400 font-semibold">
+                  {formatBlinds(hand)}
+                </span>
               </div>
             </div>
           )}
@@ -229,6 +234,9 @@ export default function Spectator() {
           holeCards={holeCards}
           equity={equity}
           hideAmounts={false}
+          showPosition={showPosition}
+          suitColors={suitColors}
+          actionDisplayMode="all"
           pot={potTotal}
         />
 
@@ -275,16 +283,18 @@ export default function Spectator() {
           </h1>
         </div>
         {timerState && timerState.active && (
-          <div className="flex items-center gap-2 bg-[#1b222d] border border-emerald-500/40 rounded-xl px-3 py-1.5 shadow">
-            <Clock size={16} className="text-emerald-400" />
-            <div className="text-left">
-              <div className="text-[11px] font-bold text-slate-300 leading-tight">
-                {formatTimerLabel(timerState)}
-              </div>
-              <div className="text-sm font-black font-mono text-emerald-300 leading-tight">
-                {formatTimer(timerState.timeRemainingMs)}
-                {timerState.paused && <span className="ml-1 text-[10px] text-amber-400 font-sans font-bold">(PAUSED)</span>}
-              </div>
+          <div className="flex items-center gap-2.5 bg-[#141820] border border-slate-700/80 px-3.5 py-1.5 rounded-xl shadow-lg">
+            <span className={`font-mono text-lg sm:text-xl font-black ${timerState.expired ? 'text-rose-400' : 'text-amber-300'}`}>
+              {formatTimer(timerState)}
+              {timerState.paused && <span className="ml-1 text-[10px] text-amber-400 font-sans font-bold">(PAUSED)</span>}
+            </span>
+            <div className="flex flex-col text-left leading-tight border-l border-slate-700/80 pl-2.5">
+              <span className="text-xs font-bold text-white uppercase tracking-wide">
+                {timerState.phase === 'break' || hand?.inBreak ? 'Break' : `Level ${scheduledLevelNumber(hand)}`}
+              </span>
+              <span className="text-[11px] font-mono text-emerald-400 font-semibold">
+                {formatBlinds(hand)}
+              </span>
             </div>
           </div>
         )}
@@ -308,18 +318,26 @@ export default function Spectator() {
           </div>
 
           {/* Board Cards */}
-          <div className="flex justify-center gap-2 sm:gap-3 pt-2">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <SpectatorCard key={i} card={hand.communityCards?.[i]} />
-            ))}
-          </div>
-          {hand.doubleBoard && (
-            <div className="flex justify-center gap-2 sm:gap-3 pt-2">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <SpectatorCard key={`b-${i}`} card={hand.boardB?.[i]} />
-              ))}
-            </div>
-          )}
+          {(() => {
+            const maxSlots = (hand?.variant === 'three_two_one' || hand?.variant === 'ocean') ? 6 : Math.max(5, (hand?.communityCards || []).length);
+            const slots = Array.from({ length: maxSlots }, (_, idx) => idx);
+            return (
+              <>
+                <div className="flex justify-center gap-2 sm:gap-3 pt-2">
+                  {slots.map((i) => (
+                    <SpectatorCard key={i} card={hand.communityCards?.[i]} suitColors={suitColors} />
+                  ))}
+                </div>
+                {hand.doubleBoard && (
+                  <div className="flex justify-center gap-2 sm:gap-3 pt-2">
+                    {slots.map((i) => (
+                      <SpectatorCard key={`b-${i}`} card={hand.boardB?.[i]} suitColors={suitColors} />
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {hand.currentPlayer >= 0 && (
             <div className="text-xs sm:text-sm text-amber-300 font-semibold bg-[#2a2318] border border-amber-500/30 py-1.5 px-4 rounded-full inline-block">
@@ -359,9 +377,11 @@ export default function Spectator() {
                     }`}
                   >
                     <div className="truncate flex items-center gap-2 min-w-0">
-                      <span className="px-1.5 py-0.5 rounded bg-black/60 text-[10px] font-bold text-slate-300 uppercase shrink-0">
-                        {posLabel || '—'}
-                      </span>
+                      {(showPosition || posLabel === 'BTN' || posLabel === 'D' || posLabel === 'D/SB') && (
+                        <span className="px-1.5 py-0.5 rounded bg-black/60 text-[10px] font-bold text-slate-300 uppercase shrink-0">
+                          {posLabel || '—'}
+                        </span>
+                      )}
                       <span className="font-semibold text-white truncate">
                         {p.name}
                       </span>

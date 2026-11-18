@@ -20,8 +20,8 @@ export const POS = {
   12: ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'UTG+2', 'UTG+3', 'UTG+4', 'UTG+5', 'LJ', 'HJ', 'CO'],
 };
 
-export const STREET_ORDER = ['preflop', 'flop', 'turn', 'river'];
-export const STREET_LABEL = { preflop: 'Preflop', flop: 'Flop', turn: 'Turn', river: 'River' };
+export const STREET_ORDER = ['preflop', 'flop', 'turn', 'river', 'ocean'];
+export const STREET_LABEL = { preflop: 'Preflop', flop: 'Flop', turn: 'Turn', river: 'River', ocean: 'Ocean' };
 
 export const VARIANTS = {
   nlh: { label: "Hold'em", group: 'holdem', holeSize: 2, deck: 'full' },
@@ -36,6 +36,14 @@ export const VARIANTS = {
   plo4: { label: 'Omaha 4', group: 'omaha', holeSize: 4, deck: 'full' },
   dramaha: { label: 'Dramaha', group: 'dramaha', holeSize: 5, deck: 'full' },
   plo8: { label: 'Omaha Hi/Lo', group: 'omaha', holeSize: 4, deck: 'full' },
+  second_best: { label: '2nd Best', group: 'degen', holeSize: 2, deck: 'full' },
+  three_two_one: { label: '3-2-1', group: 'degen', holeSize: 2, deck: 'full' },
+  ocean: { label: 'Ocean', group: 'degen', holeSize: 2, deck: 'full' },
+  showtime: { label: 'Showtime', group: 'degen', holeSize: 2, deck: 'full' },
+  mandatory_3bet: { label: 'Mandatory 3-Bet', group: 'degen', holeSize: 2, deck: 'full' },
+  red_river: { label: 'Red River', group: 'degen', holeSize: 2, deck: 'full' },
+  win_button: { label: 'Win the Button', group: 'degen', holeSize: 2, deck: 'full' },
+  deuces_wild: { label: 'Deuces Wild', group: 'degen', holeSize: 2, deck: 'full' },
 };
 
 export const GAME_TYPES = { nl: 'No Limit', pl: 'Pot Limit' };
@@ -419,11 +427,11 @@ export function positions(h) {
 }
 
 export function effectiveHoleSize(hand) {
-  const variant = hand.variant || 'nlh';
+  const variant = (typeof hand === 'string' ? hand : hand?.variant) || 'nlh';
   const meta = variantMeta(variant);
   if (variant === 'pineapple') return 2;
-  if (variant === 'lazy_pineapple') return hand.street === 'river' ? 2 : 3;
-  if (variant === 'crazy_pineapple') return hand.cpDiscarded ? 2 : (hand.cpNeedsDiscard ? 3 : 2);
+  if (variant === 'lazy_pineapple') return hand?.street === 'river' ? 2 : 3;
+  if (variant === 'crazy_pineapple') return hand?.cpDiscarded ? 2 : (hand?.cpNeedsDiscard ? 3 : 2);
   return meta.holeSize;
 }
 
@@ -440,6 +448,21 @@ export function variantRanks(variant) {
   return meta.deck === 'short' ? ['6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'] : RANKS;
 }
 
+export const SUIT_COLOR_CLASS = {
+  s: 'text-slate-900 font-bold',
+  h: 'text-rose-600 font-bold',
+  d: 'text-blue-600 font-bold',
+  c: 'text-emerald-600 font-bold',
+};
+
+export function suitColorClass(suit, suitColors = 2) {
+  if (suitColors === 2) {
+    if (suit === 'h' || suit === 'd') return 'text-rose-600';
+    return 'text-slate-900';
+  }
+  return SUIT_COLOR_CLASS[suit] || 'text-slate-900 font-bold';
+}
+
 export function parseCards(text, allowedRanks) {
   const ranks = allowedRanks || RANKS;
   const rankSet = new Set(ranks);
@@ -451,7 +474,7 @@ export function parseCards(text, allowedRanks) {
     if (!rankSet.has(r)) return { error: `"${t}" is not a valid card for this variant` };
     cards.push({ rank: r, suit: t[1].toLowerCase() });
   }
-  return { cards: sortHoleCards(cards) };
+  return { cards };
 }
 
 export function clone(h) {
@@ -713,7 +736,7 @@ export function startHand(config, buttonSeat, handNumber) {
     addOnPrice: config.addOnPrice,
     addOnChips: config.addOnChips,
     eliminatedPlayers: config.eliminatedPlayers || [],
-    clockConfig: config.clockConfig || { clockSystem: 'call_clock', callClockSeconds: 60 },
+    clockConfig: config.clockConfig || { clockSystem: 'call_clock', callClockSeconds: 30 },
     shotClockEnabled: config.shotClockEnabled !== undefined ? config.shotClockEnabled : true,
   };
 
@@ -1091,6 +1114,11 @@ export function applyAction(hand, playerId, type, amount) {
     p.lastAction = { type: 'check' };
     p.hasActed = true;
   } else if (type === 'call') {
+    if (h.street === 'preflop' && h.variant === 'mandatory_3bet' && !h.threeBetOccurred && (h.raiseLevel || 1) < 3) {
+      if (p.stack > toCall) {
+        return { error: 'Mandatory 3-Bet: Flat calling or limping is not allowed preflop until there is a 3-bet. You must raise or fold.' };
+      }
+    }
     const pay = Math.min(toCall, p.stack);
     p.stack -= pay;
     p.currentBet += pay;
@@ -1116,6 +1144,7 @@ export function applyAction(hand, playerId, type, amount) {
     let level = h.raiseLevel;
     if (increased) {
       h.raiseLevel = isRaise ? (h.raiseLevel || 1) + 1 : 1;
+      if (h.raiseLevel >= 3) h.threeBetOccurred = true;
       level = h.raiseLevel;
       h.lastRaiseAmount = p.currentBet - prevBet;
       h.currentBet = p.currentBet;
@@ -1156,6 +1185,7 @@ export function applyAction(hand, playerId, type, amount) {
     let level = h.raiseLevel;
     if (increased && !isCoveredCall) {
       h.raiseLevel = (prevBet > 0 || h.street === 'preflop') ? (h.raiseLevel || 1) + 1 : 1;
+      if (h.raiseLevel >= 3) h.threeBetOccurred = true;
       level = h.raiseLevel;
       h.lastRaiseAmount = newBet - prevBet;
       h.currentBet = newBet;
@@ -1244,15 +1274,37 @@ export function applyAction(hand, playerId, type, amount) {
   const nextPlayer = nextToAct(h.players, playerId, h.killIdx, h.killDeferred, h.shortAllinOpen);
   if (streetComplete(h) || nextPlayer === -1 || bettingFrozen(h)) {
     h.currentPlayer = -1;
-    if (h.street === 'river') {
-      h.phase = 'ended';
+    const isLastStreet = h.street === 'ocean' || (h.street === 'river' && h.variant !== 'ocean');
+    if (isLastStreet) {
+      if (h.variant === 'red_river') {
+        const cards = (h.communityCards || []).filter((c) => c && !c.hidden);
+        const lastCard = cards[cards.length - 1];
+        const isRed = lastCard && (lastCard.suit === 'h' || lastCard.suit === 'd' || lastCard.suit === '♥' || lastCard.suit === '♦');
+        if (isRed) {
+          h.phase = 'playing';
+          if (!h.communityCards.some((c) => c.hidden)) {
+            h.communityCards.push({ hidden: true });
+          }
+          h.players.forEach((p) => { if (p.status === 'active') { p.currentBet = 0; p.hasActed = false; } });
+          h.currentBet = 0;
+          h.lastRaiseAmount = h.bigBlind;
+          h.raiseLevel = 0;
+          h.currentPlayer = bettingFrozen(h) ? -1 : firstActiveAfter(h.players, getButtonIndex(h));
+          h.message = 'Red river! Extra river card added – another round of betting.';
+        } else {
+          h.phase = 'ended';
+        }
+      } else {
+        h.phase = 'ended';
+      }
     } else {
-      const next = { preflop: 'flop', flop: 'turn', turn: 'river' }[h.street];
+      const nextMap = { preflop: 'flop', flop: 'turn', turn: 'river', ...(h.variant === 'ocean' ? { river: 'ocean' } : {}) };
+      const next = nextMap[h.street];
       const frozen = bettingFrozen(h);
       if (!frozen) {
         const lowGame = variantMeta(h.variant).group === 'low';
         if (!lowGame) {
-          const expected = next === 'flop' ? 3 : 1;
+          const expected = next === 'flop' ? 3 : (next === 'turn' && h.variant === 'three_two_one') ? 2 : 1;
           for (let i = 0; i < expected; i++) h.communityCards.push({ hidden: true });
           if (h.doubleBoard) for (let i = 0; i < expected; i++) h.boardB.push({ hidden: true });
         }
@@ -1326,9 +1378,21 @@ export function recordOutOfTurn(hand, playerId, kind, amount) {
 }
 
 export function dealNextStreet(hand, cards = [], hidden = false) {
-  const next = { preflop: 'flop', flop: 'turn', turn: 'river' }[hand.street];
+  const nextMap = {
+    preflop: 'flop',
+    flop: 'turn',
+    turn: 'river',
+    ...(hand.variant === 'ocean' ? { river: 'ocean' } : {})
+  };
+  let next = nextMap[hand.street];
+  if (!next && hand.variant === 'red_river') {
+    const realCards = (hand.communityCards || []).filter((c) => c && !c.hidden);
+    const lastCard = realCards[realCards.length - 1];
+    const isRed = lastCard && (lastCard.suit === 'd' || lastCard.suit === 'h' || lastCard.suit === '♦' || lastCard.suit === '♥');
+    if (isRed) next = 'river';
+  }
   if (!next) return { error: 'No more streets to deal.' };
-  const expected = next === 'flop' ? 3 : 1;
+  const expected = next === 'flop' ? 3 : (next === 'turn' && hand.variant === 'three_two_one') ? 2 : 1;
   const boardCount = Number(hand.bombBoards) || (hand.runTimes >= 3 ? 3 : hand.doubleBoard ? 2 : 1);
   const isTriple = boardCount >= 3;
   const isDouble = boardCount >= 2;
@@ -1378,11 +1442,20 @@ export function dealNextStreet(hand, cards = [], hidden = false) {
   h.currentPlayer = firstActiveAfter(h.players, getButtonIndex(h));
   if (bettingFrozen(h)) {
     h.currentPlayer = -1;
-    if (h.street === 'river') {
-      h.phase = 'ended';
-      h.message = 'Hand complete – award the pots to finish.';
+    const isLastStreet = h.street === 'ocean' || (h.street === 'river' && h.variant !== 'ocean');
+    if (isLastStreet) {
+      const realCards = (h.communityCards || []).filter((c) => c && !c.hidden);
+      const lastCard = realCards[realCards.length - 1];
+      const isRed = h.variant === 'red_river' && realCards.length >= 5 && lastCard && (lastCard.suit === 'd' || lastCard.suit === 'h' || lastCard.suit === '♦' || lastCard.suit === '♥');
+      if (isRed) {
+        h.phase = 'playing';
+        h.message = 'Red River card is RED! Deal next river card.';
+      } else {
+        h.phase = 'ended';
+        h.message = 'Hand complete – award the pots to finish.';
+      }
     } else {
-      const nextStreet = { flop: 'turn', turn: 'river' }[h.street];
+      const nextStreet = { flop: 'turn', turn: 'river', river: 'ocean' }[h.street];
       if (nextStreet) {
         h.message = `Betting complete – deal the ${nextStreet.toUpperCase()}`;
       } else {
@@ -1507,9 +1580,9 @@ export function postBlinds(hand) {
     h.players[buttonIndex].totalBet += a;
   }
   if (isSBHalfAnte && ante > 0) {
-    const a = Math.min(ante, h.players[sbIndex].stack);
-    h.players[sbIndex].stack -= a;
-    h.players[sbIndex].totalBet += a;
+    const a = Math.min(ante, h.players[bbIndex].stack);
+    h.players[bbIndex].stack -= a;
+    h.players[bbIndex].totalBet += a;
   }
 
   h.players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
@@ -2089,9 +2162,23 @@ export function nextHand(hand) {
     });
   }
 
-  const oldButtonIdx = remaining.findIndex((p) => p.seat === hand.buttonSeat);
-  const startIdx = oldButtonIdx === -1 ? 0 : (oldButtonIdx + 1) % remaining.length;
-  const newButtonSeat = remaining[startIdx].seat;
+  let newButtonSeat;
+  if (hand.variant === 'win_button' && hand.winners && hand.winners.length > 0) {
+    const winnerId = hand.winners[0]?.playerId;
+    const winnerPlayer = hand.players.find((p) => p.id === winnerId);
+    const inRemaining = winnerPlayer ? remaining.find((p) => p.name === winnerPlayer.name) : null;
+    if (inRemaining) {
+      newButtonSeat = inRemaining.seat;
+    } else {
+      const oldButtonIdx = remaining.findIndex((p) => p.seat === hand.buttonSeat);
+      const startIdx = oldButtonIdx === -1 ? 0 : (oldButtonIdx + 1) % remaining.length;
+      newButtonSeat = remaining[startIdx].seat;
+    }
+  } else {
+    const oldButtonIdx = remaining.findIndex((p) => p.seat === hand.buttonSeat);
+    const startIdx = oldButtonIdx === -1 ? 0 : (oldButtonIdx + 1) % remaining.length;
+    newButtonSeat = remaining[startIdx].seat;
+  }
 
   const config = {
     players: remaining,
@@ -2227,6 +2314,8 @@ export function formatPotAmount(n, currency = '', hand = null, displayUnit = 'ch
 
 export function formatSessionName(hand) {
   if (!hand) return "Hold'em - Hand #1";
+  if (hand.sessionName) return hand.sessionName;
+  if (hand.config?.sessionName) return hand.config.sessionName;
   const num = hand.handNumber || 1;
   const isBomb = !!hand.bombPot;
   const v = (hand.variant || 'nlh').toLowerCase();
@@ -2267,8 +2356,10 @@ export function formatPotOutcome(pot, potIndex, winners = [], players = [], curr
   const potFormatted = money(pot.amount, currency);
 
   const getPlayerName = (pid) => {
-    const found = (players || []).find((p) => String(p.id) === String(pid) || String(p.seat) === String(pid));
-    return found?.name || `Player ${pid}`;
+    const byId = (players || []).find((p) => String(p.id) === String(pid));
+    if (byId) return byId.name;
+    const bySeat = (players || []).find((p) => String(p.seat) === String(pid));
+    return bySeat?.name || `Player ${pid}`;
   };
 
   if (uniquePids.length === 1) {
@@ -2414,13 +2505,208 @@ export function evaluateLow(cards, acesLow, countSF) {
   return best;
 }
 
+function fitsStraightWindow(ranks, H) {
+  const win = [H, H - 1, H - 2, H - 3, H - 4];
+  const used = new Set();
+  for (const r of ranks) {
+    const v = RV[r];
+    let matched = false;
+    if (win.includes(v) && !used.has(v)) {
+      used.add(v);
+      matched = true;
+    } else if (v === 14 && win.includes(1) && !used.has(1)) {
+      used.add(1);
+      matched = true;
+    }
+    if (!matched) return false;
+  }
+  return true;
+}
+
+export function evaluate5DeucesWild(cards5) {
+  const deuces = cards5.filter((c) => c && c.rank === '2');
+  const naturals = cards5.filter((c) => c && c.rank !== '2');
+  const w = deuces.length;
+
+  if (w === 0) {
+    const sc = evaluate7(cards5);
+    if (sc[0] === 8 && sc[1] === 14) return [9, 14];
+    return sc;
+  }
+
+  if (w >= 5) return [9, 14];
+
+  const candidateRanks = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3'];
+  const candidateSuits = ['s', 'h', 'd', 'c'];
+
+  if (w === 4) {
+    const c1 = naturals[0];
+    if (['A', 'K', 'Q', 'J', 'T'].includes(c1.rank)) {
+      return [9, 14]; // Royal Flush
+    }
+    return [8.5, RV[c1.rank]]; // Five of a Kind
+  }
+
+  if (w === 3) {
+    const [c1, c2] = naturals;
+    const v1 = RV[c1.rank];
+    const v2 = RV[c2.rank];
+
+    if (v1 === v2) {
+      return [8.5, v1]; // Five of a Kind
+    }
+
+    if (c1.suit === c2.suit && ['A', 'K', 'Q', 'J', 'T'].includes(c1.rank) && ['A', 'K', 'Q', 'J', 'T'].includes(c2.rank)) {
+      return [9, 14]; // Royal Flush
+    }
+
+    if (c1.suit === c2.suit) {
+      for (let h = 13; h >= 5; h--) {
+        if (fitsStraightWindow([c1.rank, c2.rank], h)) {
+          return [8, h];
+        }
+      }
+    }
+
+    const rHigh = Math.max(v1, v2);
+    const rLow = Math.min(v1, v2);
+    return [7, rHigh, rLow];
+  }
+
+  if (w === 2) {
+    const [c1, c2, c3] = naturals;
+    const v1 = RV[c1.rank];
+    const v2 = RV[c2.rank];
+    const v3 = RV[c3.rank];
+
+    if (v1 === v2 && v2 === v3) {
+      return [8.5, v1]; // Five of a Kind
+    }
+
+    const sameSuit3 = c1.suit === c2.suit && c2.suit === c3.suit;
+    const allRoyal = ['A', 'K', 'Q', 'J', 'T'].includes(c1.rank) &&
+                     ['A', 'K', 'Q', 'J', 'T'].includes(c2.rank) &&
+                     ['A', 'K', 'Q', 'J', 'T'].includes(c3.rank);
+    if (sameSuit3 && allRoyal) {
+      return [9, 14]; // Royal Flush
+    }
+
+    if (sameSuit3) {
+      for (let h = 13; h >= 5; h--) {
+        if (fitsStraightWindow([c1.rank, c2.rank, c3.rank], h)) {
+          return [8, h];
+        }
+      }
+    }
+
+    if (v1 === v2 || v1 === v3 || v2 === v3) {
+      const quadRank = (v1 === v2 || v1 === v3) ? v1 : v2;
+      const kicker = (v1 === v2) ? v3 : (v1 === v3 ? v2 : v1);
+      return [7, quadRank, kicker];
+    }
+
+    if (sameSuit3) {
+      const naturalVals = [v1, v2, v3];
+      const avail = [14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3].filter((val) => !naturalVals.includes(val));
+      const flushVals = [...naturalVals, avail[0], avail[1]].sort((a, b) => b - a);
+      return [5, ...flushVals];
+    }
+
+    for (let h = 14; h >= 5; h--) {
+      if (fitsStraightWindow([c1.rank, c2.rank, c3.rank], h)) {
+        return [4, h];
+      }
+    }
+
+    const sortedVals = [v1, v2, v3].sort((a, b) => b - a);
+    return [3, sortedVals[0], sortedVals[1], sortedVals[2]];
+  }
+
+  // w === 1
+  const natRanks = naturals.map((c) => RV[c.rank]);
+  if (natRanks[0] === natRanks[1] && natRanks[1] === natRanks[2] && natRanks[2] === natRanks[3]) {
+    return [8.5, natRanks[0]]; // Five of a Kind
+  }
+
+  const existingKeys = new Set(naturals.map((c) => c.rank + c.suit));
+  let bestScore = null;
+  for (const r of candidateRanks) {
+    for (const s of candidateSuits) {
+      if (existingKeys.has(r + s)) continue;
+      const sc = evaluate7([...naturals, { rank: r, suit: s }]);
+      const finalSc = (sc[0] === 8 && sc[1] === 14) ? [9, 14] : sc;
+      if (!bestScore || cmpScore(finalSc, bestScore) > 0) {
+        bestScore = finalSc;
+      }
+    }
+  }
+  return bestScore || evaluate7(cards5);
+}
+
+export function evaluate7DeucesWild(cards) {
+  const n = cards.length;
+  if (n < 5) return evaluate7(cards);
+  let bestScore = null;
+  const combos = [];
+  const generateCombos = (start, chosen) => {
+    if (chosen.length === 5) {
+      combos.push([...chosen]);
+      return;
+    }
+    for (let i = start; i < n; i++) {
+      chosen.push(cards[i]);
+      generateCombos(i + 1, chosen);
+      chosen.pop();
+    }
+  };
+  generateCombos(0, []);
+
+  for (const combo of combos) {
+    const score = evaluate5DeucesWild(combo);
+    if (!bestScore || cmpScore(score, bestScore) > 0) bestScore = score;
+  }
+  return bestScore || evaluate7(cards);
+}
+
+export function best5OfDeucesWild(cards) {
+  const n = cards.length;
+  if (n <= 5) return cards;
+  let bestScore = null;
+  let bestCards = null;
+  const combos = [];
+  const generateCombos = (start, chosen) => {
+    if (chosen.length === 5) {
+      combos.push([...chosen]);
+      return;
+    }
+    for (let i = start; i < n; i++) {
+      chosen.push(cards[i]);
+      generateCombos(i + 1, chosen);
+      chosen.pop();
+    }
+  };
+  generateCombos(0, []);
+
+  for (const combo of combos) {
+    const score = evaluate5DeucesWild(combo);
+    if (!bestScore || cmpScore(score, bestScore) > 0) {
+      bestScore = score;
+      bestCards = combo;
+    }
+  }
+  return bestCards || cards.slice(0, 5);
+}
+
 export function calcEquity(holes, board, iterations = 20000, variant = 'nlh', holeSizeOverride, deadCards = []) {
   const meta = variantMeta(variant);
   const holeSize = holeSizeOverride || meta.holeSize;
   const numPlayers = holes.length;
+  const realBoard = Array.isArray(board) ? board.filter((c) => c && !c.hidden) : [];
+  const lowGame = meta.group === 'low';
+  const effectiveIters = variant === 'deuces_wild' ? Math.min(iterations, 3000) : iterations;
   const used = new Set();
   for (const h of holes) if (h) for (const c of h) used.add(c.rank + c.suit);
-  for (const c of board) if (c && !c.hidden) used.add(c.rank + c.suit);
+  for (const c of realBoard) used.add(c.rank + c.suit);
   if (Array.isArray(deadCards)) {
     for (const c of deadCards) if (c && !c.hidden) used.add(c.rank + c.suit);
   }
@@ -2432,9 +2718,22 @@ export function calcEquity(holes, board, iterations = 20000, variant = 'nlh', ho
       if (!used.has(key)) deck.push({ rank: r, suit: s });
     }
   }
-  const lowGame = meta.group === 'low';
-  const realBoard = lowGame ? [] : board.filter((c) => !c.hidden);
-  const needBoard = lowGame ? 0 : (5 - realBoard.length);
+  let needBoard;
+  if (lowGame) {
+    needBoard = 0;
+  } else if (variant === 'red_river') {
+    if (realBoard.length < 5) {
+      needBoard = 5 - realBoard.length;
+    } else {
+      const lastCard = realBoard[realBoard.length - 1];
+      const isRed = lastCard && (lastCard.suit === 'd' || lastCard.suit === 'h' || lastCard.suit === '♦' || lastCard.suit === '♥');
+      needBoard = isRed ? 1 : 0;
+    }
+  } else if (variant === 'three_two_one' || variant === 'ocean') {
+    needBoard = Math.max(0, 6 - realBoard.length);
+  } else {
+    needBoard = Math.max(0, 5 - realBoard.length);
+  }
   let unknownHoles = 0;
   for (let i = 0; i < numPlayers; i++) if (!holes[i]) unknownHoles++;
   const totalDraw = needBoard + unknownHoles * holeSize;
@@ -2444,10 +2743,13 @@ export function calcEquity(holes, board, iterations = 20000, variant = 'nlh', ho
     ? (h, b) => evaluateOmahaStyle(h, b)
     : meta.group === 'low'
     ? (h, b) => evaluateLow([...h, ...b], meta.lowKind === 'a5', meta.lowKind === '27')
+    : variant === 'deuces_wild'
+    ? (h, b) => evaluate7DeucesWild([...h, ...b])
     : (h, b) => evaluate7([...h, ...b], meta.deck === 'short');
+  const isSecondBest = variant === 'second_best';
   const wins = new Array(numPlayers).fill(0);
   let splits = 0;
-  for (let it = 0; it < iterations; it++) {
+  for (let it = 0; it < effectiveIters; it++) {
     for (let i = 0; i < totalDraw; i++) {
       const j = i + Math.floor(Math.random() * (deck.length - i));
       const tmp = deck[i]; deck[i] = deck[j]; deck[j] = tmp;
@@ -2465,19 +2767,30 @@ export function calcEquity(holes, board, iterations = 20000, variant = 'nlh', ho
     const fullBoard = realBoard.slice();
     for (let i = 0; i < needBoard; i++) fullBoard.push(deck[di++]);
     const scores = playerCards.map((h) => evalFn(h, fullBoard));
-    let best = scores[0];
-    for (let i = 1; i < numPlayers; i++) {
-      const c = cmpScore(scores[i], best);
-      if (meta.low ? c < 0 : c > 0) best = scores[i];
+
+    let targetScore;
+    if (isSecondBest && numPlayers >= 2) {
+      const sorted = [...scores].sort((a, b) => cmpScore(b, a));
+      const topScore = sorted[0];
+      const secondScoreObj = sorted.find((s) => cmpScore(s, topScore) !== 0);
+      targetScore = secondScoreObj ? secondScoreObj : topScore;
+    } else {
+      let best = scores[0];
+      for (let i = 1; i < numPlayers; i++) {
+        const c = cmpScore(scores[i], best);
+        if (meta.low ? c < 0 : c > 0) best = scores[i];
+      }
+      targetScore = best;
     }
+
     const winners = [];
-    for (let i = 0; i < numPlayers; i++) if (cmpScore(scores[i], best) === 0) winners.push(i);
+    for (let i = 0; i < numPlayers; i++) if (cmpScore(scores[i], targetScore) === 0) winners.push(i);
     if (winners.length === 1) wins[winners[0]]++;
     else splits++;
   }
   const results = [];
-  for (let i = 0; i < numPlayers; i++) results.push({ win: (wins[i] / iterations) * 100 });
-  return { results, split: (splits / iterations) * 100 };
+  for (let i = 0; i < numPlayers; i++) results.push({ win: (wins[i] / effectiveIters) * 100 });
+  return { results, split: (splits / effectiveIters) * 100 };
 }
 
 export function calculateEffectiveM(player, hand) {
@@ -2532,18 +2845,19 @@ export function calculateAllInOuts(hand, holeCards) {
   const boardC = (hand.boardC || []).filter((c) => c && !c.hidden);
 
   let board = boardA;
-  if (boardA.length >= 5 && isMultiRun) {
-    if (boardB.length < 5) {
+  const targetLen = (variant === 'three_two_one' || variant === 'ocean') ? 6 : 5;
+  if (boardA.length >= targetLen && isMultiRun) {
+    if (boardB.length < targetLen) {
       board = boardB;
-    } else if (isTripleRun && boardC.length < 5) {
+    } else if (isTripleRun && boardC.length < targetLen) {
       board = boardC;
     } else {
       return [];
     }
   }
 
-  // On river (5 cards on current active board), board is complete: no future outs
-  if (board.length >= 5) return [];
+  // If board is complete: no future outs
+  if (board.length >= targetLen) return [];
 
   // Omaha requires at least 3 community cards
   if (meta.group === 'omaha' && board.length < 3) return [];
@@ -2554,39 +2868,56 @@ export function calculateAllInOuts(hand, holeCards) {
     ? (h, b) => evaluateOmahaStyle(h, b)
     : lowGame
     ? (h, b) => evaluateLow([...h, ...b], meta.lowKind === 'a5', meta.lowKind === '27')
+    : variant === 'deuces_wild'
+    ? (h, b) => evaluate7DeucesWild([...h, ...b])
     : (h, b) => evaluate7([...h, ...b], meta.deck === 'short');
 
-  // Evaluate current hand strength for each contestant on current active board
+  const isSecondBest = variant === 'second_best';
+  const isHeadsUp = contestants.length === 2;
   const scores = contestants.map((p) => evalFn(holeCards[p.id], board));
 
-  let bestScore = scores[0];
-  for (let i = 1; i < contestants.length; i++) {
-    const c = cmpScore(scores[i], bestScore);
-    if (lowGame ? c < 0 : c > 0) {
-      bestScore = scores[i];
+  let currentTargetScore;
+  if (isSecondBest && contestants.length >= 2) {
+    const sorted = [...scores].sort((a, b) => cmpScore(b, a));
+    const topScore = sorted[0];
+    currentTargetScore = sorted.find((s) => cmpScore(s, topScore) !== 0) || topScore;
+  } else {
+    let best = scores[0];
+    for (let i = 1; i < contestants.length; i++) {
+      const c = cmpScore(scores[i], best);
+      if (lowGame ? c < 0 : c > 0) best = scores[i];
     }
+    currentTargetScore = best;
   }
 
-  // Identify contestants who are currently NOT ahead on this board
-  const trailing = [];
+  // Identify contestants who are currently trailing or tied for leader
+  const candidates = [];
   contestants.forEach((p, idx) => {
-    const diff = cmpScore(scores[idx], bestScore);
+    const diff = cmpScore(scores[idx], currentTargetScore);
     if (diff !== 0) {
-      trailing.push(p);
+      candidates.push({ player: p, currentScore: scores[idx], isTied: false });
+    } else {
+      const tiedCount = contestants.filter((_, oIdx) => cmpScore(scores[oIdx], currentTargetScore) === 0).length;
+      if (tiedCount > 1) {
+        candidates.push({ player: p, currentScore: scores[idx], isTied: true });
+      }
     }
   });
 
-  if (trailing.length === 0) return [];
+  if (candidates.length === 0) return [];
 
-  // Build remaining unseen cards in deck (excluding all hole cards and all cards dealt on any board)
+  // Build remaining unseen cards in deck (excluding all hole cards, folded cards, and board cards)
   const used = new Set();
   for (const p of players) {
     const h = holeCards[p.id];
-    if (h) for (const c of h) if (c) used.add(c.rank + c.suit);
+    if (h) for (const c of h) if (c && !c.hidden) used.add(c.rank + c.suit);
   }
-  for (const c of boardA) used.add(c.rank + c.suit);
-  for (const c of boardB) used.add(c.rank + c.suit);
-  for (const c of boardC) used.add(c.rank + c.suit);
+  if (Array.isArray(hand.foldedCards)) {
+    for (const c of hand.foldedCards) if (c && !c.hidden) used.add(c.rank + c.suit);
+  }
+  for (const c of boardA) if (c && !c.hidden) used.add(c.rank + c.suit);
+  for (const c of boardB) if (c && !c.hidden) used.add(c.rank + c.suit);
+  for (const c of boardC) if (c && !c.hidden) used.add(c.rank + c.suit);
 
   const deckRanks = meta.deck === 'short' ? ['6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'] : RANKS;
   const remainingDeck = [];
@@ -2600,43 +2931,223 @@ export function calculateAllInOuts(hand, holeCards) {
   const RANK_ORDER = { A: 14, K: 13, Q: 12, J: 11, T: 10, '9': 9, '8': 8, '7': 7, '6': 6, '5': 5, '4': 4, '3': 3, '2': 2 };
   const SUIT_ORDER = { s: 0, h: 1, d: 2, c: 3 };
 
+  const beats = (score1, score2) => {
+    const c = cmpScore(score1, score2);
+    return lowGame ? c < 0 : c > 0;
+  };
+  const ties = (score1, score2) => cmpScore(score1, score2) === 0;
+  const loses = (score1, score2) => {
+    const c = cmpScore(score1, score2);
+    return lowGame ? c > 0 : c < 0;
+  };
+
+  const isValidDirtyOut = (myHole, curBoard, card, myCandidateScore) => {
+    if (lowGame || !myCandidateScore) return false;
+    const cat = myCandidateScore[0];
+    // Rule A (Board-Pair Trap): Card C pairs the board AND Hero's best hand is only One Pair -> brick
+    const pairsBoard = curBoard.some((b) => b && !b.hidden && b.rank === card.rank);
+    if (pairsBoard && cat === 1) return false;
+    // Rule B (True Dirty Out Definition): Must give Hero Straight, Flush, Full House, Trips, or Two Pair (or better) using Hero's own hole cards
+    if (cat < 2) return false;
+    if (variant === 'deuces_wild' && (myHole || []).some((c) => c && c.rank === '2')) {
+      return true;
+    }
+    const candidateBoard = [...curBoard, card];
+    const isShort = meta.deck === 'short';
+    const holeRankVals = new Set((myHole || []).filter(Boolean).map((c) => RV[c.rank]));
+    const boardRankVals = new Set(candidateBoard.filter(Boolean).map((c) => RV[c.rank]));
+    const fullHouseCat = isShort ? 5 : 6;
+    const flushCat = isShort ? 6 : 5;
+
+    if (meta.group === 'omaha') {
+      if (cat === 3 || cat === 7) return holeRankVals.has(myCandidateScore[1]);
+      if (cat === fullHouseCat) return holeRankVals.has(myCandidateScore[1]) || holeRankVals.has(myCandidateScore[2]);
+      return true;
+    }
+
+    if (cat === 2) {
+      return holeRankVals.has(myCandidateScore[1]) || holeRankVals.has(myCandidateScore[2]);
+    }
+    if (cat === 3 || cat === 7) {
+      return holeRankVals.has(myCandidateScore[1]);
+    }
+    if (cat === fullHouseCat) {
+      return holeRankVals.has(myCandidateScore[1]) || holeRankVals.has(myCandidateScore[2]);
+    }
+    if (cat === 4) {
+      const h = myCandidateScore[1];
+      const needed = [h, h - 1, h - 2, h - 3, h - 4].map((v) => (v === 1 ? 14 : v));
+      return needed.some((v) => holeRankVals.has(v) && !boardRankVals.has(v));
+    }
+    if (cat === flushCat) {
+      const combined = [
+        ...(myHole || []).filter(Boolean).map((c) => ({ ...c, _h: true })),
+        ...candidateBoard.filter(Boolean).map((c) => ({ ...c, _h: false })),
+      ];
+      for (const s of SUITS) {
+        const suited = combined.filter((c) => c.suit === s);
+        if (suited.length >= 5) {
+          suited.sort((a, b) => RV[b.rank] - RV[a.rank]);
+          return suited.slice(0, 5).some((c) => c._h);
+        }
+      }
+      return false;
+    }
+    if (cat >= 8) {
+      if (cat >= 8.5 && variant === 'deuces_wild') return true;
+      const sfHigh = myCandidateScore[1];
+      const sfNeeded = new Set([sfHigh, sfHigh - 1, sfHigh - 2, sfHigh - 3, sfHigh - 4].map((v) => (v === 1 ? 14 : v)));
+      for (const s of SUITS) {
+        const holeSuited = new Set((myHole || []).filter((c) => c && c.suit === s).map((c) => RV[c.rank]));
+        const boardSuited = new Set(candidateBoard.filter((c) => c && c.suit === s).map((c) => RV[c.rank]));
+        const allMatch = [...sfNeeded].every((v) => holeSuited.has(v) || boardSuited.has(v));
+        if (allMatch) {
+          return [...sfNeeded].some((v) => holeSuited.has(v) && !boardSuited.has(v));
+        }
+      }
+      return false;
+    }
+    return false;
+  };
+
   const results = [];
-  for (const p of trailing) {
-    const outs = [];
+  for (const item of candidates) {
+    const p = item.player;
+    const currentScore = item.currentScore;
+    const winOuts = [];
+    const chopOuts = [];
+    const dirtyOuts = [];
     const myHole = holeCards[p.id];
 
     for (const card of remainingDeck) {
       const candidateBoard = [...board, card];
       const myCandidateScore = evalFn(myHole, candidateBoard);
 
-      let beatsAll = true;
-      for (const other of contestants) {
-        if (other.id === p.id) continue;
-        const otherCandidateScore = evalFn(holeCards[other.id], candidateBoard);
-        const comp = cmpScore(myCandidateScore, otherCandidateScore);
-        const ahead = lowGame ? comp < 0 : comp > 0;
-        if (!ahead) {
-          beatsAll = false;
-          break;
+      if (isSecondBest && contestants.length >= 2) {
+        const candidateScores = contestants.map((cPlayer) => evalFn(holeCards[cPlayer.id], candidateBoard));
+        const sorted = [...candidateScores].sort((a, b) => cmpScore(b, a));
+        const top = sorted[0];
+        const sec = sorted.find((s) => cmpScore(s, top) !== 0) || top;
+
+        if (cmpScore(myCandidateScore, sec) === 0) {
+          winOuts.push({ ...card, isDirty: false, isChop: false });
         }
+        continue;
       }
 
-      if (beatsAll) {
-        outs.push(card);
+      if (isHeadsUp) {
+        const opp = contestants.find((c) => c.id !== p.id);
+        const oppId = opp.id;
+        const oppCurrentScore = evalFn(holeCards[oppId], board);
+        const oppCandidateScore = evalFn(holeCards[oppId], candidateBoard);
+
+        if (item.isTied) {
+          // Reminder: if tied at the moment, only show outs for the player who has a chance to win.
+          // Do NOT show chop outs if tied at the moment.
+          if (beats(myCandidateScore, oppCandidateScore)) {
+            winOuts.push({ ...card, isDirty: false, isChop: false });
+          }
+        } else {
+          // Hero is currently behind!
+          // Check 1 (The "Actual Out" Test): Does Hero's new hand (with card C) beat Villain's current, static hand (evaluated without card C)?
+          // • If NO: Stop immediately. Card C is a Brick / Non-Out.
+          // • If YES: Card C is a valid out. Proceed to Check 2.
+          if (!beats(myCandidateScore, oppCurrentScore)) {
+            continue;
+          }
+
+          // Check 2 (The "Clean vs. Dirty" Test): Does Hero's new hand (with card C) also beat Villain's new hand (evaluated with card C)?
+          // • If YES: Card C is a Clean Out.
+          // • If TIE: Card C is a Chop Out.
+          // • If NO: Card C is a Dirty Out (only if Rule A & Rule B pass).
+          if (beats(myCandidateScore, oppCandidateScore)) {
+            winOuts.push({ ...card, isDirty: false, isChop: false });
+          } else if (ties(myCandidateScore, oppCandidateScore)) {
+            chopOuts.push({ ...card, isDirty: false, isChop: true });
+          } else if (isValidDirtyOut(myHole, board, card, myCandidateScore)) {
+            dirtyOuts.push({ ...card, isDirty: true, isChop: false });
+          }
+        }
+      } else {
+        // Multi-way (3+ contestants)
+        if (item.isTied) {
+          // If tied at the moment, only show outs for player who has a chance to win
+          let beatsAll = true;
+          for (const other of contestants) {
+            if (other.id === p.id) continue;
+            const otherCandidateScore = evalFn(holeCards[other.id], candidateBoard);
+            if (!beats(myCandidateScore, otherCandidateScore)) {
+              beatsAll = false;
+              break;
+            }
+          }
+          if (beatsAll) {
+            winOuts.push({ ...card, isDirty: false, isChop: false });
+          }
+        } else {
+          // Hero is behind:
+          // Check 1: Does Hero's new hand beat the current static best hand?
+          if (!beats(myCandidateScore, currentTargetScore)) {
+            continue;
+          }
+
+          // Check 2: Does Hero's new hand also beat all opponents' new hands?
+          let beatsAll = true;
+          let tiesForWin = true;
+          for (const other of contestants) {
+            if (other.id === p.id) continue;
+            const otherCandidateScore = evalFn(holeCards[other.id], candidateBoard);
+            if (!beats(myCandidateScore, otherCandidateScore)) {
+              beatsAll = false;
+            }
+            if (loses(myCandidateScore, otherCandidateScore)) {
+              tiesForWin = false;
+            }
+          }
+
+          if (beatsAll) {
+            winOuts.push({ ...card, isDirty: false, isChop: false });
+          } else if (tiesForWin) {
+            chopOuts.push({ ...card, isDirty: false, isChop: true });
+          }
+        }
       }
     }
 
-    // Sort outs: rank from A to 2, then suit (spades, hearts, diamonds, clubs)
-    outs.sort((a, b) => {
+    const sortCards = (arr) => arr.sort((a, b) => {
       const rd = (RANK_ORDER[b.rank] || 0) - (RANK_ORDER[a.rank] || 0);
       if (rd !== 0) return rd;
       return (SUIT_ORDER[a.suit] ?? 99) - (SUIT_ORDER[b.suit] ?? 99);
     });
 
-    results.push({
-      player: p,
-      outs,
-    });
+    sortCards(winOuts);
+    sortCards(chopOuts);
+    sortCards(dirtyOuts);
+
+    const isChopOnly = !item.isTied && winOuts.length === 0 && chopOuts.length > 0;
+    let outs = [];
+    if (item.isTied) {
+      // If tied at the moment, only show outs for player with a chance to win
+      outs = [...winOuts];
+    } else if (isHeadsUp) {
+      outs = [...winOuts, ...chopOuts, ...dirtyOuts];
+    } else if (isChopOnly) {
+      outs = [...chopOuts];
+    } else {
+      outs = [...winOuts, ...chopOuts];
+    }
+
+    if (outs.length > 0) {
+      results.push({
+        player: p,
+        outs,
+        winOuts,
+        chopOuts,
+        dirtyOuts,
+        isChopOnly,
+        isHeadsUp,
+      });
+    }
   }
 
   return results;
@@ -2736,6 +3247,7 @@ export function winningHandCards(hole, board, variant = 'nlh') {
   if (realBoard.length < 5) return null;
   if (variant === 'lazy_pineapple') return bestLazyPineapple5(hole, realBoard, meta.deck === 'short');
   if (meta.group === 'omaha') return bestOmaha5(hole, realBoard, meta.deck === 'short');
+  if (variant === 'deuces_wild') return best5OfDeucesWild([...hole, ...realBoard]);
   return best5Of([...hole, ...realBoard], meta.deck === 'short');
 }
 
@@ -2768,7 +3280,8 @@ export function evaluateWinners(eligible, holeCards, board, variant = 'nlh', hol
   const meta = variantMeta(variant);
   const lowGame = meta.group === 'low';
   const realBoard = lowGame ? [] : (board ? board.filter((c) => !c.hidden) : []);
-  if (!lowGame && realBoard.length !== 5) return null;
+  const minBoard = (variant === 'three_two_one' || variant === 'ocean') ? 6 : 5;
+  if (!lowGame && realBoard.length < minBoard) return null;
   const hs = holeSize || meta.holeSize;
   const accepts = (pid) => {
     const c = holeCards[pid];
@@ -2784,8 +3297,17 @@ export function evaluateWinners(eligible, holeCards, board, variant = 'nlh', hol
     ? (h) => evaluateOmahaStyle(h, realBoard)
     : meta.group === 'low'
     ? (h) => evaluateLow([...h, ...realBoard], meta.lowKind === 'a5', meta.lowKind === '27')
+    : variant === 'deuces_wild'
+    ? (h) => evaluate7DeucesWild([...h, ...realBoard])
     : (h) => evaluate7([...h, ...realBoard], meta.deck === 'short');
   const scores = eligible.map((pid) => ({ pid, score: evalFn(holeCards[pid]) }));
+  if (variant === 'second_best' && scores.length >= 2) {
+    const sorted = [...scores].sort((a, b) => cmpScore(b.score, a.score));
+    const bestScore = sorted[0].score;
+    const secondBestObj = sorted.find((s) => cmpScore(s.score, bestScore) !== 0);
+    const targetScore = secondBestObj ? secondBestObj.score : bestScore;
+    return scores.filter((s) => cmpScore(s.score, targetScore) === 0).map((s) => s.pid);
+  }
   let best = scores[0].score;
   for (const s of scores) {
     const c = cmpScore(s.score, best);
@@ -2805,15 +3327,16 @@ export function tryAutoWinners(hand, holeCards) {
   const lowGame = meta.group === 'low';
   const isTriple = (Number(hand.bombBoards) >= 3) || (hand.boardC && hand.boardC.length > 0) || (Number(hand.runTimes) >= 3);
   const isDouble = hand.doubleBoard || isTriple || (Number(hand.runTimes) >= 2);
+  const targetLen = (variant === 'three_two_one' || variant === 'ocean') ? 6 : 5;
   if (!lowGame) {
-    const boardComplete = hand.communityCards.length === 5 && hand.communityCards.every((c) => !c.hidden);
+    const boardComplete = (hand.communityCards || []).length >= targetLen && (hand.communityCards || []).every((c) => !c.hidden);
     if (!boardComplete) return null;
     if (isDouble) {
-      const bComplete = (hand.boardB || []).length === 5 && (hand.boardB || []).every((c) => !c.hidden);
+      const bComplete = (hand.boardB || []).length >= targetLen && (hand.boardB || []).every((c) => !c.hidden);
       if (!bComplete) return null;
     }
     if (isTriple) {
-      const cComplete = (hand.boardC || []).length === 5 && (hand.boardC || []).every((c) => !c.hidden);
+      const cComplete = (hand.boardC || []).length >= targetLen && (hand.boardC || []).every((c) => !c.hidden);
       if (!cComplete) return null;
     }
   }
@@ -2942,6 +3465,8 @@ function labelFromScore(score, hole, bestCards, shortDeck) {
     const used = (bestCards || []).filter((c) => c.rank === rc && (hole || []).some((h) => h.rank === c.rank && h.suit === c.suit)).length;
     return used >= 2 ? 'Set' : 'Trips';
   };
+  if (cat === 9) return 'Royal Flush';
+  if (cat === 8.5) return `Five of a Kind (${shp(score[1])})`;
   switch (cat) {
     case 8: return score[1] === 14 ? 'Royal Flush' : `${sh(score[1])}-high SF`;
     case 7: return `Quad ${shp(score[1])}`;
@@ -2985,6 +3510,11 @@ export function describeHand(hole, board, variant = 'nlh') {
     const score = evaluate7(best, meta.deck === 'short');
     return labelFromScore(score, hole, best, meta.deck === 'short');
   }
+  if (variant === 'deuces_wild') {
+    const best = best5OfDeucesWild(all);
+    const score = evaluate5DeucesWild(best);
+    return labelFromScore(score, hole, best, false);
+  }
   const best = best5Of([...(hole || []), ...realBoard], meta.deck === 'short');
   const score = evaluate7(best, meta.deck === 'short');
   return labelFromScore(score, hole, best, meta.deck === 'short');
@@ -3004,6 +3534,9 @@ export function evalPlayerHand(hole, board, variant = 'nlh') {
   }
   if (meta.group === 'low') {
     return evaluateLow([...hole, ...realBoard], meta.lowKind === 'a5', meta.lowKind === '27');
+  }
+  if (variant === 'deuces_wild') {
+    return evaluate7DeucesWild([...hole, ...realBoard]);
   }
   return evaluate7([...hole, ...realBoard], meta.deck === 'short');
 }
@@ -3105,3 +3638,50 @@ export function calcOuts(playersWithHoles, communityCards, variant = 'nlh') {
 
   return results;
 }
+
+export function getLastActionPlayerName(hand) {
+  if (!hand) return null;
+  if (Array.isArray(hand.actionHistory) && hand.actionHistory.length > 0) {
+    const streetActions = hand.actionHistory.filter((a) => a.street === hand.street);
+    if (streetActions.length > 0) {
+      return streetActions[streetActions.length - 1]?.player || null;
+    }
+    // If on preflop and no actionHistory entries on preflop yet, check blind posters
+    if (hand.street === 'preflop' && Array.isArray(hand.players)) {
+      const withAction = hand.players.filter((p) => p.lastAction);
+      const straddleOrBB = [...withAction].reverse().find(
+        (p) =>
+          p.lastAction?.type === 'straddle' ||
+          p.lastAction?.type === 'kill' ||
+          p.lastAction?.type === 'bb' ||
+          p.lastAction?.type === '4b' ||
+          p.lastAction?.type === '3b' ||
+          p.lastAction?.type === 'sb'
+      );
+      if (straddleOrBB) return straddleOrBB.name;
+    }
+    // If action is frozen, ended, or awarded, return the last overall action
+    if (bettingFrozen(hand) || hand.phase === 'ended' || hand.phase === 'awarded' || hand.currentPlayer === -1) {
+      return hand.actionHistory[hand.actionHistory.length - 1]?.player || null;
+    }
+    return null;
+  }
+  if (Array.isArray(hand.players) && hand.players.length > 0) {
+    const playersWithAction = hand.players.filter((p) => p.lastAction);
+    if (playersWithAction.length > 0) {
+      const straddleOrBB = [...playersWithAction].reverse().find(
+        (p) =>
+          p.lastAction?.type === 'straddle' ||
+          p.lastAction?.type === 'kill' ||
+          p.lastAction?.type === 'bb' ||
+          p.lastAction?.type === '4b' ||
+          p.lastAction?.type === '3b' ||
+          p.lastAction?.type === 'sb'
+      );
+      if (straddleOrBB) return straddleOrBB.name;
+      return playersWithAction[playersWithAction.length - 1].name;
+    }
+  }
+  return null;
+}
+

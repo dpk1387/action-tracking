@@ -246,3 +246,278 @@ export function suggestNextBlinds(schedule = [], chipDenominations = []) {
   const nextSB = Math.round(nextBB / 2);
   return { smallBlind: formatKM(nextSB), bigBlind: formatKM(nextBB) };
 }
+
+/**
+ * Generate a complete tournament blind schedule based on:
+ * - level length (minutes)
+ * - break length (minutes)
+ * - break frequency (every X levels) OR colorUpBreaksOnly
+ * - desired total tournament length in minutes (0 = unconstrained standard length)
+ * - speed profile ('balanced' vs 'turbo')
+ * - lowest chip denomination & selected chipDenominations
+ * - starting stack
+ */
+export function generateBlindSchedule({
+  lowestChip = 25,
+  startingStack = 10000,
+  levelDurationMinutes = 15,
+  breakDurationMinutes = 10,
+  breakEveryLevels = 4,
+  desiredMinutes = 0,
+  colorUpBreaksOnly = false,
+  chipDenominations = [],
+  speed = 'balanced',
+  anteType = 'bba',
+} = {}) {
+  const rawBase = Math.max(1, Number(lowestChip) || 25);
+  const sortedDenoms = (Array.isArray(chipDenominations) ? chipDenominations : [])
+    .map(Number)
+    .filter((d) => Number.isFinite(d) && d > 0)
+    .sort((a, b) => a - b);
+  const denoms = sortedDenoms.length > 0 ? sortedDenoms : defaultDenomsFor(rawBase);
+  const base = denoms[0] || rawBase;
+  const activeDenoms = [...denoms];
+
+  const stack = Math.max(base * 10, Number(startingStack) || 10000);
+  const lvlMin = Math.max(1, Number(levelDurationMinutes) || 15);
+  const brkMin = Math.max(1, Number(breakDurationMinutes) || 10);
+  const brkFreq = Math.max(1, Math.min(12, Number(breakEveryLevels) || 4));
+  const targetMin = Math.max(0, Number(desiredMinutes) || 0);
+  const isTurbo = speed === 'turbo';
+
+  const balancedMultipliers = [
+    [1, 2],
+    [2, 3],
+    [2, 4],
+    [3, 6],
+    [4, 8],
+    [5, 10],
+    [6, 12],
+    [8, 16],
+    [10, 20],
+    [12, 24],
+    [16, 32],
+    [20, 40],
+    [24, 48],
+    [30, 60],
+    [40, 80],
+    [50, 100],
+    [60, 120],
+    [80, 160],
+    [100, 200],
+    [120, 240],
+    [160, 320],
+    [200, 400],
+    [240, 480],
+    [320, 640],
+    [400, 800],
+    [500, 1000],
+    [600, 1200],
+    [800, 1600],
+    [1000, 2000],
+    [1500, 3000],
+    [2000, 4000],
+    [3000, 6000],
+    [4000, 8000],
+    [5000, 10000],
+    [6000, 12000],
+    [8000, 16000],
+    [10000, 20000],
+  ];
+
+  const turboMultipliers = [
+    [1, 2],
+    [2, 4],
+    [3, 6],
+    [4, 8],
+    [6, 12],
+    [8, 16],
+    [12, 24],
+    [16, 32],
+    [20, 40],
+    [30, 60],
+    [40, 80],
+    [60, 120],
+    [80, 160],
+    [120, 240],
+    [200, 400],
+    [320, 640],
+    [400, 800],
+    [600, 1200],
+    [1000, 2000],
+    [1600, 3200],
+    [2000, 4000],
+    [3000, 6000],
+    [4000, 8000],
+    [6000, 12000],
+    [8000, 16000],
+    [10000, 20000],
+  ];
+
+  const baseMultipliers = isTurbo ? turboMultipliers : balancedMultipliers;
+
+  // Determine starting index based on starting stack so players don't start absurdly deep (>300 BB)
+  let startIdx = 0;
+  if (stack / (2 * base) > 300) {
+    const targetBB = stack / 200;
+    for (let i = 0; i < baseMultipliers.length; i++) {
+      if (baseMultipliers[i][1] * base >= targetBB) {
+        startIdx = i;
+        break;
+      }
+    }
+  }
+
+  let levelPairs = baseMultipliers.slice(startIdx).map(([s, b]) => [s * base, b * base]);
+
+  // If desiredMinutes is set, determine how many play levels fit in the time budget
+  // and select an appropriately paced progression across that level count
+  if (targetMin > 0) {
+    let maxLevels = 1;
+    if (colorUpBreaksOnly) {
+      maxLevels = Math.max(1, Math.floor(targetMin / lvlMin));
+    } else {
+      for (let k = 1; k <= 60; k++) {
+        const numBreaks = Math.floor((k - 1) / brkFreq);
+        const totalTime = k * lvlMin + numBreaks * brkMin;
+        if (totalTime <= targetMin) {
+          maxLevels = k;
+        } else {
+          break;
+        }
+      }
+    }
+
+    const startPair = levelPairs[0] || [base, base * 2];
+    const startBB = startPair[1];
+    // Target endgame BB so short tournaments still escalate enough to finish
+    const minGrowth = startBB * Math.pow(isTurbo ? 1.75 : 1.4, Math.max(1, maxLevels - 1));
+    const stackTargetBB = stack * (isTurbo ? 0.25 : 0.12);
+    const targetEndBB = Math.max(minGrowth, stackTargetBB);
+
+    if (maxLevels === 1) {
+      levelPairs = [startPair];
+    } else if (maxLevels < levelPairs.length) {
+      // Build a fine pool of clean chip-friendly blind pairs from baseMultipliers
+      const chosen = [startPair];
+      for (let i = 1; i < maxLevels; i++) {
+        const t = i / (maxLevels - 1);
+        const idealBB = startBB * Math.pow(targetEndBB / startBB, t);
+        const prevBB = chosen[chosen.length - 1][1];
+        // Find candidate in levelPairs strictly > prevBB and closest in log space to idealBB
+        let bestPair = null;
+        let bestDist = Infinity;
+        for (let j = 0; j < levelPairs.length; j++) {
+          const cand = levelPairs[j];
+          if (cand[1] <= prevBB) continue;
+          const dist = Math.abs(Math.log(cand[1]) - Math.log(idealBB));
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestPair = cand;
+          }
+        }
+        if (bestPair) {
+          chosen.push(bestPair);
+        } else {
+          const last = chosen[chosen.length - 1];
+          chosen.push([last[0] * 2, last[1] * 2]);
+        }
+      }
+      levelPairs = chosen;
+    }
+  }
+
+  const calcAnte = (bb, minChip) => {
+    if (anteType === 'bba' || anteType === 'btn_ante') return formatKM(bb);
+    if (anteType === 'sb_half_ante') return formatKM(Math.max(minChip, Math.round((bb * 0.5) / minChip) * minChip));
+    if (anteType === 'traditional') {
+      const trad = Math.max(minChip, Math.round((bb * 0.25) / minChip) * minChip);
+      return formatKM(trad);
+    }
+    return '0';
+  };
+
+  const snapToChip = (val, chip) => {
+    if (chip <= 1) return Math.round(val);
+    return Math.max(chip, Math.round(val / chip) * chip);
+  };
+
+  const schedule = [];
+  let playLevelsCount = 0;
+  let elapsedMinutes = 0;
+
+  for (let idx = 0; idx < levelPairs.length; idx++) {
+    if (targetMin > 0 && playLevelsCount >= 1 && elapsedMinutes + lvlMin > targetMin) {
+      break;
+    }
+
+    const currentMinChip = activeDenoms[0] || base;
+    let [sb, bb] = levelPairs[idx];
+    sb = snapToChip(sb, currentMinChip);
+    bb = snapToChip(bb, currentMinChip);
+    if (bb <= sb) bb = sb * 2;
+
+    schedule.push({
+      type: 'level',
+      smallBlind: formatKM(sb),
+      bigBlind: formatKM(bb),
+      ante: calcAnte(bb, currentMinChip),
+      minutes: lvlMin,
+    });
+    playLevelsCount++;
+    elapsedMinutes += lvlMin;
+
+    // Look ahead at next level to detect if lowest active chip should be colored up now
+    let colorUpRace = null;
+    if (activeDenoms.length >= 2) {
+      const retired = activeDenoms[0];
+      const replacement = activeDenoms[1];
+      const nextRaw = levelPairs[idx + 1];
+      const nextFitsReplacement = nextRaw
+        ? (nextRaw[0] >= replacement && nextRaw[0] % replacement === 0 && nextRaw[1] % replacement === 0)
+        : false;
+      if (sb >= retired * 8 || (nextFitsReplacement && sb >= retired * 4)) {
+        colorUpRace = { retired, replacement };
+      }
+    }
+
+    if (colorUpBreaksOnly) {
+      // Only insert breaks when a chip denomination is being colored up (and room remains for another level)
+      const hasRoomAfterBreak = targetMin <= 0 || (elapsedMinutes + brkMin + lvlMin <= targetMin);
+      const hasMoreLevels = idx < levelPairs.length - 1;
+      if (colorUpRace && hasMoreLevels && hasRoomAfterBreak) {
+        schedule.push({
+          type: 'break',
+          minutes: brkMin,
+          isColorUp: true,
+          race: { retired: formatKM(colorUpRace.retired), replacement: formatKM(colorUpRace.replacement) },
+        });
+        elapsedMinutes += brkMin;
+        activeDenoms.shift();
+      }
+    } else {
+      // Insert scheduled break every brkFreq levels (never at the very end)
+      const hasMoreLevels = idx < levelPairs.length - 1;
+      const hasRoomAfterBreak = targetMin <= 0 || (elapsedMinutes + brkMin + lvlMin <= targetMin);
+      if (playLevelsCount % brkFreq === 0 && hasMoreLevels && hasRoomAfterBreak) {
+        if (colorUpRace) {
+          activeDenoms.shift();
+        }
+        schedule.push({
+          type: 'break',
+          minutes: brkMin,
+          isColorUp: Boolean(colorUpRace),
+          race: colorUpRace
+            ? { retired: formatKM(colorUpRace.retired), replacement: formatKM(colorUpRace.replacement) }
+            : null,
+        });
+        elapsedMinutes += brkMin;
+      } else if (colorUpRace) {
+        // Track chip retirement internally even if break isn't scheduled on this exact level
+        activeDenoms.shift();
+      }
+    }
+  }
+
+  return schedule;
+}

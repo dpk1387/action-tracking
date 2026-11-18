@@ -40,15 +40,15 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
   const currentTLevel = hand?.tLevel || 0;
   const currentSeg = segments.find((s) => s.idx === currentTLevel) || segments[0];
   const [segIdx, setSegIdx] = useState(currentSeg ? String(currentSeg.idx) : '0');
-  const cfg = hand?.levelConfig || { method: 'minutes', value: 20 };
+  const cfg = hand?.levelConfig || { method: 'minutes', value: 15 };
   const isMinutes = cfg.method === 'minutes';
   const [minutesRemaining, setMinutesRemaining] = useState('');
   const selected = segments.find((s) => String(s.idx) === segIdx);
   const fullMinutes = selected
     ? (selected.kind === 'break' || selected.kind === 'color_up')
       ? Number(selected.minutes) || (selected.kind === 'color_up' ? 2 : 10)
-      : (Number(selected.minutes) > 0 ? Number(selected.minutes) : Number(cfg.value) || 20)
-    : 20;
+      : (Number(selected.minutes) > 0 ? Number(selected.minutes) : Number(cfg.value) || 15)
+    : 15;
 
   const missedRaces = useMemo(() => {
     if (!selected) return [];

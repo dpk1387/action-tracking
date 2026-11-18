@@ -86,7 +86,7 @@ export default function AllInOuts({ hand, nonFolded, holeCards }) {
                             key={i}
                             className="inline-flex items-center justify-center gap-0.5 px-2 py-0.5 rounded bg-white text-slate-900 border border-slate-300 font-bold text-xs shadow-xs min-w-[34px] select-none"
                           >
-                            <span className="font-mono text-xs">{rankDisplay(c.rank)}</span>
+                            <strong className="font-mono text-xs font-bold">{rankDisplay(c.rank)}</strong>
                             <span className={`text-xs ${isRed ? 'text-rose-600' : 'text-slate-950'}`}>
                               {SUIT_SYMBOL[c.suit]}
                             </span>

@@ -41,7 +41,7 @@ export default function BlindLevelDialog({ smallBlind, bigBlind, anteAmount, ant
           {anteType !== 'none' && anteType !== 'three_blinds' && (
             <div>
               <label className="text-xs text-slate-400 block mb-1">
-                Ante amount {isBBA ? '(= big blind)' : isBtnAnte ? '(= button ante 1 BB)' : isSBHalfAnte ? '(= SB half ante 0.5 BB)' : ''}
+                Ante amount {isBBA ? '(= big blind)' : isBtnAnte ? '(= button ante 1 BB)' : isSBHalfAnte ? '(= BB half ante 0.5 BB)' : ''}
               </label>
               <input type="number" value={ante} disabled={isFixedAnte} onChange={(e) => setAnte(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40" />
             </div>

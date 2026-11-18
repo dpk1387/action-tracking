@@ -18,6 +18,8 @@ import {
   RANKS,
   SUITS,
   evaluateWinners,
+  calculateAllInOuts,
+  positionForSeat,
 } from '@/lib/poker';
 import {
   levelTimerState,
@@ -41,6 +43,17 @@ const SUIT_INFO = {
   c: { symbol: '♣', color: 'text-emerald-400', bg: 'bg-emerald-950/80 border-emerald-600', name: 'Clubs' },
 };
 
+function getSuitDisplayColor(suit, suitColors = 2) {
+  if (Number(suitColors) === 2) {
+    if (suit === 'h' || suit === 'd') return 'text-rose-400';
+    return 'text-slate-200';
+  }
+  if (suit === 'h') return 'text-rose-400';
+  if (suit === 'd') return 'text-blue-400';
+  if (suit === 'c') return 'text-emerald-400';
+  return 'text-slate-200';
+}
+
 export default function CompactModeView({
   hand,
   onAction,
@@ -48,6 +61,8 @@ export default function CompactModeView({
   canUndo = false,
   onExitCompact,
   hideAmounts = false,
+  showPosition = true,
+  suitColors = 2,
   onToggleHideAmounts,
   onDeal,
   onDealBoard,
@@ -74,17 +89,32 @@ export default function CompactModeView({
   const [activeSlotId, setActiveSlotId] = useState(null);
   const [selectedRank, setSelectedRank] = useState(null);
 
+  // Next-street (non-all-in) card entry state
+  const [streetCards, setStreetCards] = useState([]);
+  const [streetRank, setStreetRank] = useState(null);
+  const [streetError, setStreetError] = useState('');
+
   const cp = hand.currentPlayer >= 0 ? hand.players[hand.currentPlayer] : null;
   const cur = hand.currency;
   const gt = hand.gameType || 'nl';
   const isPL = gt === 'pl' || gt === 'pot_limit';
   const isFL = gt === 'fl' || gt === 'fixed_limit';
   const isCash = hand.mode === 'cash';
+  const is321 = hand?.variant === 'three_two_one';
+  const isOcean = hand?.variant === 'ocean';
+  const isRedRiver = hand?.variant === 'red_river';
+  const targetBoardLen = (is321 || isOcean) ? 6 : 5;
 
   useEffect(() => {
     setRaiseAmount('');
     setMuckArmed(false);
   }, [hand.currentPlayer, hand.street]);
+
+  useEffect(() => {
+    setStreetCards([]);
+    setStreetRank(null);
+    setStreetError('');
+  }, [hand?.street, hand?.handNumber, hand?.phase]);
 
   const ootForCurrent = cp && Array.isArray(hand.ootActions)
     ? hand.ootActions.find((o) => o.playerId === cp.id && o.street === hand.street)
@@ -102,6 +132,8 @@ export default function CompactModeView({
   const canReopenRaise = cp ? (!hand.shortAllinOpen || !cp.hasActed || cp.currentBet < hand.currentBet) : false;
   const canRaise = cp ? (cp.stack > toCall && canReopenRaise && othersHaveChips) : false;
   const mustAllinToCall = cp ? (!canCheck && cp.stack < toCall) : false;
+  const isMandatory3BetPreflop = hand.street === 'preflop' && hand.variant === 'mandatory_3bet' && !hand.threeBetOccurred && (hand.raiseLevel || 1) < 3;
+  const disableCall = canCheck || mustAllinToCall || isMandatory3BetPreflop;
 
   const effectiveLiveBlind = (hand.street === 'preflop')
     ? (hand.anteType === 'four_blinds'
@@ -196,6 +228,39 @@ export default function CompactModeView({
   };
   const minRaiseLabel = `${isBet ? 'Min bet' : 'Min raise'} ${money(minRaiseClamped, cur)}`;
 
+  const handleKeypadKey = (key) => {
+    if (!canRaise || mustAllinToCall || ootPassiveBound) return;
+    setRaiseAmount((prev) => {
+      const s = String(prev || '');
+      if (key === '⌫') {
+        return s.slice(0, -1);
+      }
+      if (key === 'C') {
+        return '';
+      }
+      if (key === 'K' || key === 'M') {
+        if (!s || s === '.') return s;
+        if (/[kmKM]$/.test(s)) {
+          return s.slice(0, -1) + key;
+        }
+        return s + key;
+      }
+      if (key === '.') {
+        if (/[kmKM]$/.test(s)) return s;
+        if (s.includes('.')) return s;
+        return s === '' ? '0.' : s + '.';
+      }
+      // Digit 0-9: if suffix K/M already present, insert before suffix or ignore after suffix
+      if (/[kmKM]$/.test(s)) {
+        const prefix = s.slice(0, -1);
+        const suffix = s.slice(-1);
+        return prefix + key + suffix;
+      }
+      if (s === '0') return key === '0' ? '0' : key;
+      return s + key;
+    });
+  };
+
   const handleFold = () => {
     if (canCheck) {
       if (!muckArmed) {
@@ -255,7 +320,7 @@ export default function CompactModeView({
           onAction('check');
         }
       } else if (key === 'C') {
-        if (!canCheck && !mustAllinToCall) {
+        if (!disableCall) {
           e.preventDefault();
           onAction('call');
         }
@@ -305,14 +370,14 @@ export default function CompactModeView({
   const allInContestants = nonFolded.filter((p) => p.status === 'allin' || p.stack <= 0);
   const isMultiAllIn = (allInContestants.length >= 2) || (allInContestants.length >= 1 && nonFolded.length >= 2 && frozen);
   const cardsALen = (hand.communityCards || []).filter((c) => c && !c.hidden).length;
-  const canRunIt = isCash && isMultiAllIn && actionDone && (!hand.runTimes || Number(hand.runTimes) <= 1) && !hand.runItSelected && cardsALen < 5 && hand.phase !== 'awarded';
+  const canRunIt = isCash && isMultiAllIn && actionDone && (!hand.runTimes || Number(hand.runTimes) <= 1) && !hand.runItSelected && cardsALen < targetBoardLen && hand.phase !== 'awarded';
 
   // All-in Showdown Condition: ONLY trigger when there is NO MORE ACTION!
   const isAllInShowdown = nonFolded.length >= 2 && actionDone && (
     frozen ||
     allInContestants.length >= 2 ||
     (allInContestants.length >= 1 && nonFolded.length >= 2) ||
-    hand.street === 'river' ||
+    hand.street === (isOcean ? 'ocean' : 'river') ||
     hand.phase === 'ended' ||
     hand.phase === 'awarded'
   );
@@ -337,21 +402,21 @@ export default function CompactModeView({
     const variant = hand.variant || 'nlh';
     const hs = effectiveHoleSize(hand);
 
-    if (cardsA.length === 5) {
+    if (cardsA.length >= targetBoardLen) {
       const wa = evaluateWinners(eligiblePids, holeCards, cardsA, variant, hs);
       if (wa && wa.length > 0) {
         const share = Math.round((boardShare / wa.length) * 100) / 100;
         wa.forEach((id) => { winnings[id] = (winnings[id] || 0) + share; });
       }
     }
-    if (cardsB.length === 5) {
+    if (cardsB.length >= targetBoardLen) {
       const wb = evaluateWinners(eligiblePids, holeCards, cardsB, variant, hs);
       if (wb && wb.length > 0) {
         const share = Math.round((boardShare / wb.length) * 100) / 100;
         wb.forEach((id) => { winnings[id] = (winnings[id] || 0) + share; });
       }
     }
-    if (numBoards >= 3 && cardsC.length === 5) {
+    if (numBoards >= 3 && cardsC.length >= targetBoardLen) {
       const wc = evaluateWinners(eligiblePids, holeCards, cardsC, variant, hs);
       if (wc && wc.length > 0) {
         const share = Math.round((boardShare / wc.length) * 100) / 100;
@@ -359,7 +424,21 @@ export default function CompactModeView({
       }
     }
     return winnings;
-  }, [numBoards, hand, nonFolded, holeCards]);
+  }, [numBoards, hand, nonFolded, holeCards, targetBoardLen]);
+
+  const allInOuts = useMemo(() => {
+    return calculateAllInOuts(hand, holeCards);
+  }, [hand, holeCards]);
+
+  const outsByPlayerId = useMemo(() => {
+    const map = {};
+    if (allInOuts && allInOuts.length) {
+      allInOuts.forEach((entry) => {
+        map[entry.player.id] = entry;
+      });
+    }
+    return map;
+  }, [allInOuts]);
 
   // Ordered slots sequence for card entry:
   // First player card 1, first player card 2, second player card 1, etc., then community cards!
@@ -386,22 +465,84 @@ export default function CompactModeView({
     // 2. Community board cards in order
     for (let b = 1; b <= numBoards; b++) {
       const bCards = (b === 1 ? hand.communityCards : b === 2 ? hand.boardB : hand.boardC) || [];
-      for (let s = 0; s < 5; s++) {
+      const realLen = bCards.filter((c) => c && !c.hidden).length;
+
+      let slotsCount = 5;
+      if (is321 || isOcean) {
+        slotsCount = 6;
+      } else if (isRedRiver) {
+        const lastCard = bCards[realLen - 1];
+        const isRed = lastCard && (lastCard.suit === 'd' || lastCard.suit === 'h' || lastCard.suit === '♦' || lastCard.suit === '♥');
+        const extraSlot = isRed && hand.phase !== 'awarded' && hand.phase !== 'ended' ? 1 : 0;
+        slotsCount = Math.max(5, realLen + extraSlot);
+      } else {
+        slotsCount = Math.max(5, bCards.length);
+      }
+
+      for (let s = 0; s < slotsCount; s++) {
         const card = bCards[s] && !bCards[s].hidden ? bCards[s] : null;
-        const streetName = s < 3 ? `Flop ${s + 1}` : s === 3 ? 'Turn' : 'River';
+        let streetName = '';
+        let shortLabel = '';
+        if (is321) {
+          if (s < 3) {
+            streetName = `Flop ${s + 1}`;
+            shortLabel = `F${s + 1}`;
+          } else if (s === 3) {
+            streetName = 'Turn 1';
+            shortLabel = 'T1';
+          } else if (s === 4) {
+            streetName = 'Turn 2';
+            shortLabel = 'T2';
+          } else {
+            streetName = 'River';
+            shortLabel = 'R';
+          }
+        } else if (isOcean) {
+          if (s < 3) {
+            streetName = `Flop ${s + 1}`;
+            shortLabel = `F${s + 1}`;
+          } else if (s === 3) {
+            streetName = 'Turn';
+            shortLabel = 'T';
+          } else if (s === 4) {
+            streetName = 'River';
+            shortLabel = 'R';
+          } else {
+            streetName = 'Ocean';
+            shortLabel = 'O';
+          }
+        } else if (isRedRiver) {
+          if (s < 3) {
+            streetName = `Flop ${s + 1}`;
+            shortLabel = `F${s + 1}`;
+          } else if (s === 3) {
+            streetName = 'Turn';
+            shortLabel = 'T';
+          } else if (s === 4) {
+            streetName = 'River';
+            shortLabel = 'R';
+          } else {
+            streetName = `River ${s - 3}`;
+            shortLabel = `R${s - 3}`;
+          }
+        } else {
+          streetName = s < 3 ? `Flop ${s + 1}` : s === 3 ? 'Turn' : 'River';
+          shortLabel = s < 3 ? `F${s + 1}` : s === 3 ? 'T' : 'R';
+        }
+
         slots.push({
           id: `b_${b}_${s}`,
           type: 'board',
           boardIndex: b,
           cardIdx: s,
           label: numBoards > 1 ? `Board ${b} ${streetName}` : streetName,
-          shortLabel: numBoards > 1 ? `B${b} ${s < 3 ? `F${s + 1}` : s === 3 ? 'T' : 'R'}` : (s < 3 ? `F${s + 1}` : s === 3 ? 'T' : 'R'),
+          shortLabel: numBoards > 1 ? `B${b} ${shortLabel}` : shortLabel,
           card,
         });
       }
     }
     return slots;
-  }, [nonFolded, holeCards, holeSize, numBoards, hand.communityCards, hand.boardB, hand.boardC]);
+  }, [nonFolded, holeCards, holeSize, numBoards, hand.communityCards, hand.boardB, hand.boardC, is321, isOcean, isRedRiver, hand?.phase]);
 
   // Determine active slot
   const currentSlot = useMemo(() => {
@@ -603,43 +744,79 @@ export default function CompactModeView({
             )}
           </div>
 
-          {/* Step 1: Contestant Hole Cards in Order */}
+          {/* Step 1: Hole Cards: */}
           <div>
             <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center justify-between">
-              <span>1. Enter Contestants' Hole Cards:</span>
+              <span>Hole Cards:</span>
               <span className="text-[10px] text-amber-300 lowercase font-medium">select slot then pick rank + suit</span>
             </div>
             <div className="space-y-2">
               {nonFolded.map((p) => {
-                const isBtn = hand.players.findIndex((pl) => pl.seat === hand.buttonSeat) === hand.players.findIndex((pl) => pl.id === p.id);
-                const pPct = equity?.byId ? equity.byId[p.id] : null;
-
+                const n = hand.players.length;
+                const buttonIdx = hand.players.findIndex((pl) => pl.seat === hand.buttonSeat);
+                const pIdx = hand.players.findIndex((pl) => pl.id === p.id);
+                const isBtn = buttonIdx === pIdx;
+                const posLabel = positionForSeat(n, buttonIdx, pIdx, hand?.variant) || '';
+                const pPct = equity?.byId ? (equity.byId[p.id] ?? equity.byId[p.seat]) : null;
+                const myOuts = outsByPlayerId[p.id];
                 const wonAmt = compactBoardWinnings[p.id];
 
                 return (
                   <div key={p.id} className="flex items-center justify-between bg-[#19202b] rounded-xl px-2.5 py-1.5 border border-slate-700/80 gap-2">
+                    {/* Left: Position, Name, Stack */}
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="text-xs sm:text-sm font-bold text-white truncate shrink-0">{p.name}</span>
-                      {isBtn && (
-                        <span className="px-1.5 py-0.2 rounded bg-black/60 border border-slate-700 text-[9px] font-black text-slate-300 uppercase shrink-0">
-                          BTN
+                      {/* 1. Position */}
+                      {(showPosition || isBtn) && (
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider shrink-0 ${
+                          isBtn
+                            ? 'bg-amber-400 text-black font-extrabold shadow-sm'
+                            : 'bg-black/60 border border-slate-700 text-slate-300'
+                        }`}>
+                          {isBtn ? 'BTN' : (posLabel || `S${p.seat}`)}
                         </span>
                       )}
-                      {!isCash && (
-                        <span className="text-[10px] text-slate-400 font-medium shrink-0">
-                          (Seat {p.seat})
-                        </span>
-                      )}
+
+                      {/* 2. Name */}
+                      <span className="text-xs sm:text-sm font-bold text-white truncate shrink-0" title={p.name}>
+                        {p.name}
+                      </span>
+
+                      {/* 3. Stack */}
                       <span className="text-amber-300 font-mono text-xs font-bold tabular-nums shrink-0">
                         {formatPlayerTagAmount(p.stack, cur, hand)}
                       </span>
+
                       {wonAmt != null && wonAmt > 0 && (
                         <span className="px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-500 text-emerald-300 text-[10px] font-black shrink-0 animate-bounce">
                           ✓ {money(wonAmt - (p.totalBet || 0), cur)}
                         </span>
                       )}
                     </div>
-                    {/* Card slots for this player WITH equity badge to the left of cards */}
+
+                    {/* Middle: Outs (in the space between stack and hole cards) */}
+                    {(() => {
+                      const outEntry = outsByPlayerId[p.id];
+                      if (!outEntry || (!outEntry.outs?.length && !outEntry.chopOuts?.length)) return null;
+                      const count = outEntry.isChopOnly ? (outEntry.chopOuts?.length || outEntry.outs?.length || 0) : outEntry.outs.length;
+                      const dirtyCount = outEntry.dirtyOuts?.length || 0;
+                      return (
+                        <div className="flex items-center gap-1 shrink-0 px-1">
+                          <span className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-bold shadow-sm whitespace-nowrap border ${
+                            outEntry.isChopOnly
+                              ? 'bg-amber-950/90 border-amber-500/70 text-amber-300'
+                              : 'bg-blue-950/90 border-blue-500/70 text-blue-300'
+                          }`}>
+                            {outEntry.isChopOnly
+                              ? `${count} chop out${count > 1 ? 's' : ''}`
+                              : dirtyCount > 0
+                              ? `${outEntry.winOuts?.length || count} out${(outEntry.winOuts?.length || count) > 1 ? 's' : ''} (+${dirtyCount} dirty)`
+                              : `${count} out${count > 1 ? 's' : ''}`}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Right: Equity, Hole cards */}
                     <div className="flex items-center gap-2 shrink-0">
                       {pPct != null && (
                         <span className="px-2 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/80 text-emerald-300 font-mono text-xs font-black shadow-sm">
@@ -668,8 +845,8 @@ export default function CompactModeView({
                             >
                               {card ? (
                                 <>
-                                  <span className="leading-none text-white text-[11px] font-black">{card.rank === 'T' ? '10' : card.rank}</span>
-                                  <span className={`leading-none text-sm font-extrabold ${sInfo?.color || ''}`}>{sInfo?.symbol}</span>
+                                  <span className="leading-none text-white text-[11px] font-black font-bold"><strong className="font-bold">{card.rank === 'T' ? '10' : card.rank}</strong></span>
+                                  <span className={`leading-none text-sm font-extrabold ${getSuitDisplayColor(card.suit, suitColors)}`}>{sInfo?.symbol}</span>
                                 </>
                               ) : (
                                 <span className="text-[10px] font-bold text-slate-500">#{k + 1}</span>
@@ -685,34 +862,58 @@ export default function CompactModeView({
             </div>
           </div>
 
-          {/* Step 2: Community Cards in Order (Quick Fill removed) */}
+          {/* Step 2: Community Cards */}
           <div className="border-t border-slate-800/80 pt-2">
             <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center justify-between">
-              <span>2. Enter Community Board Cards:</span>
+              <span>Community Cards</span>
             </div>
             <div className="space-y-2">
               {Array.from({ length: numBoards }, (_, bIdx) => {
                 const bNum = bIdx + 1;
                 const bCards = (bNum === 1 ? hand.communityCards : bNum === 2 ? hand.boardB : hand.boardC) || [];
+                const realLen = bCards.filter((c) => c && !c.hidden).length;
+
+                let bSlotsCount = 5;
+                if (is321 || isOcean) {
+                  bSlotsCount = 6;
+                } else if (isRedRiver) {
+                  const lastCard = bCards[realLen - 1];
+                  const isRed = lastCard && (lastCard.suit === 'd' || lastCard.suit === 'h' || lastCard.suit === '♦' || lastCard.suit === '♥');
+                  const extraSlot = isRed && hand.phase !== 'awarded' && hand.phase !== 'ended' ? 1 : 0;
+                  bSlotsCount = Math.max(5, realLen + extraSlot);
+                } else {
+                  bSlotsCount = Math.max(5, bCards.length);
+                }
+
                 return (
-                  <div key={bNum} className="flex items-center justify-between bg-[#19202b] rounded-xl px-2.5 py-1.5 border border-slate-700/80">
-                    <span className="text-xs font-bold text-slate-300">
+                  <div key={bNum} className="flex items-center justify-between bg-[#19202b] rounded-xl px-2.5 py-1.5 border border-slate-700/80 gap-2">
+                    <span className="text-xs font-bold text-slate-300 shrink-0">
                       {numBoards > 1 ? `Board ${bNum}` : 'Board'}
                     </span>
-                    <div className="flex items-center gap-1 sm:gap-1.5">
-                      {Array.from({ length: 5 }, (_, s) => {
+                    <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap justify-end">
+                      {Array.from({ length: bSlotsCount }, (_, s) => {
                         const slotId = `b_${bNum}_${s}`;
                         const card = bCards[s] && !bCards[s].hidden ? bCards[s] : null;
                         const isCurrent = currentSlot?.id === slotId;
                         const sInfo = card ? SUIT_INFO[card.suit] : null;
-                        const streetLabel = s < 3 ? 'Flop' : s === 3 ? 'Turn' : 'River';
+
+                        let streetShort = '';
+                        if (is321) {
+                          streetShort = s < 3 ? `F${s + 1}` : s === 3 ? 'T1' : s === 4 ? 'T2' : 'R';
+                        } else if (isOcean) {
+                          streetShort = s < 3 ? `F${s + 1}` : s === 3 ? 'T' : s === 4 ? 'R' : 'O';
+                        } else if (isRedRiver) {
+                          streetShort = s < 3 ? `F${s + 1}` : s === 3 ? 'T' : s === 4 ? 'R' : `R${s - 3}`;
+                        } else {
+                          streetShort = s < 3 ? `F${s + 1}` : s === 3 ? 'T' : 'R';
+                        }
 
                         return (
                           <button
                             key={s}
                             type="button"
                             onClick={() => setActiveSlotId(slotId)}
-                            className={`w-9 h-11 rounded-lg flex flex-col items-center justify-center font-bold text-xs border transition-all cursor-pointer ${
+                            className={`${bSlotsCount >= 7 ? 'w-7 sm:w-8 h-10 text-[10px]' : 'w-8 sm:w-9 h-11 text-xs'} rounded-lg flex flex-col items-center justify-center font-bold border transition-all cursor-pointer ${
                               isCurrent
                                 ? 'border-amber-400 bg-amber-950/60 shadow-[0_0_10px_rgba(245,158,11,0.5)] ring-2 ring-amber-400/80 scale-105'
                                 : card
@@ -722,11 +923,11 @@ export default function CompactModeView({
                           >
                             {card ? (
                               <>
-                                <span className="leading-none text-white text-[11px] font-black">{card.rank === 'T' ? '10' : card.rank}</span>
-                                <span className={`leading-none text-sm font-extrabold ${sInfo?.color || ''}`}>{sInfo?.symbol}</span>
+                                <span className="leading-none text-white text-[11px] font-black font-bold"><strong className="font-bold">{card.rank === 'T' ? '10' : card.rank}</strong></span>
+                                <span className={`leading-none text-sm font-extrabold ${getSuitDisplayColor(card.suit, suitColors)}`}>{sInfo?.symbol}</span>
                               </>
                             ) : (
-                              <span className="text-[9px] font-bold text-slate-500">{streetLabel[0]}{s < 3 ? s + 1 : ''}</span>
+                              <span className="text-[9px] font-bold text-slate-500">{streetShort}</span>
                             )}
                           </button>
                         );
@@ -913,37 +1114,179 @@ export default function CompactModeView({
             </span>
           </div>
         </div>
-      ) : (
-        /* Action Frozen / Showdown / Hand End Banner */
-        <div className="rounded-2xl bg-[#141922] border border-slate-800 p-4 shadow-lg text-center flex flex-col items-center justify-center gap-1.5">
-          <div className="text-sm font-bold text-emerald-400 flex items-center gap-1.5">
-            <CheckCircle2 size={16} />
-            {hand.phase === 'awarded'
-              ? 'Pots Awarded'
-              : hand.phase === 'ended'
-              ? 'Hand Ended – Award Showdown'
-              : frozen
-              ? 'Betting Complete'
-              : 'Street Complete'}
+      ) : (() => {
+        const nextStreet = { preflop: 'flop', flop: 'turn', turn: 'river', ...(isOcean ? { river: 'ocean' } : {}) }[hand.street];
+        const boardCount = Number(hand.bombBoards) || (Number(hand.runTimes) >= 3 ? 3 : hand.doubleBoard ? 2 : 1);
+        const perBoardNeeded = nextStreet === 'flop' ? 3 : (nextStreet === 'turn' && is321) ? 2 : 1;
+        const totalNeeded = nextStreet ? perBoardNeeded * boardCount : 0;
+        const needsNextStreet = hand.phase === 'playing' && nonFolded.length >= 2 && nextStreet && onDeal && !frozen;
+        const streetUsedSet = new Set(usedCardsSet);
+        streetCards.forEach((c) => { if (c) streetUsedSet.add(c.rank + c.suit); });
+
+        if (needsNextStreet) {
+          return (
+            <div className="rounded-2xl bg-[#141922] border-2 border-emerald-500/70 p-3.5 shadow-xl flex flex-col gap-3">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase tracking-wider">
+                  <CheckCircle2 size={15} />
+                  <span>Deal {STREET_LABEL[nextStreet] || nextStreet} ({streetCards.length}/{totalNeeded})</span>
+                </div>
+                {onDealHidden && (
+                  <button
+                    type="button"
+                    onClick={() => onDealHidden()}
+                    className="text-[11px] px-2.5 py-1 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700 font-semibold cursor-pointer"
+                  >
+                    Deal Unknown
+                  </button>
+                )}
+              </div>
+
+              {/* Next street card slots */}
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                {Array.from({ length: totalNeeded }, (_, i) => {
+                  const card = streetCards[i];
+                  const sInfo = card ? SUIT_INFO[card.suit] : null;
+                  return (
+                    <div
+                      key={i}
+                      className={`w-10 h-12 rounded-lg flex flex-col items-center justify-center font-bold border ${
+                        card
+                          ? 'bg-[#151921] border-emerald-500/70'
+                          : i === streetCards.length
+                          ? 'bg-emerald-950/30 border-amber-400 border-dashed text-amber-300'
+                          : 'bg-[#11141b] border-dashed border-slate-700 text-slate-500'
+                      }`}
+                    >
+                      {card ? (
+                        <>
+                          <span className="leading-none text-white text-xs font-black font-bold"><strong className="font-bold">{card.rank === 'T' ? '10' : card.rank}</strong></span>
+                          <span className={`leading-none text-base font-extrabold ${getSuitDisplayColor(card.suit, suitColors)}`}>{sInfo?.symbol}</span>
+                        </>
+                      ) : (
+                        <span className="text-[10px] font-bold">#{i + 1}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Rank & Suit Picker */}
+              <div className="rounded-xl bg-[#0e1219] border border-slate-800 p-2.5 flex flex-col gap-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400 font-bold">
+                    {streetCards.length < totalNeeded ? `Select Card #${streetCards.length + 1}` : 'Ready to deal'}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={streetCards.length === 0}
+                    onClick={() => {
+                      setStreetCards((prev) => prev.slice(0, -1));
+                      setStreetRank(null);
+                      setStreetError('');
+                    }}
+                    className="text-[10px] text-rose-400 hover:text-rose-300 disabled:opacity-30 bg-rose-950/60 border border-rose-800/80 px-2 py-0.5 rounded font-bold cursor-pointer"
+                  >
+                    Undo Card
+                  </button>
+                </div>
+                <div className="grid grid-cols-13 gap-1">
+                  {['A','K','Q','J','T','9','8','7','6','5','4','3','2'].map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      disabled={streetCards.length >= totalNeeded}
+                      onClick={() => setStreetRank(r)}
+                      className={`py-2 rounded-md font-black text-xs transition-all cursor-pointer disabled:opacity-35 ${
+                        streetRank === r
+                          ? 'bg-amber-500 text-black shadow-md ring-1 ring-amber-300 scale-105'
+                          : 'bg-[#1d2430] hover:bg-[#283244] text-slate-200 border border-slate-700/60'
+                      }`}
+                    >
+                      {r === 'T' ? '10' : r}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-4 gap-1.5 pt-1">
+                  {Object.entries(SUIT_INFO).map(([suitKey, info]) => {
+                    const cardKey = streetRank ? streetRank + suitKey : null;
+                    const isUsed = cardKey ? streetUsedSet.has(cardKey) : false;
+                    return (
+                      <button
+                        key={suitKey}
+                        type="button"
+                        disabled={!streetRank || isUsed || streetCards.length >= totalNeeded}
+                        onClick={() => {
+                          if (!streetRank || isUsed || streetCards.length >= totalNeeded) return;
+                          const nextList = [...streetCards, { rank: streetRank, suit: suitKey }];
+                          setStreetCards(nextList);
+                          setStreetRank(null);
+                          setStreetError('');
+                        }}
+                        className={`py-2 px-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 border transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${info.bg}`}
+                      >
+                        <span className={`text-base font-extrabold leading-none ${info.color}`}>{info.symbol}</span>
+                        <span className="text-white text-xs">{streetRank ? (streetRank === 'T' ? '10' : streetRank) : ''}{info.symbol}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {streetError && <div className="text-xs text-rose-400 text-center">{streetError}</div>}
+
+              <button
+                type="button"
+                disabled={streetCards.length !== totalNeeded}
+                onClick={() => {
+                  const res = onDeal(streetCards);
+                  if (res?.error) setStreetError(res.error);
+                  else {
+                    setStreetCards([]);
+                    setStreetRank(null);
+                    setStreetError('');
+                  }
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-35 disabled:cursor-not-allowed text-white font-extrabold text-sm shadow-md transition-all cursor-pointer"
+              >
+                Deal {STREET_LABEL[nextStreet] || nextStreet}
+              </button>
+            </div>
+          );
+        }
+
+        return (
+          /* Action Frozen / Showdown / Hand End Banner */
+          <div className="rounded-2xl bg-[#141922] border border-slate-800 p-4 shadow-lg text-center flex flex-col items-center justify-center gap-1.5">
+            <div className="text-sm font-bold text-emerald-400 flex items-center gap-1.5">
+              <CheckCircle2 size={16} />
+              {hand.phase === 'awarded'
+                ? 'Pots Awarded'
+                : hand.phase === 'ended'
+                ? 'Hand Ended – Award Showdown'
+                : frozen
+                ? 'Betting Complete'
+                : 'Street Complete'}
+            </div>
+            <div className="text-xs text-slate-400">
+              {hand.phase === 'awarded'
+                ? 'Ready to deal next hand'
+                : frozen
+                ? 'Showdown reached'
+                : (hand.message || 'Deal the next street to proceed')}
+            </div>
+            {(hand.phase === 'ended' || (frozen && hand.phase !== 'awarded') || (nonFolded.length <= 1 && hand.phase !== 'awarded')) && onEndHand && (
+              <button
+                type="button"
+                onClick={onEndHand}
+                className="mt-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md transition-colors cursor-pointer"
+              >
+                Award Showdown Pots
+              </button>
+            )}
           </div>
-          <div className="text-xs text-slate-400">
-            {hand.phase === 'awarded'
-              ? 'Ready to deal next hand'
-              : frozen
-              ? 'Showdown reached'
-              : (hand.message || 'Deal the next street to proceed')}
-          </div>
-          {(hand.phase === 'ended' || (frozen && hand.phase !== 'awarded')) && onEndHand && (
-            <button
-              type="button"
-              onClick={onEndHand}
-              className="mt-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md transition-colors cursor-pointer"
-            >
-              Award Showdown Pots
-            </button>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       {/* 4. COMPACT ACTION BUTTONS (With Keyboard Shortcuts) */}
       {!actionDone && cp && !isAllInShowdown && (
@@ -978,7 +1321,8 @@ export default function CompactModeView({
             <button
               type="button"
               onClick={() => onAction('call')}
-              disabled={canCheck || mustAllinToCall}
+              disabled={disableCall}
+              title={isMandatory3BetPreflop ? 'Mandatory 3-Bet: Cannot call or limp preflop until a 3-bet occurs.' : ''}
               className="py-3 px-2 rounded-xl bg-emerald-800 hover:bg-emerald-700 disabled:opacity-25 disabled:cursor-not-allowed text-white font-bold text-sm transition-all shadow-md flex items-center justify-center border border-emerald-600/60 cursor-pointer truncate"
             >
               <span className="truncate">{callLabel}</span>
@@ -988,49 +1332,132 @@ export default function CompactModeView({
 
           {/* Row 2: Bet / Raise input & submit + Min Raise */}
           {!isFL ? (
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-              <div className="sm:col-span-8 flex items-center gap-1.5">
-                <input
-                  ref={raiseInputRef}
-                  type="text"
-                  inputMode="decimal"
-                  value={raiseAmount}
-                  onChange={(e) => setRaiseAmount(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      submitRaise();
-                    } else if (e.key === 'Escape') {
-                      e.target.blur();
-                    }
-                  }}
-                  placeholder="Amount"
-                  disabled={!canRaise || mustAllinToCall || ootPassiveBound}
-                  className="flex-1 rounded-xl bg-[#11141b] border border-slate-700 focus:border-amber-400 px-3 py-2.5 text-white font-bold text-sm disabled:opacity-30 transition-colors shadow-inner"
-                />
-                <button
-                  type="button"
-                  onClick={submitRaise}
-                  disabled={!canRaise || overLimit || mustAllinToCall || ootPassiveBound}
-                  className="px-4 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm shadow-md flex items-center justify-center shrink-0 cursor-pointer transition-colors"
-                >
-                  <span>{isBet ? 'Bet' : 'Raise'}</span>
-                  <KeyBadge label="R" />
-                </button>
+            <>
+              {/* Desktop Bet/Raise input + buttons */}
+              <div className="hidden sm:grid sm:grid-cols-12 gap-2 items-center">
+                <div className="sm:col-span-8 flex items-center gap-1.5">
+                  <input
+                    ref={raiseInputRef}
+                    type="text"
+                    inputMode="decimal"
+                    value={raiseAmount}
+                    onChange={(e) => setRaiseAmount(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        submitRaise();
+                      } else if (e.key === 'Escape') {
+                        e.target.blur();
+                      }
+                    }}
+                    placeholder="Amount"
+                    disabled={!canRaise || mustAllinToCall || ootPassiveBound}
+                    className="flex-1 rounded-xl bg-[#11141b] border border-slate-700 focus:border-amber-400 px-3 py-2.5 text-white font-bold text-sm disabled:opacity-30 transition-colors shadow-inner"
+                  />
+                  <button
+                    type="button"
+                    onClick={submitRaise}
+                    disabled={!canRaise || overLimit || mustAllinToCall || ootPassiveBound}
+                    className="px-4 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm shadow-md flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+                  >
+                    <span>{canCheck ? 'Bet' : 'Raise'}</span>
+                    <KeyBadge label="R" />
+                  </button>
+                </div>
+
+                <div className="sm:col-span-4">
+                  <button
+                    type="button"
+                    onClick={submitMinRaise}
+                    disabled={!canMinRaise || mustAllinToCall || ootPassiveBound}
+                    className="w-full py-2.5 px-2 rounded-xl bg-[#2e3746] hover:bg-[#3b4759] disabled:opacity-30 disabled:cursor-not-allowed text-slate-200 font-bold text-xs shadow-md flex items-center justify-center border border-slate-600 cursor-pointer transition-colors truncate"
+                  >
+                    <span className="truncate">{minRaiseLabel}</span>
+                    <KeyBadge label="M" />
+                  </button>
+                </div>
               </div>
 
-              <div className="sm:col-span-4">
-                <button
-                  type="button"
-                  onClick={submitMinRaise}
-                  disabled={!canMinRaise || mustAllinToCall || ootPassiveBound}
-                  className="w-full py-2.5 px-2 rounded-xl bg-[#2e3746] hover:bg-[#3b4759] disabled:opacity-30 disabled:cursor-not-allowed text-slate-200 font-bold text-xs shadow-md flex items-center justify-center border border-slate-600 cursor-pointer transition-colors truncate"
-                >
-                  <span className="truncate">{minRaiseLabel}</span>
-                  <KeyBadge label="M" />
-                </button>
+              {/* Mobile-only Bet Sizing Keypad */}
+              <div className="flex flex-col gap-2 sm:hidden">
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className={`flex-1 rounded-xl bg-[#11141b] border px-3 py-2 font-mono text-base font-black flex items-center justify-between shadow-inner ${
+                      overLimit ? 'border-rose-500 text-rose-300' : 'border-slate-700 text-white'
+                    } ${(!canRaise || mustAllinToCall || ootPassiveBound) ? 'opacity-30' : ''}`}
+                  >
+                    <span className={raiseAmount ? 'text-white' : 'text-slate-500 font-sans text-sm font-semibold'}>
+                      {raiseAmount ? `${cur}${raiseAmount}` : 'Tap keypad amount'}
+                    </span>
+                    {raiseAmount && (
+                      <button
+                        type="button"
+                        onClick={() => handleKeypadKey('C')}
+                        className="text-[11px] font-sans font-bold text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-slate-800"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={submitMinRaise}
+                    disabled={!canMinRaise || mustAllinToCall || ootPassiveBound}
+                    className="py-2 px-3 rounded-xl bg-[#2e3746] active:bg-[#3b4759] disabled:opacity-30 text-slate-200 font-bold text-xs shadow-md border border-slate-600 shrink-0"
+                  >
+                    {minRaiseLabel}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-4 gap-1.5">
+                  {['7', '8', '9', 'K', '4', '5', '6', 'M', '1', '2', '3', '⌫'].map((k) => {
+                    const isMult = k === 'K' || k === 'M';
+                    const isBack = k === '⌫';
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        disabled={!canRaise || mustAllinToCall || ootPassiveBound}
+                        onClick={() => handleKeypadKey(k)}
+                        className={`py-2.5 rounded-xl font-black text-base shadow transition-transform active:scale-95 disabled:opacity-30 border ${
+                          isMult
+                            ? 'bg-emerald-950/70 active:bg-emerald-900 text-emerald-300 border-emerald-700/60'
+                            : isBack
+                            ? 'bg-rose-950/60 active:bg-rose-900 text-rose-300 border-rose-800/60'
+                            : 'bg-[#1f2632] active:bg-[#2c3647] text-white border-slate-700/80'
+                        }`}
+                      >
+                        {k}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    disabled={!canRaise || mustAllinToCall || ootPassiveBound}
+                    onClick={() => handleKeypadKey('.')}
+                    className="py-2.5 rounded-xl bg-[#1f2632] active:bg-[#2c3647] text-white font-black text-base shadow border border-slate-700/80 active:scale-95 disabled:opacity-30"
+                  >
+                    .
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canRaise || mustAllinToCall || ootPassiveBound}
+                    onClick={() => handleKeypadKey('0')}
+                    className="py-2.5 rounded-xl bg-[#1f2632] active:bg-[#2c3647] text-white font-black text-base shadow border border-slate-700/80 active:scale-95 disabled:opacity-30"
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitRaise}
+                    disabled={!canRaise || overLimit || mustAllinToCall || ootPassiveBound || !raiseAmount}
+                    className="col-span-2 py-2.5 rounded-xl bg-amber-700 active:bg-amber-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-black text-sm shadow-md flex items-center justify-center transition-transform active:scale-95"
+                  >
+                    {canCheck ? 'Bet' : 'Raise'}
+                  </button>
+                </div>
               </div>
-            </div>
+            </>
           ) : (
             <div>
               <button

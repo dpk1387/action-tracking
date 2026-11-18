@@ -63,6 +63,8 @@ function buildPayload(state) {
     hideAmounts: !!state.hideAmounts,
     holeCards: state.holeCards || null,
     director: state.director || null,
+    history: state.history || [],
+    isGoMode: state.isGoMode !== undefined ? state.isGoMode : Boolean(state.config?.isGoMode || state.hand?.isGoMode),
   };
 }
 

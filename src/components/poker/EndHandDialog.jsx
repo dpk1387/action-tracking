@@ -108,7 +108,7 @@ export default function EndHandDialog({ hand, pots, holeCards, onHoleChange, onA
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-[#2a2f37] bg-[#1e2227] p-6 shadow-2xl">
         <h2 className="text-xl font-semibold text-white mb-1">Award pots – Hand #{hand.handNumber}</h2>
-        <div className="text-xs text-slate-400 mb-4">Enter hole cards to auto-determine winners, then verify and award. (Use T for ten.)</div>
+        <div className="text-xs text-slate-400 mb-4">Select the winning player(s) for each pot below. Hole cards entry is optional (used to auto-evaluate winners).</div>
         <div className="space-y-2 mb-4">
           {nonFolded.map((p) => (
             <div key={p.id} className="flex items-center gap-2">

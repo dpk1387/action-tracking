@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Save, Upload, Download, Trash2, FolderOpen } from 'lucide-react';
-import { listStructures, saveStructure, deleteStructure, exportStructure, importStructure } from '@/lib/structureStore';
+import { listStructures, saveStructure, deleteStructure, exportStructure, importStructure, resetDefaultStructures } from '@/lib/structureStore';
 
 export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose }) {
   const [structures, setStructures] = useState([]);
@@ -24,6 +24,11 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
 
   const handleDelete = (id) => {
     deleteStructure(id);
+    refresh();
+  };
+
+  const handleResetDefaults = () => {
+    resetDefaultStructures();
     refresh();
   };
 
@@ -54,7 +59,7 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-[#2a2f37] bg-[#1e2227] p-6 shadow-2xl">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-xl font-semibold text-white">Saved tournament structures</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={20} /></button>
+          <button onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer"><X size={20} /></button>
         </div>
         <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
           <div className="text-xs text-slate-400 mb-2">Save current setup</div>
@@ -74,7 +79,9 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
         {error && <div className="text-sm text-rose-400 mb-3">{error}</div>}
         <div className="space-y-2 mb-4">
           {structures.length === 0 && (
-            <div className="text-center text-slate-500 text-sm py-8">No saved structures yet. Save your current setup above, or import a preset file.</div>
+            <div className="text-center text-slate-500 text-sm py-8">
+              No saved structures found. Save your current setup above, or restore default presets.
+            </div>
           )}
           {structures.map((s) => (
             <div key={s.id} className="flex items-center gap-2 rounded-lg border border-[#2a2f37] bg-[#15181d] p-3">
@@ -89,8 +96,9 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
                 </div>
                 <div className="text-[11px] text-slate-500">
                   {(s.structureData.schedule || []).length} levels
+                  {s.structureData.startingStack ? ` · ${Number(s.structureData.startingStack).toLocaleString()} stack` : ''}
                   {s.structureData.tournamentFormat ? ` · ${s.structureData.tournamentFormat}` : ''}
-                  {s.structureData.levelMethod ? ` · ${s.structureData.levelValue} ${s.structureData.levelMethod}` : ''}
+                  {s.structureData.levelDurationMinutes ? ` · ${s.structureData.levelDurationMinutes}m levels` : (s.structureData.levelMethod ? ` · ${s.structureData.levelValue} ${s.structureData.levelMethod}` : '')}
                 </div>
               </div>
               <button onClick={() => handleLoad(s)} className="flex items-center gap-1.5 rounded-md bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-xs px-2.5 py-2 whitespace-nowrap cursor-pointer">
@@ -99,19 +107,25 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
               <button onClick={() => handleExport(s)} className="rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 p-2 cursor-pointer" title="Export">
                 <Download size={15} />
               </button>
-              {!s.isDefault && (
-                <button onClick={() => handleDelete(s.id)} className="rounded-md bg-[#2a2f37] hover:bg-[#c94c4c] hover:text-white text-slate-400 p-2 cursor-pointer" title="Delete">
-                  <Trash2 size={15} />
-                </button>
-              )}
+              <button onClick={() => handleDelete(s.id)} className="rounded-md bg-[#2a2f37] hover:bg-[#c94c4c] hover:text-white text-slate-400 p-2 cursor-pointer" title="Delete">
+                <Trash2 size={15} />
+              </button>
             </div>
           ))}
         </div>
         <div className="flex items-center justify-between border-t border-[#2a2f37] pt-4">
-          <span className="text-xs text-slate-500">Import a preset file to add it to your list.</span>
-          <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1.5 rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 text-sm px-3 py-2 cursor-pointer">
-            <Upload size={15} /> Import preset
+          <button
+            type="button"
+            onClick={handleResetDefaults}
+            className="text-xs text-slate-400 hover:text-white underline cursor-pointer"
+          >
+            Reset Default Presets
           </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1.5 rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 text-sm px-3 py-2 cursor-pointer">
+              <Upload size={15} /> Import preset
+            </button>
+          </div>
           <input ref={fileRef} type="file" accept=".json,application/json" onChange={handleImport} className="hidden" />
         </div>
       </div>

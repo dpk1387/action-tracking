@@ -9,7 +9,7 @@ function KeyBadge({ label }) {
   );
 }
 
-export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false }) {
+export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false, onSelectRedRiverColor }) {
   const [amount, setAmount] = useState('');
   const [muckArmed, setMuckArmed] = useState(false);
   const raiseInputRef = useRef(null);
@@ -37,6 +37,8 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
   const canReopenRaise = cp ? (!hand.shortAllinOpen || !cp.hasActed || cp.currentBet < hand.currentBet) : false;
   const canRaise = cp ? (cp.stack > toCall && canReopenRaise && othersHaveChips) : false;
   const mustAllinToCall = cp ? (!canCheck && cp.stack < toCall) : false;
+  const isMandatory3BetPreflop = hand.street === 'preflop' && hand.variant === 'mandatory_3bet' && !hand.threeBetOccurred && (hand.raiseLevel || 1) < 3;
+  const disableCall = mustAllinToCall || isMandatory3BetPreflop;
   const effectiveLiveBlind = (hand.street === 'preflop')
     ? (hand.anteType === 'four_blinds'
         ? (Number(hand.fourthBlind) || (hand.bigBlind * 4))
@@ -176,14 +178,11 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
       if (key === 'F') {
         e.preventDefault();
         handleFold();
-      } else if (key === 'X') {
+      } else if (key === 'X' || key === 'C') {
+        e.preventDefault();
         if (canCheck) {
-          e.preventDefault();
           onAction('check');
-        }
-      } else if (key === 'C') {
-        if (!canCheck && !mustAllinToCall) {
-          e.preventDefault();
+        } else if (!disableCall) {
           onAction('call');
         }
       } else if (key === 'R') {
@@ -222,6 +221,37 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
     canStraddle, straddleAmt, straddlePutsAllIn, isPL, isFL, flCanRaise, flRaiseTo,
     isBet, ootPassiveBound, onUndo, canUndo, muckArmed
   ]);
+
+  if (hand.variant === 'red_river' && (hand.redRiverPendingChoice || (hand.street === 'river' && hand.currentPlayer === -1 && hand.phase !== 'ended' && !bettingFrozen(hand)))) {
+    return (
+      <div className="rounded-xl border border-rose-500/50 bg-[#1e2227] p-5 shadow-xl">
+        <div className="text-sm font-bold text-rose-300 mb-1">
+          Red River Card Color Selection
+        </div>
+        <div className="text-xs text-slate-300 mb-4">
+          River betting round is complete. Select the color of the river card dealt by the dealer:
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => onSelectRedRiverColor && onSelectRedRiverColor('red')}
+            className="flex-1 rounded-xl bg-gradient-to-r from-rose-700 to-red-600 hover:from-rose-600 hover:to-red-500 text-white font-bold text-sm py-3 px-4 shadow-lg cursor-pointer transition-all flex items-center justify-center gap-2 border border-rose-400/30"
+          >
+            <span className="text-lg">♦</span>
+            <span>Red (♦ / ♥) — Extra Betting Round</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectRedRiverColor && onSelectRedRiverColor('black')}
+            className="flex-1 rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 text-white font-bold text-sm py-3 px-4 shadow-lg cursor-pointer transition-all flex items-center justify-center gap-2 border border-slate-500/40"
+          >
+            <span className="text-lg">♠</span>
+            <span>Black (♠ / ♣) — Go to Showdown</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!cp || bettingFrozen(hand)) {
     return (
@@ -269,22 +299,25 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
           <span>{canCheck && muckArmed ? 'Confirm muck?' : 'Fold'}</span>
           <KeyBadge label="F" />
         </button>
-        <button
-          onClick={() => onAction('check')}
-          disabled={!canCheck}
-          className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-white text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center"
-        >
-          <span>Check</span>
-          <KeyBadge label="X" />
-        </button>
-        <button
-          onClick={() => onAction('call')}
-          disabled={canCheck || mustAllinToCall}
-          className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-white text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center"
-        >
-          <span>{callLabel}</span>
-          <KeyBadge label="C" />
-        </button>
+        {canCheck ? (
+          <button
+            onClick={() => onAction('check')}
+            className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3.5 py-2 font-medium flex items-center shadow cursor-pointer"
+          >
+            <span>Check</span>
+            <KeyBadge label="C" />
+          </button>
+        ) : (
+          <button
+            onClick={() => onAction('call')}
+            disabled={disableCall}
+            title={isMandatory3BetPreflop ? 'Mandatory 3-Bet: Cannot call or limp preflop until a 3-bet occurs.' : ''}
+            className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3.5 py-2 font-medium disabled:opacity-30 disabled:cursor-not-allowed flex items-center shadow cursor-pointer"
+          >
+            <span>{callLabel}</span>
+            <KeyBadge label="C" />
+          </button>
+        )}
         {isFL ? (
           <button
             onClick={() => onAction(isBet ? 'bet' : 'raise', flRaiseTo)}

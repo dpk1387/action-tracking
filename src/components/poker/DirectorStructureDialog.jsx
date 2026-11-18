@@ -14,11 +14,20 @@ import {
   Settings,
   Target,
   Gift,
+  FolderOpen,
 } from 'lucide-react';
-import { getDefaultPayoutConfig, calculateTournamentPayouts, getOrdinalSuffix } from '@/lib/payoutEngine';
-import { defaultScheduleFor, defaultDenomsFor, ALL_DENOMINATIONS } from '@/lib/tournamentStructures';
+import {
+  getDefaultPayoutConfig,
+  calculateTournamentPayouts,
+  getOrdinalSuffix,
+  generatePayoutStructure,
+  getConsolidatedPayoutLadder,
+  parseRankSpec,
+} from '@/lib/payoutEngine';
+import { defaultScheduleFor, defaultDenomsFor, ALL_DENOMINATIONS, generateBlindSchedule } from '@/lib/tournamentStructures';
 import ChipDenominationPicker from '@/components/poker/ChipDenominationPicker';
 import BlindScheduleEditor from '@/components/poker/BlindScheduleEditor';
+import SavedStructuresDialog from '@/components/poker/SavedStructuresDialog';
 
 export function generateBalancedEnvelopes(targetBountyPool, targetEnvelopesCount = 15) {
   const count = Math.max(1, Number(targetEnvelopesCount) || 1);
@@ -88,6 +97,7 @@ export default function DirectorStructureDialog({
 }) {
   // Active Tab: 'general' | 'levels' | 'players' | 'payouts'
   const [activeTab, setActiveTab] = useState('general');
+  const [showSavedStructures, setShowSavedStructures] = useState(false);
 
   // General Setup
   const [name, setName] = useState(initialData.name || 'Championship Tournament');
@@ -179,6 +189,23 @@ export default function DirectorStructureDialog({
     const lowest = chipDenominations.length ? Math.min(...chipDenominations) : 25;
     return defaultScheduleFor(lowest);
   });
+  const [breakDurationMinutes, setBreakDurationMinutes] = useState(
+    initialData.breakDurationMinutes != null ? initialData.breakDurationMinutes : 10
+  );
+  const [breakEveryLevels, setBreakEveryLevels] = useState(
+    initialData.breakEveryLevels != null ? initialData.breakEveryLevels : 4
+  );
+  const [desiredDurationMinutes, setDesiredDurationMinutes] = useState(
+    initialData.desiredDurationMinutes != null
+      ? initialData.desiredDurationMinutes
+      : initialData.clock?.desiredDurationMinutes != null
+      ? initialData.clock.desiredDurationMinutes
+      : 180
+  );
+  const [colorUpBreaksOnly, setColorUpBreaksOnly] = useState(
+    Boolean(initialData.colorUpBreaksOnly ?? initialData.clock?.colorUpBreaksOnly)
+  );
+  const [generatorSpeed, setGeneratorSpeed] = useState(initialData.generatorSpeed || 'balanced'); // 'balanced' | 'turbo'
 
   // Player Names (empty by default, do not preload with fillers)
   const [playerNamesInput, setPlayerNamesInput] = useState(() => {
@@ -203,6 +230,14 @@ export default function DirectorStructureDialog({
     }
     return getDefaultPayoutConfig(tablesCount);
   });
+  const [itmInputMode, setItmInputMode] = useState('places'); // 'places' | 'percent'
+  const [itmInputValue, setItmInputValue] = useState(() =>
+    String(Math.max(1, Math.round((Number(initialData.totalPlayers || initialData.players?.length || 10)) * 0.15)))
+  );
+  const [itmTouched, setItmTouched] = useState(false);
+  const [payoutSteepness, setPayoutSteepness] = useState(
+    initialData.payoutSteepness != null ? initialData.payoutSteepness : 3
+  );
 
   // Table sizing recommendation logic
   const tableRecommendation = useMemo(() => {
@@ -256,6 +291,88 @@ export default function DirectorStructureDialog({
     }
   };
 
+  const buildStructureData = () => ({
+    name,
+    tournamentFormat: tournamentType,
+    tournamentType,
+    levelDurationMinutes: Number(levelDurationMinutes) || 15,
+    breakDurationMinutes: Number(breakDurationMinutes) || 10,
+    breakEveryLevels: Number(breakEveryLevels) || 4,
+    desiredDurationMinutes: Number(desiredDurationMinutes) || 0,
+    colorUpBreaksOnly: Boolean(colorUpBreaksOnly),
+    generatorSpeed,
+    startingStack: Number(startingStack) || 5000,
+    buyIn: Number(buyIn) || 100,
+    currency,
+    chipDenominations,
+    chipDenoms: chipDenominations,
+    anteType,
+    schedule,
+    blindSchedule: schedule,
+    totalPlayers: Number(totalPlayers) || 10,
+    tablesCount: Number(tablesCount) || 1,
+    payoutConfig,
+    payoutSteepness,
+    lateRegEnabled,
+    lateRegLevel: Number(lateRegLevel) || 4,
+    rebuyCost: Number(rebuyCost) || Number(buyIn) || 100,
+    rebuyChips: Number(rebuyChips) || Number(startingStack) || 5000,
+    maxReEntries: Number(maxReEntries) || 0,
+    rebuyRules: {
+      timeCapEnabled: rebuyTimeCapEnabled,
+      timeCapLevel: Number(rebuyTimeCapLevel) || 4,
+      maxRebuysEnabled: rebuyMaxEnabled,
+      maxRebuys: Number(rebuyMaxCount) || 0,
+      stackCapEnabled: rebuyStackCapEnabled,
+      stackCapUnit: rebuyStackCapUnit,
+      stackCapValue: Number(rebuyStackCapValue) || Number(startingStack) || 5000,
+    },
+    bountyPercent: isBounty ? effectiveBountyPercent : undefined,
+  });
+
+  const applyStructure = (d) => {
+    if (!d) return;
+    if (d.name) setName(d.name);
+    if (d.tournamentFormat) setTournamentType(d.tournamentFormat);
+    if (d.tournamentType) setTournamentType(d.tournamentType);
+    if (d.levelDurationMinutes != null) setLevelDurationMinutes(d.levelDurationMinutes);
+    if (d.breakDurationMinutes != null) setBreakDurationMinutes(d.breakDurationMinutes);
+    if (d.breakEveryLevels != null) setBreakEveryLevels(d.breakEveryLevels);
+    if (d.desiredDurationMinutes != null) setDesiredDurationMinutes(d.desiredDurationMinutes);
+    if (d.colorUpBreaksOnly != null) setColorUpBreaksOnly(Boolean(d.colorUpBreaksOnly));
+    if (d.generatorSpeed) setGeneratorSpeed(d.generatorSpeed);
+    if (d.startingStack != null) setStartingStack(d.startingStack);
+    if (d.buyIn != null) setBuyIn(d.buyIn);
+    if (d.currency != null) setCurrency(d.currency);
+    if (Array.isArray(d.chipDenominations)) setChipDenominations(d.chipDenominations);
+    else if (Array.isArray(d.chipDenoms)) setChipDenominations(d.chipDenoms);
+    if (d.anteType) setAnteType(d.anteType);
+    if (Array.isArray(d.schedule)) setSchedule(d.schedule);
+    else if (Array.isArray(d.blindSchedule)) setSchedule(d.blindSchedule);
+    if (d.totalPlayers != null) setTotalPlayers(d.totalPlayers);
+    if (d.tablesCount != null) setTablesCount(d.tablesCount);
+    if (Array.isArray(d.payoutConfig)) setPayoutConfig(d.payoutConfig);
+    if (d.payoutSteepness != null) setPayoutSteepness(d.payoutSteepness);
+    if (d.lateRegEnabled != null) setLateRegEnabled(d.lateRegEnabled);
+    if (d.lateRegLevel != null) setLateRegLevel(d.lateRegLevel);
+    if (d.maxReEntries != null) setMaxReEntries(d.maxReEntries);
+    if (d.rebuyCost != null) setRebuyCost(d.rebuyCost);
+    if (d.rebuyChips != null) setRebuyChips(d.rebuyChips);
+    if (d.rebuyRules) {
+      if (d.rebuyRules.timeCapEnabled != null) setRebuyTimeCapEnabled(d.rebuyRules.timeCapEnabled);
+      if (d.rebuyRules.timeLimitEnabled != null) setRebuyTimeCapEnabled(d.rebuyRules.timeLimitEnabled);
+      if (d.rebuyRules.timeCapLevel != null) setRebuyTimeCapLevel(d.rebuyRules.timeCapLevel);
+      if (d.rebuyRules.timeCutoffLevel != null) setRebuyTimeCapLevel(d.rebuyRules.timeCutoffLevel);
+      if (d.rebuyRules.maxRebuysEnabled != null) setRebuyMaxEnabled(d.rebuyRules.maxRebuysEnabled);
+      if (d.rebuyRules.cappedRebuysEnabled != null) setRebuyMaxEnabled(d.rebuyRules.cappedRebuysEnabled);
+      if (d.rebuyRules.maxRebuys != null) setRebuyMaxCount(d.rebuyRules.maxRebuys);
+      if (d.rebuyRules.stackCapEnabled != null) setRebuyStackCapEnabled(d.rebuyRules.stackCapEnabled);
+      if (d.rebuyRules.stackCapValue != null) setRebuyStackCapValue(d.rebuyRules.stackCapValue);
+      if (d.rebuyRules.stackCapAmount != null) setRebuyStackCapValue(d.rebuyRules.stackCapAmount);
+      if (d.rebuyRules.stackCapUnit != null) setRebuyStackCapUnit(d.rebuyRules.stackCapUnit);
+    }
+  };
+
   const isBounty = tournamentType === 'bounty' || tournamentType === 'mystery bounty';
   const isMysteryBounty = tournamentType === 'mystery bounty';
   const effectiveBountyPercent = isBounty ? Math.min(99, Math.max(1, Number(bountyPercent) || 50)) : 0;
@@ -276,6 +393,11 @@ export default function DirectorStructureDialog({
       splitSimultaneousTies,
     });
   }, [numPlayers, buyInAmount, rankBasedPoolAmount, payoutConfig, tablesCount, splitSimultaneousTies]);
+
+  // Consolidated ladder preview for clean range display
+  const consolidatedPreview = useMemo(() => {
+    return getConsolidatedPayoutLadder(previewPayouts);
+  }, [previewPayouts]);
 
   // Total allocated in the rank prize ladder
   const ladderTotalAmount = useMemo(() => {
@@ -368,13 +490,101 @@ export default function DirectorStructureDialog({
 
   const handleApplyDefaultPayouts = () => {
     setPayoutConfig(getDefaultPayoutConfig(tablesCount));
+    setItmTouched(false);
+    setItmInputMode('places');
+    setItmInputValue(String(Math.max(1, Math.round((Number(totalPlayers) || 10) * 0.15))));
   };
 
+  const resolvedItmTarget = useMemo(() => {
+    const field = Math.max(1, Number(totalPlayers) || 10);
+    const raw = String(itmInputValue ?? '').trim();
+    if (!itmTouched && itmInputMode === 'places') {
+      const places = Math.max(1, Math.min(field, Math.round(field * 0.15)));
+      return { places, pct: Math.round((places / field) * 1000) / 10, isPercent: false };
+    }
+    if (itmInputMode === 'percent' || raw.endsWith('%')) {
+      const pct = Math.max(0.1, Math.min(100, parseFloat(raw.replace('%', '')) || 15));
+      const places = Math.max(1, Math.min(field, Math.round((pct / 100) * field)));
+      return { places, pct, isPercent: true };
+    }
+    const places = Math.max(1, Math.min(field, Math.round(Number(raw) || Math.round(field * 0.15) || 1)));
+    return { places, pct: Math.round((places / field) * 1000) / 10, isPercent: false };
+  }, [itmInputValue, itmInputMode, itmTouched, totalPlayers]);
+
+  const handleGeneratePayouts = (overrideSteepness) => {
+    const s = overrideSteepness != null ? overrideSteepness : payoutSteepness;
+    const field = Math.max(1, Number(totalPlayers) || 10);
+    const generated = generatePayoutStructure({
+      places: resolvedItmTarget.places,
+      percent: resolvedItmTarget.isPercent ? resolvedItmTarget.pct : undefined,
+      totalPlayers: field,
+      totalPool: rankBasedPoolAmount,
+      buyIn: buyInAmount,
+      steepness: s,
+    });
+    setPayoutConfig(generated);
+  };
+
+  const handleGenerateBlindStructure = () => {
+    const lowest = chipDenominations.length ? Math.min(...chipDenominations) : 25;
+    const newSched = generateBlindSchedule({
+      lowestChip: lowest,
+      startingStack: Number(startingStack) || 10000,
+      levelDurationMinutes: Number(levelDurationMinutes) || 15,
+      breakDurationMinutes: Number(breakDurationMinutes) || 10,
+      breakEveryLevels: Number(breakEveryLevels) || 4,
+      desiredMinutes: Number(desiredDurationMinutes) || 0,
+      colorUpBreaksOnly,
+      chipDenominations,
+      speed: generatorSpeed,
+      anteType,
+    });
+    setSchedule(newSched);
+  };
+
+  const tournamentDurationInfo = useMemo(() => {
+    let playMinutes = 0;
+    let breakMinutes = 0;
+    let playCount = 0;
+    let breakCount = 0;
+
+    (schedule || []).forEach((item) => {
+      if (item.type === 'break') {
+        const m = Number(item.minutes) || Number(breakDurationMinutes) || 10;
+        breakMinutes += m;
+        breakCount++;
+      } else {
+        const m = Number(item.minutes) || Number(levelDurationMinutes) || 15;
+        playMinutes += m;
+        playCount++;
+      }
+    });
+
+    const totalMinutes = playMinutes + breakMinutes;
+    const hours = Math.floor(totalMinutes / 60);
+    const remMins = totalMinutes % 60;
+    return {
+      playMinutes,
+      breakMinutes,
+      totalMinutes,
+      hours,
+      remMins,
+      playCount,
+      breakCount,
+      formattedDuration: `${hours}h ${remMins.toString().padStart(2, '0')}m`,
+    };
+  }, [schedule, breakDurationMinutes, levelDurationMinutes]);
+
   const handleAddPayoutRow = () => {
-    const nextPlace = payoutConfig.length + 1;
+    let maxRank = 0;
+    payoutConfig.forEach((row) => {
+      const parsed = parseRankSpec(row.rank, numPlayers || 10, maxRank);
+      if (parsed.end > maxRank) maxRank = parsed.end;
+    });
+    const nextPlace = maxRank + 1;
     setPayoutConfig((prev) => [
       ...prev,
-      { rank: nextPlace, payout: { type: 'percent', value: 10 } },
+      { rank: nextPlace, payout: { type: 'percent', value: 5 } },
     ]);
   };
 
@@ -450,27 +660,36 @@ export default function DirectorStructureDialog({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-[#12161f] border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl text-slate-200 my-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl border border-[#2a2f37] bg-[#1e2227] p-6 shadow-2xl">
         {/* Modal Header */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-800">
-          <div className="flex items-center gap-2.5">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2">
             <Trophy className="text-emerald-400" size={22} />
-            <div>
-              <h2 className="text-lg font-bold text-white">Tournament Structure Setup</h2>
-              <div className="text-xs text-slate-400">Configure tables, levels, rules, and payouts</div>
-            </div>
+            <h2 className="text-xl font-semibold text-white">Structure setup (Tournament Director)</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowSavedStructures(true)}
+              className="flex items-center gap-1.5 rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 text-sm px-3 py-1.5 cursor-pointer"
+            >
+              <FolderOpen size={15} /> Saved structures
+            </button>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-slate-400 hover:text-white cursor-pointer p-1 rounded-lg"
+              >
+                <X size={20} />
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex border-b border-slate-800 bg-[#0d1017] px-4 pt-2 gap-2 text-xs">
+        {/* Tab Navigation - Action Tracker Segmented Style */}
+        <div className="flex flex-wrap items-center gap-1.5 bg-[#121417] p-1.5 rounded-xl border border-[#2a2f37] mb-5">
           {[
             { id: 'general', label: '1. General & Rules' },
             { id: 'levels', label: '2. Levels & Chips' },
@@ -481,10 +700,10 @@ export default function DirectorStructureDialog({
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`px-3 py-2 rounded-t-lg font-semibold border-b-2 transition-colors cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex-1 text-center ${
                 activeTab === tab.id
-                  ? 'border-emerald-400 text-emerald-400 bg-[#12161f]'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'bg-[#4a5a4a] text-white shadow'
+                  : 'text-slate-400 hover:text-white bg-transparent'
               }`}
             >
               {tab.label}
@@ -493,7 +712,7 @@ export default function DirectorStructureDialog({
         </div>
 
         {/* Modal Form */}
-        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-6 overflow-y-auto flex-1">
+        <form onSubmit={handleSubmit} className="space-y-6">
           {/* TAB 1: GENERAL & TOURNAMENT RULES */}
           {activeTab === 'general' && (
             <div className="space-y-5">
@@ -506,7 +725,7 @@ export default function DirectorStructureDialog({
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a]"
                   />
                 </div>
 
@@ -520,7 +739,7 @@ export default function DirectorStructureDialog({
                     step="100"
                     value={startingStack}
                     onChange={(e) => setStartingStack(e.target.value)}
-                    className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono"
+                    className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a] font-mono"
                   />
                 </div>
 
@@ -531,7 +750,7 @@ export default function DirectorStructureDialog({
                   <select
                     value={nameEntryMode}
                     onChange={(e) => setNameEntryMode(e.target.value)}
-                    className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a]"
                   >
                     <option value="now">Enter player names now (Default)</option>
                     <option value="itm">Enter when ITM / approaching money</option>
@@ -548,7 +767,7 @@ export default function DirectorStructureDialog({
                     </span>
                   </div>
                   {nameEntryMode === 'now' ? (
-                    <div className="flex items-center justify-between w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm font-mono">
+                    <div className="flex items-center justify-between w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-3.5 py-2 text-white text-sm font-mono">
                       <span className="text-white font-bold">{parsedPlayerNames.length} Players</span>
                       <button
                         type="button"
@@ -565,7 +784,7 @@ export default function DirectorStructureDialog({
                       max="5000"
                       value={totalPlayers}
                       onChange={(e) => setTotalPlayers(Math.max(2, parseInt(e.target.value) || 2))}
-                      className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono"
+                      className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a] font-mono"
                     />
                   )}
                 </div>
@@ -580,7 +799,7 @@ export default function DirectorStructureDialog({
                     max="50"
                     value={tablesCount}
                     onChange={(e) => setTablesCount(e.target.value)}
-                    className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono"
+                    className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a] font-mono"
                   />
                 </div>
               </div>
@@ -602,19 +821,19 @@ export default function DirectorStructureDialog({
               </div>
 
               {/* Buy-in & Currency */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
                     Buy-in Amount
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3.5 top-2.5 text-slate-400 font-mono">{currency}</span>
+                    <span className="absolute left-3.5 top-2 text-slate-400 font-mono">{currency}</span>
                     <input
                       type="number"
                       min="0"
                       value={buyIn}
                       onChange={(e) => setBuyIn(e.target.value)}
-                      className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl pl-8 pr-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono"
+                      className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] pl-8 pr-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a] font-mono"
                     />
                   </div>
                 </div>
@@ -628,27 +847,13 @@ export default function DirectorStructureDialog({
                     maxLength={3}
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value)}
-                    className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500 text-center font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                    Level Duration (Minutes)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="120"
-                    value={levelDurationMinutes}
-                    onChange={(e) => setLevelDurationMinutes(e.target.value)}
-                    className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500 font-mono"
+                    className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a] text-center font-mono"
                   />
                 </div>
               </div>
 
               {/* Late Reg Toggle */}
-              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-3">
+              <div className="p-4 rounded-xl bg-[#15181d] border border-[#2a2f37] space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-sm font-semibold text-white">Late Registration</div>
@@ -657,20 +862,20 @@ export default function DirectorStructureDialog({
                   <button
                     type="button"
                     onClick={() => setLateRegEnabled(!lateRegEnabled)}
-                    className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                      lateRegEnabled ? 'bg-emerald-600' : 'bg-slate-700'
+                    className={`w-9 h-5 rounded-full p-0.5 transition-colors relative cursor-pointer ${
+                      lateRegEnabled ? 'bg-[#4a5a4a]' : 'bg-[#2a2f37]'
                     }`}
                   >
-                    <div
-                      className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${
-                        lateRegEnabled ? 'left-7' : 'left-1'
+                    <span
+                      className={`block w-4 h-4 rounded-full bg-white transition-transform ${
+                        lateRegEnabled ? 'translate-x-4' : ''
                       }`}
                     />
                   </button>
                 </div>
 
                 {lateRegEnabled && (
-                  <div className="flex items-center gap-3 pt-2">
+                  <div className="flex items-center gap-3 pt-2 border-t border-[#2a2f37]">
                     <span className="text-xs text-slate-300">Open until end of level:</span>
                     <input
                       type="number"
@@ -678,14 +883,14 @@ export default function DirectorStructureDialog({
                       max="20"
                       value={lateRegLevel}
                       onChange={(e) => setLateRegLevel(e.target.value)}
-                      className="w-20 bg-[#1b202a] border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs font-mono text-center"
+                      className="w-20 rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white text-xs font-mono text-center focus:border-[#4a5a4a]"
                     />
                   </div>
                 )}
               </div>
 
               {/* Tournament Type Dropdown (Right below late reg toggle) */}
-              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-4">
+              <div className="p-4 rounded-xl bg-[#15181d] border border-[#2a2f37] space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
                     Tournament Type
@@ -693,7 +898,7 @@ export default function DirectorStructureDialog({
                   <select
                     value={tournamentType}
                     onChange={(e) => setTournamentType(e.target.value)}
-                    className="w-full bg-[#1b202a] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a]"
                   >
                     <option value="freezeout">Freezeout (No Re-Entries or Rebuys)</option>
                     <option value="reentry">Re-Entry (Eliminated Players Re-enter as New Field Entries)</option>
@@ -705,7 +910,7 @@ export default function DirectorStructureDialog({
 
                 {/* Re-Entry Settings */}
                 {tournamentType === 'reentry' && (
-                  <div className="p-3 bg-blue-950/30 border border-blue-800/40 rounded-xl space-y-3 text-xs">
+                  <div className="p-3 bg-[#1e2227] border border-[#2a2f37] rounded-xl space-y-3 text-xs">
                     <div className="flex items-center justify-between">
                       <span className="text-slate-300 font-medium">Max Re-Entries per Player:</span>
                       <div className="flex items-center gap-2">
@@ -714,7 +919,7 @@ export default function DirectorStructureDialog({
                           min="0"
                           value={maxReEntries}
                           onChange={(e) => setMaxReEntries(e.target.value)}
-                          className="w-20 bg-[#141922] border border-slate-700 rounded-lg px-2.5 py-1 text-white text-xs font-mono text-center"
+                          className="w-20 rounded-lg bg-[#15181d] border border-[#2a2f37] px-2.5 py-1 text-white text-xs font-mono text-center focus:border-[#4a5a4a]"
                         />
                         <span className="text-slate-400 text-[11px]">(0 = Unlimited)</span>
                       </div>
@@ -727,8 +932,8 @@ export default function DirectorStructureDialog({
 
                 {/* Rebuy Settings */}
                 {tournamentType === 'rebuy' && (
-                  <div className="p-3.5 bg-purple-950/20 border border-purple-800/40 rounded-xl space-y-4 text-xs">
-                    <div className="font-bold text-purple-300 text-xs uppercase tracking-wide">
+                  <div className="p-3.5 bg-[#1e2227] border border-[#2a2f37] rounded-xl space-y-4 text-xs">
+                    <div className="font-bold text-slate-200 text-xs uppercase tracking-wide">
                       Rebuy Customization & Eligibility Rules
                     </div>
 
@@ -742,7 +947,7 @@ export default function DirectorStructureDialog({
                             min="0"
                             value={rebuyCost}
                             onChange={(e) => setRebuyCost(e.target.value)}
-                            className="w-full bg-[#141922] border border-slate-700 rounded-lg pl-7 pr-2 py-1.5 text-white font-mono"
+                            className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] pl-7 pr-2 py-1.5 text-white font-mono focus:border-[#4a5a4a]"
                           />
                         </div>
                       </div>
@@ -754,7 +959,7 @@ export default function DirectorStructureDialog({
                           step="100"
                           value={rebuyChips}
                           onChange={(e) => setRebuyChips(e.target.value)}
-                          className="w-full bg-[#141922] border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                          className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:border-[#4a5a4a]"
                         />
                       </div>
                     </div>
@@ -1115,11 +1320,200 @@ export default function DirectorStructureDialog({
             </div>
           )}
 
-          {/* TAB 2: LEVEL SETUP & BLIND SCHEDULE (Added back per user request!) */}
+          {/* TAB 2: LEVEL SETUP & BLIND SCHEDULE */}
           {activeTab === 'levels' && (
             <div className="space-y-6">
+              {/* Level Duration & Break Timing Generator */}
+              <div className="p-4 rounded-xl bg-[#15181d] border border-[#2a2f37] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#2a2f37] pb-3">
+                  <div>
+                    <div className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                      <Clock size={15} className="text-emerald-400" />
+                      Level Pacing & Blind Structure Generator
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Configure round pacing and generate an optimal blind progression for your starting stack.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGenerateBlindStructure}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white flex items-center gap-1.5 cursor-pointer transition-colors shadow self-start sm:self-center"
+                  >
+                    <Sparkles size={14} /> Generate Blind Schedule
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Desired Length
+                    </label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="0"
+                          max="24"
+                          value={Math.floor((Number(desiredDurationMinutes) || 0) / 60)}
+                          onChange={(e) => {
+                            const h = Math.max(0, Math.min(24, parseInt(e.target.value, 10) || 0));
+                            const m = (Number(desiredDurationMinutes) || 0) % 60;
+                            setDesiredDurationMinutes(h * 60 + m);
+                          }}
+                          className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 pr-6 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                        />
+                        <span className="absolute right-2 top-1.5 text-slate-400 text-[11px] pointer-events-none">hr</span>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="0"
+                          max="59"
+                          step="5"
+                          value={(Number(desiredDurationMinutes) || 0) % 60}
+                          onChange={(e) => {
+                            const h = Math.floor((Number(desiredDurationMinutes) || 0) / 60);
+                            const m = Math.max(0, Math.min(59, parseInt(e.target.value, 10) || 0));
+                            setDesiredDurationMinutes(h * 60 + m);
+                          }}
+                          className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 pr-6 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                        />
+                        <span className="absolute right-2 top-1.5 text-slate-400 text-[11px] pointer-events-none">m</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Level Duration
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="1"
+                        max="120"
+                        value={levelDurationMinutes}
+                        onChange={(e) => setLevelDurationMinutes(e.target.value)}
+                        className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                      />
+                      <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">min</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Break Duration
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="1"
+                        max="60"
+                        value={breakDurationMinutes}
+                        onChange={(e) => setBreakDurationMinutes(e.target.value)}
+                        className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                      />
+                      <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">min</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Break Schedule
+                    </label>
+                    <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#1e2227] p-0.5 border border-[#2a2f37]">
+                      <button
+                        type="button"
+                        onClick={() => setColorUpBreaksOnly(false)}
+                        className={`py-1 text-center rounded text-[11px] font-medium cursor-pointer transition-colors ${
+                          !colorUpBreaksOnly
+                            ? 'bg-[#4a5a4a] text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Interval
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setColorUpBreaksOnly(true)}
+                        className={`py-1 text-center rounded text-[11px] font-medium cursor-pointer transition-colors ${
+                          colorUpBreaksOnly
+                            ? 'bg-[#4a5a4a] text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Color-ups
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Break Every
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="1"
+                        max="12"
+                        disabled={colorUpBreaksOnly}
+                        value={breakEveryLevels}
+                        onChange={(e) => setBreakEveryLevels(e.target.value)}
+                        className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a] disabled:opacity-40 disabled:cursor-not-allowed"
+                      />
+                      <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">lvls</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Structure Speed
+                    </label>
+                    <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#1e2227] p-0.5 border border-[#2a2f37]">
+                      <button
+                        type="button"
+                        onClick={() => setGeneratorSpeed('balanced')}
+                        className={`py-1 text-center rounded text-xs font-medium cursor-pointer transition-colors ${
+                          generatorSpeed === 'balanced'
+                            ? 'bg-[#4a5a4a] text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Balanced
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGeneratorSpeed('turbo')}
+                        className={`py-1 text-center rounded text-xs font-medium cursor-pointer transition-colors ${
+                          generatorSpeed === 'turbo'
+                            ? 'bg-[#4a5a4a] text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Turbo
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 bg-[#1e2227] p-2.5 rounded-lg border border-[#2a2f37]">
+                  <span>
+                    Lowest Chip: <span className="font-mono text-emerald-400 font-bold">{chipDenominations.length ? Math.min(...chipDenominations) : 25}</span> · Starting Stack: <span className="font-mono text-white font-bold">{Number(startingStack).toLocaleString()}</span> ({Math.round(Number(startingStack) / (2 * (chipDenominations.length ? Math.min(...chipDenominations) : 25)))} BBs at Level 1)
+                  </span>
+                  <span className="text-slate-400">
+                    {Number(desiredDurationMinutes) > 0
+                      ? `Target: ${Math.floor(desiredDurationMinutes / 60)}h ${String(desiredDurationMinutes % 60).padStart(2, '0')}m · `
+                      : 'Standard full schedule · '}
+                    {colorUpBreaksOnly
+                      ? `Breaks during color-ups only (${breakDurationMinutes}m each)`
+                      : `Breaks every ${breakEveryLevels} levels (${breakDurationMinutes}m each)`}
+                  </span>
+                </div>
+              </div>
+
               {/* Ante Choice */}
-              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-2">
+              <div className="p-4 rounded-xl bg-[#15181d] border border-[#2a2f37] space-y-2">
                 <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
                   Ante Structure
                 </label>
@@ -1128,7 +1522,7 @@ export default function DirectorStructureDialog({
                     { id: 'bba', label: 'Big Blind Ante (BBA)', desc: 'BB posts ante for the entire table' },
                     { id: 'traditional', label: 'Traditional Ante', desc: 'Every player posts an individual ante each hand' },
                     { id: 'none', label: 'No Ante', desc: 'Standard blinds only, no ante posted' },
-                    { id: 'sb_half_ante', label: 'Small Blind Half Ante', desc: 'Small blind posts a half-size ante for table' },
+                    { id: 'sb_half_ante', label: 'Big Blind Half Ante', desc: 'Big blind posts a half-size ante (0.5 BB) for table' },
                     { id: 'btn_ante', label: 'Button Ante', desc: 'Button posts the single ante for table' },
                   ].map((opt) => (
                     <button
@@ -1137,8 +1531,8 @@ export default function DirectorStructureDialog({
                       onClick={() => setAnteType(opt.id)}
                       className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
                         anteType === opt.id
-                          ? 'bg-emerald-950/40 border-emerald-500/60 text-white'
-                          : 'bg-[#181d26] border-slate-700/60 text-slate-400 hover:text-white'
+                          ? 'bg-[#4a5a4a] text-white border-transparent shadow'
+                          : 'bg-[#1e2227] border-[#2a2f37] text-slate-400 hover:text-white'
                       }`}
                     >
                       <div className="font-bold text-xs">{opt.label}</div>
@@ -1149,7 +1543,7 @@ export default function DirectorStructureDialog({
               </div>
 
               {/* Chip Denomination Picker */}
-              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800">
+              <div className="p-4 rounded-xl bg-[#15181d] border border-[#2a2f37]">
                 <ChipDenominationPicker
                   selected={chipDenominations}
                   onChange={handleDenomsChange}
@@ -1168,12 +1562,12 @@ export default function DirectorStructureDialog({
                       const lowest = chipDenominations.length ? Math.min(...chipDenominations) : 25;
                       handleScheduleChange(defaultScheduleFor(lowest));
                     }}
-                    className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                    className="text-xs px-2.5 py-1 rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 border border-[#2a2f37] cursor-pointer"
                   >
                     Reset Standard Schedule
                   </button>
                 </div>
-                <div className="bg-[#10141c] p-3 rounded-xl border border-slate-800 max-h-72 overflow-y-auto">
+                <div className="bg-[#15181d] p-3 rounded-xl border border-[#2a2f37] max-h-72 overflow-y-auto">
                   <BlindScheduleEditor
                     schedule={schedule}
                     onChange={handleScheduleChange}
@@ -1182,20 +1576,48 @@ export default function DirectorStructureDialog({
                   />
                 </div>
               </div>
+
+              {/* Total Tournament Length Footer */}
+              <div className="p-4 rounded-xl bg-gradient-to-r from-[#17201c] via-[#15181d] to-[#17201c] border border-emerald-500/30 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    <Clock size={20} />
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                      Total Tournament Length
+                    </div>
+                    <div className="text-lg font-bold font-mono text-emerald-400 flex items-baseline gap-2">
+                      <span>{tournamentDurationInfo.formattedDuration}</span>
+                      <span className="text-xs text-slate-400 font-sans font-normal">
+                        ({tournamentDurationInfo.totalMinutes} minutes total)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-left sm:text-right text-xs font-mono text-slate-400 border-t sm:border-t-0 sm:border-l border-[#2a2f37] pt-2 sm:pt-0 sm:pl-4">
+                  <div>
+                    <span className="text-white font-bold">{tournamentDurationInfo.playCount}</span> Blind Levels ({levelDurationMinutes}m each)
+                  </div>
+                  <div>
+                    <span className="text-white font-bold">{tournamentDurationInfo.breakCount}</span> Scheduled Breaks ({breakDurationMinutes}m each)
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
           {/* TAB 3: PLAYERS ROSTER */}
           {activeTab === 'players' && (
             <div className="space-y-4">
-              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-2">
+              <div className="p-4 rounded-xl bg-[#15181d] border border-[#2a2f37] space-y-2">
                 <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
                   Registration Method
                 </label>
                 <select
                   value={nameEntryMode}
                   onChange={(e) => setNameEntryMode(e.target.value)}
-                  className="w-full bg-[#181d26] border border-slate-700 rounded-xl px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500"
+                  className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a]"
                 >
                   <option value="now">Enter player names now (Default)</option>
                   <option value="itm">Enter when ITM / approaching money</option>
@@ -1208,7 +1630,7 @@ export default function DirectorStructureDialog({
               </div>
 
               {nameEntryMode === 'now' ? (
-                <div>
+                <div className="p-4 rounded-xl bg-[#15181d] border border-[#2a2f37] space-y-2">
                   <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
                     Player Names Roster
                   </label>
@@ -1220,11 +1642,11 @@ export default function DirectorStructureDialog({
                     value={playerNamesInput}
                     onChange={(e) => handlePlayerNamesChange(e.target.value)}
                     placeholder="e.g.&#10;Alice&#10;Bob&#10;Charlie&#10;Dave"
-                    className="w-full bg-[#181d26] border border-slate-700 rounded-xl p-3 text-white text-xs font-mono focus:outline-none focus:border-emerald-500"
+                    className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] p-3 text-white text-xs font-mono focus:outline-none focus:border-[#4a5a4a]"
                   />
                 </div>
               ) : (
-                <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+                <div className="p-4 rounded-xl bg-[#15181d] border border-[#2a2f37] space-y-3">
                   <div className="text-xs font-semibold text-white">
                     Approaching Money Mode Selected
                   </div>
@@ -1239,7 +1661,7 @@ export default function DirectorStructureDialog({
                       max="5000"
                       value={totalPlayers}
                       onChange={(e) => setTotalPlayers(Math.max(2, parseInt(e.target.value) || 2))}
-                      className="w-24 bg-[#181d26] border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs font-mono"
+                      className="w-24 rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white text-xs font-mono focus:border-[#4a5a4a]"
                     />
                   </div>
                   <p className="text-[11px] text-amber-300/80">
@@ -1249,7 +1671,7 @@ export default function DirectorStructureDialog({
               )}
 
               {/* Live Roster Preview */}
-              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-2">
+              <div className="p-4 rounded-xl bg-[#15181d] border border-[#2a2f37] space-y-2">
                 <div className="flex items-center justify-between text-xs text-slate-300 font-semibold">
                   <span>Current Field Roster ({parsedPlayerNames.length} Players):</span>
                   <span className="text-emerald-400 text-[11px]">
@@ -1259,7 +1681,7 @@ export default function DirectorStructureDialog({
                   </span>
                 </div>
                 {parsedPlayerNames.length > 10 ? (
-                  <div className="py-4 text-center text-sm font-bold text-white bg-[#181d26] rounded-xl border border-slate-800">
+                  <div className="py-4 text-center text-sm font-bold text-white bg-[#1e2227] rounded-xl border border-[#2a2f37]">
                     {parsedPlayerNames.length} Players Registered
                   </div>
                 ) : (
@@ -1267,7 +1689,7 @@ export default function DirectorStructureDialog({
                     {parsedPlayerNames.map((pName, i) => (
                       <div
                         key={i}
-                        className="px-2.5 py-1.5 rounded-lg bg-[#181d26] border border-slate-800 text-xs font-mono truncate text-slate-300"
+                        className="px-2.5 py-1.5 rounded-lg bg-[#1e2227] border border-[#2a2f37] text-xs font-mono truncate text-slate-300"
                       >
                         <span className="text-slate-500 mr-1.5">#{i + 1}</span>
                         {pName}
@@ -1296,22 +1718,132 @@ export default function DirectorStructureDialog({
                   <button
                     type="button"
                     onClick={handleApplyDefaultPayouts}
-                    className="px-2.5 py-1 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                    className="px-2.5 py-1 rounded-md text-xs bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 border border-[#2a2f37] cursor-pointer"
                   >
                     Reset Defaults
                   </button>
                   <button
                     type="button"
                     onClick={handleAddPayoutRow}
-                    className="px-2.5 py-1 rounded-lg text-xs bg-emerald-700 hover:bg-emerald-600 text-white flex items-center gap-1 cursor-pointer"
+                    className="px-2.5 py-1 rounded-md text-xs bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white flex items-center gap-1 cursor-pointer"
                   >
                     <Plus size={13} /> Add Row
                   </button>
                 </div>
               </div>
 
+              {/* Auto-Generate ITM Payout Structure */}
+              <div className="p-3.5 rounded-xl bg-[#15181d] border border-[#2a2f37] space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold text-white">Places in the Money Generator</div>
+                    <div className="text-[11px] text-slate-400">
+                      Generate condensed payout structure for {numPlayers || 10} players (default: 15% of field = {Math.max(1, Math.round((numPlayers || 10) * 0.15))} places). Creates single places for top spots and standard range brackets for deep fields with realistic exponential top payouts.
+                    </div>
+                  </div>
+                  <div className="flex items-center rounded-lg border border-[#2a2f37] overflow-hidden shrink-0 self-start sm:self-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (itmInputMode !== 'places') {
+                          setItmInputMode('places');
+                          setItmInputValue(String(resolvedItmTarget.places));
+                        }
+                      }}
+                      className={`px-2.5 py-1 text-xs font-medium cursor-pointer transition-colors ${
+                        itmInputMode === 'places'
+                          ? 'bg-[#4a5a4a] text-white'
+                          : 'bg-[#1e2227] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      # Places
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (itmInputMode !== 'percent') {
+                          setItmInputMode('percent');
+                          setItmInputValue(itmTouched ? String(resolvedItmTarget.pct) : '15');
+                        }
+                      }}
+                      className={`px-2.5 py-1 text-xs font-medium cursor-pointer transition-colors ${
+                        itmInputMode === 'percent'
+                          ? 'bg-[#4a5a4a] text-white'
+                          : 'bg-[#1e2227] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      % of Field
+                    </button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={!itmTouched && itmInputMode === 'places' ? String(resolvedItmTarget.places) : itmInputValue}
+                      onChange={(e) => {
+                        setItmTouched(true);
+                        setItmInputValue(e.target.value);
+                      }}
+                      placeholder={itmInputMode === 'percent' ? '15' : String(Math.max(1, Math.round((numPlayers || 10) * 0.15)))}
+                      className="w-24 bg-[#1e2227] border border-[#2a2f37] rounded-lg px-2.5 py-1.5 text-white text-xs font-mono text-right focus:outline-none focus:border-[#4a5a4a]"
+                    />
+                    <span className="text-xs text-slate-400">
+                      {itmInputMode === 'percent' ? '% of field' : 'places'}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    → Pays {resolvedItmTarget.places} of {numPlayers || 10} ({resolvedItmTarget.pct}%)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleGeneratePayouts(payoutSteepness)}
+                    className="ml-auto px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <Sparkles size={13} /> Generate
+                  </button>
+                </div>
+
+                {/* Steepness Slider */}
+                <div className="pt-2 border-t border-[#2a2f37] space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300 font-semibold flex items-center gap-1.5">
+                      Payout Steepness:
+                      <span className="text-emerald-400 font-mono font-bold">
+                        {payoutSteepness === 1 && '1 (Balanced · Deeper Min-Cashes)'}
+                        {payoutSteepness === 2 && '2 (Semi-Balanced)'}
+                        {payoutSteepness === 3 && '3 (Standard · WSOP Style)'}
+                        {payoutSteepness === 4 && '4 (Top-Heavy)'}
+                        {payoutSteepness === 5 && '5 (Winner-Heavy · Max 1st Place)'}
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      Level {payoutSteepness}/5
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="5"
+                    step="1"
+                    value={payoutSteepness}
+                    onChange={(e) => {
+                      const newS = Number(e.target.value);
+                      setPayoutSteepness(newS);
+                      handleGeneratePayouts(newS);
+                    }}
+                    className="w-full h-1.5 bg-[#2a2f37] rounded-lg appearance-none cursor-pointer accent-[#4a5a4a]"
+                  />
+                  <div className="flex items-center justify-between text-[10px] text-slate-500 font-sans">
+                    <span>Balanced (More $ to deeper spots)</span>
+                    <span>Standard</span>
+                    <span>Top-Heavy (More $ to 1st)</span>
+                  </div>
+                </div>
+              </div>
+
               {/* Simultaneous Eliminations Rule */}
-              <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between">
+              <div className="p-3.5 rounded-xl bg-[#15181d] border border-[#2a2f37] flex items-center justify-between">
                 <div>
                   <div className="text-xs font-semibold text-white">Simultaneous Eliminations Rule</div>
                   <div className="text-[11px] text-slate-400">
@@ -1325,8 +1857,8 @@ export default function DirectorStructureDialog({
                   onClick={() => setSplitSimultaneousTies(!splitSimultaneousTies)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors ${
                     splitSimultaneousTies
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-purple-600 text-white'
+                      ? 'bg-[#4a5a4a] text-white'
+                      : 'bg-[#2a2f37] text-slate-300'
                   }`}
                 >
                   {splitSimultaneousTies ? 'Split Evenly' : 'Rank by Stack'}
@@ -1342,26 +1874,30 @@ export default function DirectorStructureDialog({
                       : row.rank;
                   const payoutType = row.payout?.type || 'percent';
                   const payoutVal = row.payout?.value ?? 0;
+                  const rankParsed = parseRankSpec(rankVal, numPlayers || 10, idx);
+                  const isRange = rankParsed.count > 1;
+                  const perPlayerPct = isRange && payoutType === 'percent' ? (payoutVal / rankParsed.count) : payoutVal;
+                  const perPlayerFixed = isRange && payoutType === 'fixed' ? Math.round(payoutVal / rankParsed.count) : payoutVal;
 
                   return (
                     <div
                       key={idx}
-                      className="flex items-center gap-2 bg-[#171c26] p-2.5 rounded-xl border border-slate-800 text-xs font-mono"
+                      className="flex items-center gap-2 bg-[#15181d] p-2.5 rounded-lg border border-[#2a2f37] text-xs font-mono"
                     >
                       <div className="w-28">
                         <input
                           type="text"
                           value={rankVal}
                           onChange={(e) => handleUpdatePayoutRow(idx, 'rank', e.target.value)}
-                          placeholder="e.g. 1 or 3-5 or 2%"
-                          className="w-full bg-[#10141c] border border-slate-700 rounded-lg px-2 py-1.5 text-white text-xs"
+                          placeholder="e.g. 1 or 10-12"
+                          className="w-full bg-[#1e2227] border border-[#2a2f37] rounded-lg px-2 py-1.5 text-white text-xs focus:border-[#4a5a4a]"
                         />
                       </div>
                       <div className="flex items-center gap-1 flex-1">
                         <select
                           value={payoutType}
                           onChange={(e) => handleUpdatePayoutRow(idx, 'type', e.target.value)}
-                          className="bg-[#10141c] border border-slate-700 rounded-lg px-2 py-1.5 text-slate-300 text-xs"
+                          className="bg-[#1e2227] border border-[#2a2f37] rounded-lg px-2 py-1.5 text-slate-300 text-xs focus:border-[#4a5a4a]"
                         >
                           <option value="percent">% of Pool</option>
                           <option value="fixed">Fixed {currency}</option>
@@ -1371,11 +1907,18 @@ export default function DirectorStructureDialog({
                           step="any"
                           value={payoutVal}
                           onChange={(e) => handleUpdatePayoutRow(idx, 'value', e.target.value)}
-                          className="w-24 bg-[#10141c] border border-slate-700 rounded-lg px-2 py-1.5 text-white text-xs text-right"
+                          className="w-24 bg-[#1e2227] border border-[#2a2f37] rounded-lg px-2 py-1.5 text-white text-xs text-right focus:border-[#4a5a4a]"
                         />
                         <span className="text-slate-400">
                           {payoutType === 'percent' ? '%' : currency}
                         </span>
+                        {isRange && (
+                          <span className="text-[11px] text-slate-400 ml-1 font-sans">
+                            ({payoutType === 'percent'
+                              ? `${perPlayerPct % 1 === 0 ? perPlayerPct.toFixed(0) : perPlayerPct.toFixed(2).replace(/\.?0+$/, '')}% ea`
+                              : `${currency}${perPlayerFixed.toLocaleString()} ea`} · {rankParsed.count} spots)
+                          </span>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -1390,7 +1933,7 @@ export default function DirectorStructureDialog({
               </div>
 
               {/* Live Preview List */}
-              <div className="bg-slate-900/40 p-3 rounded-xl border border-slate-800">
+              <div className="bg-[#15181d] p-3.5 rounded-xl border border-[#2a2f37]">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex flex-wrap items-center justify-between gap-2">
                   <span>
                     Calculated Prize Ladder Preview (Total Pool: {currency}{adjustedDisplayTotalPool.toLocaleString()})
@@ -1402,24 +1945,30 @@ export default function DirectorStructureDialog({
                   )}
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
-                  {previewPayouts.map((p, i) => (
-                    <div
-                      key={i}
-                      className="p-1.5 bg-[#171c26] rounded border border-slate-800 flex justify-between"
-                    >
-                      <span className="text-slate-400">{p.label || `${p.place}${getOrdinalSuffix(p.place)}`}:</span>
-                      <span className="text-emerald-400 font-bold">
-                        {currency}{p.amount} ({p.percent.toFixed(p.percent % 1 === 0 ? 0 : 1)}%)
-                      </span>
-                    </div>
-                  ))}
+                  {consolidatedPreview.map((p, i) => {
+                    const pctVal = p.isBracket ? p.perPlayerPercent : p.percent;
+                    const pctStr = pctVal % 1 === 0 ? pctVal.toFixed(0) : pctVal.toFixed(2).replace(/\.?0+$/, '');
+                    const amtVal = p.isBracket ? p.perPlayerAmount : p.totalAmount;
+                    const labelStr = p.isBracket ? `${p.bracketStart}-${p.bracketEnd}` : (p.label || `${p.place}`);
+                    return (
+                      <div
+                        key={i}
+                        className="p-1.5 bg-[#1e2227] rounded-lg border border-[#2a2f37] flex items-center justify-between gap-1 text-[11px]"
+                      >
+                        <span className="text-slate-400 truncate">{labelStr}:</span>
+                        <span className="text-emerald-400 font-bold truncate">
+                          {currency}{amtVal.toLocaleString()} ({pctStr}%)
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
           )}
 
           {/* Modal Footer Actions */}
-          <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+          <div className="flex items-center justify-between pt-4 border-t border-[#2a2f37] mt-6">
             <div className="text-xs text-slate-500">
               {tablesCount} Tables · {totalPlayers} Players · {currency}{buyIn} Buy-in
             </div>
@@ -1427,13 +1976,13 @@ export default function DirectorStructureDialog({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2.5 rounded-xl border border-slate-700 hover:bg-slate-800 text-xs font-medium text-slate-300 cursor-pointer"
+                className="px-4 py-2 rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 text-sm font-medium cursor-pointer transition-colors"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white shadow-lg cursor-pointer"
+                className="px-5 py-2 rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm font-semibold cursor-pointer transition-colors shadow"
               >
                 Save & Apply Structure
               </button>
@@ -1441,6 +1990,14 @@ export default function DirectorStructureDialog({
           </div>
         </form>
       </div>
+
+      {showSavedStructures && (
+        <SavedStructuresDialog
+          getCurrentData={buildStructureData}
+          onLoad={applyStructure}
+          onClose={() => setShowSavedStructures(false)}
+        />
+      )}
     </div>
   );
 }

@@ -1,0 +1,20 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Completed sessions rules
+    match /completed_sessions/{sessionId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Hand histories rules
+    match /hand_histories/{historyId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Default deny for all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

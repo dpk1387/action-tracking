@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "CompletedSession": {
+      "title": "CompletedSession",
+      "description": "Poker session completed history record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "completedAt": { "type": "string" },
+        "isCompleted": { "type": "boolean" }
+      },
+      "required": ["id"]
+    },
+    "HandHistoryRecord": {
+      "title": "HandHistoryRecord",
+      "description": "Poker session hand history log, appended on save",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "shareCode": { "type": "string" },
+        "sessionName": { "type": "string" },
+        "mode": { "type": "string" },
+        "variant": { "type": "string" },
+        "handCount": { "type": "number" },
+        "lastSavedAt": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" }
+      },
+      "required": ["id"]
+    }
+  },
+  "firestore": {
+    "/completed_sessions/{sessionId}": {
+      "schema": "CompletedSession",
+      "description": "User completed poker sessions synced across devices"
+    },
+    "/hand_histories/{historyId}": {
+      "schema": "HandHistoryRecord",
+      "description": "Appended hand histories for saved sessions"
+    }
+  }
+}

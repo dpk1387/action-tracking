@@ -16,7 +16,6 @@ export default defineConfig(() => {
       port: 3000,
       allowedHosts: true as const,
       hmr: false,
-      watch: null,
     },
   };
 });

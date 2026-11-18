@@ -124,7 +124,7 @@ export function formatTimerLabel(st) {
   if (!st || !st.active) return '';
   if (st.phase === 'color_up') return 'color up';
   if (st.phase === 'break') return 'break';
-  return st.method === 'minutes' ? 'level' : st.method === 'hands' ? 'hands' : 'orbits';
+  return st.method === 'minutes' ? '' : st.method === 'hands' ? 'hands' : 'orbits';
 }
 
 export function scheduledLevelNumber(hand) {

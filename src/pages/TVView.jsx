@@ -12,6 +12,7 @@ import {
   STREET_LABEL,
   SUIT_SYMBOL,
   SUIT_RED,
+  suitColorClass,
   rankDisplay,
   isAllInSituation,
   isAllInShowdown,
@@ -19,6 +20,7 @@ import {
   hasSoleDeepestStack,
   bettingFrozen,
   positions,
+  getLastActionPlayerName,
 } from '@/lib/poker';
 import { levelTimerState, formatTimer, formatTimerLabel, scheduledLevelNumber } from '@/lib/levelTimer';
 import { Maximize2, Minimize2, Tv } from 'lucide-react';
@@ -32,7 +34,7 @@ function raiseLabelLocal(level) {
   return `${level}-bet`;
 }
 
-function BroadcastCard({ card }) {
+function BroadcastCard({ card, suitColors = 2 }) {
   if (!card) return null;
   if (card.hidden) {
     return (
@@ -41,13 +43,13 @@ function BroadcastCard({ card }) {
       </div>
     );
   }
-  const red = SUIT_RED[card.suit];
+  const suitColor = suitColorClass(card.suit, suitColors);
   return (
     <div className="w-8 h-11 sm:w-9 sm:h-12 rounded-md bg-white border border-slate-300 flex flex-col items-center justify-center shadow-lg leading-none select-none px-1 shrink-0">
-      <span className={`text-xs sm:text-sm font-black ${red ? 'text-rose-600' : 'text-slate-900'}`}>
-        {rankDisplay(card.rank)}
+      <span className={`text-xs sm:text-sm font-black font-bold ${suitColor}`}>
+        <strong className="font-bold">{rankDisplay(card.rank)}</strong>
       </span>
-      <span className={`text-xs sm:text-sm ${red ? 'text-rose-600' : 'text-slate-900'}`}>
+      <span className={`text-xs sm:text-sm ${suitColor}`}>
         {SUIT_SYMBOL[card.suit]}
       </span>
     </div>
@@ -103,19 +105,19 @@ function getBroadcastActionText(p, isTurn, hand, cur, isSoleDeepest, actionEnded
     return amt ? `ALL IN FOR ${formatBetAmount(amt, cur, hand, activeUnit)}` : 'ALL-IN';
   }
 
+  // If in last_action mode, hide action for everyone except the player who acted last
+  if (viewOption === 'last_action' || viewOption === 'last_only') {
+    if (!lastActionPlayerName || p.name !== lastActionPlayerName) {
+      return '';
+    }
+  }
+
   if (isTurn) {
     const toCall = Math.max(0, (hand.currentBet || 0) - (p.currentBet || 0));
     if (toCall > 0) {
       return `${formatBetAmount(toCall, cur, hand, activeUnit)} TO CALL`;
     }
     return 'TO ACT';
-  }
-
-  // If in last_action mode, hide action for everyone except the player who acted last
-  if (viewOption === 'last_action') {
-    if (!lastActionPlayerName || p.name !== lastActionPlayerName) {
-      return '';
-    }
   }
 
   const la = p.lastAction;
@@ -169,22 +171,6 @@ export default function TVView() {
   };
 
   const director = liveState?.director?.active ? liveState.director : (localMTT?.active ? localMTT : null);
-
-  if (director) {
-    return (
-      <div className="relative min-h-screen bg-[#0a0d12]">
-        <TournamentClockView directorState={director} isTV={true} />
-        <button
-          onClick={toggleFullscreen}
-          className="fixed top-4 right-4 p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-colors cursor-pointer z-50 shadow-lg"
-          title="Toggle Fullscreen"
-        >
-          {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
-        </button>
-      </div>
-    );
-  }
-
   const hand = liveState?.hand;
   const holeCards = liveState?.holeCards || liveState?._holeCards || {};
   const equity = liveState?.equity || null;
@@ -193,17 +179,11 @@ export default function TVView() {
   const isTournament = hand?.mode === 'tournament' || config?.mode === 'tournament';
   const cur = isTournament ? '' : (hand?.currency || '$');
   const hideAmounts = !!liveState?.hideAmounts;
+  const showPosition = liveState?.showPosition !== false;
+  const suitColors = liveState?.suitColors || 2;
+  const actionDisplayMode = liveState?.actionDisplayMode || 'all';
   const activeUnit = liveState?.displayUnit || hand?.displayUnit || 'chips';
   const stackCurrency = cur;
-
-  // Reliable all-in detection
-  const inAllIn = Boolean(
-    hand && (
-      isAllInShowdown(hand) ||
-      isAllInSituation(hand, holeCards) ||
-      (hand.players?.some((p) => p.status === 'allin') && hand.players?.filter((p) => p.status !== 'folded').length >= 2)
-    )
-  );
 
   const n = hand?.players?.length || 0;
   const buttonIdx = hand?.players ? hand.players.findIndex((p) => p.seat === hand.buttonSeat) : -1;
@@ -218,6 +198,43 @@ export default function TVView() {
       return { p, originalIdx, posRank, posLabel };
     }).sort((a, b) => a.posRank - b.posRank);
   }, [hand?.players, hand?.variant, buttonIdx, n]);
+
+  const playerWinnings = useMemo(() => {
+    if (!hand || hand.phase !== 'awarded' || !hand.pots) return {};
+    const wins = {};
+    (hand.pots || []).forEach((pot) => {
+      (pot.winners || []).forEach((w) => {
+        const pid = typeof w === 'object' ? w.playerId : w;
+        const amt = typeof w === 'object' ? (w.amount || 0) : (pot.amount / (pot.winners.length || 1));
+        wins[pid] = (wins[pid] || 0) + amt;
+      });
+    });
+    return wins;
+  }, [hand]);
+
+  if (director) {
+    return (
+      <div className="relative min-h-screen bg-[#0a0a12]">
+        <TournamentClockView directorState={director} isTV={true} />
+        <button
+          onClick={toggleFullscreen}
+          className="fixed top-4 right-4 p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-colors cursor-pointer z-50 shadow-lg"
+          title="Toggle Fullscreen"
+        >
+          {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+        </button>
+      </div>
+    );
+  }
+
+  // Reliable all-in detection
+  const inAllIn = Boolean(
+    hand && (
+      isAllInShowdown(hand) ||
+      isAllInSituation(hand, holeCards) ||
+      (hand.players?.some((p) => p.status === 'allin') && hand.players?.filter((p) => p.status !== 'folded').length >= 2)
+    )
+  );
 
   if (!hand && !gameOver) {
     return (
@@ -235,16 +252,17 @@ export default function TVView() {
   }
 
   if (gameOver) {
+    const isCashGameOver = gameOver?.mode === 'cash' || config?.mode === 'cash';
     return (
       <div className="min-h-screen bg-[#0d0f12] text-white flex flex-col items-center justify-center p-8 text-center">
         <div className="text-emerald-400 text-5xl font-black mb-4 tracking-wider uppercase">
-          Tournament Champion
+          {isCashGameOver ? 'Game Over' : 'Tournament Champion'}
         </div>
         <div className="text-6xl font-extrabold text-white mb-6">
-          {gameOver.name}
+          {gameOver.name || 'Player'}
         </div>
         <div className="text-slate-400 text-lg">
-          Congratulations to the winner!
+          {isCashGameOver ? 'Session complete!' : 'Congratulations to the winner!'}
         </div>
       </div>
     );
@@ -253,19 +271,6 @@ export default function TVView() {
   const timer = levelTimerState(hand, now);
   const totalPot = hand.players ? hand.players.reduce((s, p) => s + (p.totalBet || 0), 0) : 0;
   const actionEnded = hand.currentPlayer === -1 || bettingFrozen(hand) || hand.phase === 'ended' || hand.phase === 'awarded';
-
-  const playerWinnings = useMemo(() => {
-    if (!hand || hand.phase !== 'awarded' || !hand.pots) return {};
-    const wins = {};
-    (hand.pots || []).forEach((pot) => {
-      (pot.winners || []).forEach((w) => {
-        const pid = typeof w === 'object' ? w.playerId : w;
-        const amt = typeof w === 'object' ? (w.amount || 0) : (pot.amount / (pot.winners.length || 1));
-        wins[pid] = (wins[pid] || 0) + amt;
-      });
-    });
-    return wins;
-  }, [hand?.phase, hand?.pots]);
 
   const boardA = (hand.communityCards || []).filter((c) => c && !c.hidden);
   const boardB = (hand.boardB || []).filter((c) => c && !c.hidden);
@@ -351,15 +356,17 @@ export default function TVView() {
 
           {timer.active && (
             <div className="flex items-center gap-2.5 bg-[#141820] border border-slate-700/80 px-3.5 py-1.5 rounded-xl shadow-lg">
-              <span className="text-xs uppercase tracking-wider text-slate-400 font-bold">
-                {timer.phase === 'break' ? 'Break' : 'Clock'}:
-              </span>
-              <span className={`font-mono text-xl sm:text-2xl font-extrabold ${timer.expired ? 'text-rose-400' : 'text-white'}`}>
+              <span className={`font-mono text-xl sm:text-2xl font-black ${timer.expired ? 'text-rose-400' : 'text-amber-300'}`}>
                 {formatTimer(timer)}
               </span>
-              <span className="text-xs text-slate-400 font-medium">
-                {formatTimerLabel(timer)}
-              </span>
+              <div className="flex flex-col text-left leading-tight border-l border-slate-700/80 pl-2.5">
+                <span className="text-xs font-bold text-white uppercase tracking-wide">
+                  {timer.phase === 'break' || hand?.inBreak ? 'Break' : `Level ${scheduledLevelNumber(hand)}`}
+                </span>
+                <span className="text-[11px] font-mono text-emerald-400 font-semibold">
+                  {formatBlinds(hand)}
+                </span>
+              </div>
             </div>
           )}
 
@@ -401,6 +408,9 @@ export default function TVView() {
               positions={positions(hand)}
               tableSize={hand.tableSize || hand.players?.length || 9}
               hideAmounts={hideAmounts}
+              showPosition={showPosition}
+              suitColors={suitColors}
+              actionDisplayMode={actionDisplayMode}
               cur={cur}
               alwaysShow={false}
               showPot={!hideAmounts}
@@ -424,19 +434,19 @@ export default function TVView() {
               </div>
               <div className="flex flex-wrap items-center justify-center gap-2">
                 {numBoards > 1 && <span className="text-xs font-bold text-slate-400 mr-1">Board 1:</span>}
-                {boardA.map((c, i) => <BroadcastCard key={i} card={c} />)}
+                {boardA.map((c, i) => <BroadcastCard key={i} card={c} suitColors={suitColors} />)}
                 {boardA.length === 0 && <span className="text-xs text-slate-500 italic">No board cards dealt yet</span>}
               </div>
               {boardB.length > 0 && (
                 <div className="flex flex-wrap items-center justify-center gap-2 border-t border-slate-800/80 pt-2.5 w-full">
                   <span className="text-xs font-bold text-purple-300 mr-1">Board 2:</span>
-                  {boardB.map((c, i) => <BroadcastCard key={i} card={c} />)}
+                  {boardB.map((c, i) => <BroadcastCard key={i} card={c} suitColors={suitColors} />)}
                 </div>
               )}
               {boardC.length > 0 && (
                 <div className="flex flex-wrap items-center justify-center gap-2 border-t border-slate-800/80 pt-2.5 w-full">
                   <span className="text-xs font-bold text-cyan-300 mr-1">Board 3:</span>
-                  {boardC.map((c, i) => <BroadcastCard key={i} card={c} />)}
+                  {boardC.map((c, i) => <BroadcastCard key={i} card={c} suitColors={suitColors} />)}
                 </div>
               )}
             </div>
@@ -467,9 +477,11 @@ export default function TVView() {
                     >
                       {/* Left: Position, Name, Stack */}
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="px-2 py-0.5 rounded bg-black/60 border border-slate-700 text-xs font-extrabold text-slate-300 uppercase shrink-0">
-                          {posLabel || '—'}
-                        </span>
+                        {(showPosition || posLabel === 'BTN' || posLabel === 'D' || posLabel === 'D/SB') && (
+                          <span className="px-2 py-0.5 rounded bg-black/60 border border-slate-700 text-xs font-extrabold text-slate-300 uppercase shrink-0">
+                            {posLabel || '—'}
+                          </span>
+                        )}
                         <div className="flex items-baseline gap-2 truncate">
                           <span className="text-base sm:text-lg font-black text-white truncate">
                             {p.name}
@@ -504,7 +516,7 @@ export default function TVView() {
                         )}
                         <div className="flex items-center gap-1.5">
                           {pCards.map((c, ci) => (
-                            <BroadcastCard key={ci} card={c} />
+                            <BroadcastCard key={ci} card={c} suitColors={suitColors} />
                           ))}
                         </div>
                       </div>
@@ -526,10 +538,9 @@ export default function TVView() {
                 const isOut = p.status === 'eliminated' || p.status === 'out';
                 const isAllInPlayer = p.status === 'allin';
                 const isSoleDeepest = hasSoleDeepestStack(hand, p.id);
-                const lastActionPlayerName = Array.isArray(hand?.actionHistory) && hand.actionHistory.length > 0
-                  ? hand.actionHistory[hand.actionHistory.length - 1]?.player
-                  : null;
-                const actionText = getBroadcastActionText(p, isTurn, hand, cur, isSoleDeepest, actionEnded, viewOption, lastActionPlayerName, activeUnit);
+                const lastActionPlayerName = getLastActionPlayerName(hand);
+                const effectiveViewOption = (viewOption === 'last_action' || actionDisplayMode === 'last_action' || actionDisplayMode === 'last_only') ? 'last_action' : viewOption;
+                const actionText = getBroadcastActionText(p, isTurn, hand, cur, isSoleDeepest, actionEnded, effectiveViewOption, lastActionPlayerName, activeUnit);
 
                 // Hole cards & equity are ONLY displayed if it's an all-in situation AND player is not folded or out
                 const pCards = (!isFolded && !isOut) ? (holeCards[p.id] ?? holeCards[String(p.id)] ?? []) : [];
@@ -572,7 +583,7 @@ export default function TVView() {
                       {showCardsAndEquity && pCards.length > 0 && (
                         <div className="flex items-center gap-1.5 px-2">
                           {pCards.map((c, ci) => (
-                            <BroadcastCard key={ci} card={c} />
+                            <BroadcastCard key={ci} card={c} suitColors={suitColors} />
                           ))}
                         </div>
                       )}
@@ -588,13 +599,15 @@ export default function TVView() {
                             {playerEquity}
                           </span>
                         )}
-                        <span
-                          className={`font-extrabold text-xs uppercase tracking-wider ${
-                            isTurn ? 'text-black' : 'text-slate-300'
-                          }`}
-                        >
-                          {posLabel || '—'}
-                        </span>
+                        {(showPosition || posLabel === 'BTN' || posLabel === 'D' || posLabel === 'D/SB') && (
+                          <span
+                            className={`font-extrabold text-xs uppercase tracking-wider ${
+                              isTurn ? 'text-black' : 'text-slate-300'
+                            }`}
+                          >
+                            {posLabel || '—'}
+                          </span>
+                        )}
                       </div>
                     </div>
 

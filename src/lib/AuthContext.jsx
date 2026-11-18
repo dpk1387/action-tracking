@@ -1,6 +1,9 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { appParams } from '@/lib/app-params';
 import { db } from '@/api/base44Client';
+import { auth } from '@/lib/firebaseClient';
+import { onAuthStateChanged } from 'firebase/auth';
+import { syncRemoteCompletedSessions } from '@/lib/completedSessionsStore';
 
 const AuthContext = createContext(null);
 
@@ -15,6 +18,42 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     checkAppState();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
+      if (fbUser) {
+        const userObj = {
+          id: fbUser.uid,
+          email: fbUser.email,
+          full_name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Poker Player',
+          photoURL: fbUser.photoURL,
+          role: 'user',
+          emailVerified: fbUser.emailVerified,
+        };
+        setUser(userObj);
+        setIsAuthenticated(true);
+        localStorage.setItem('poker_auth_user', JSON.stringify(userObj));
+        syncRemoteCompletedSessions();
+      } else {
+        const u = localStorage.getItem('poker_auth_user');
+        if (u) {
+          try {
+            setUser(JSON.parse(u));
+            setIsAuthenticated(true);
+          } catch {
+            setUser(null);
+            setIsAuthenticated(false);
+          }
+        } else {
+          setUser(null);
+          setIsAuthenticated(false);
+        }
+      }
+      setIsLoadingAuth(false);
+      setAuthChecked(true);
+    });
+    return () => unsubscribe();
   }, []);
 
   const checkAppState = async () => {

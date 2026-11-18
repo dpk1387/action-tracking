@@ -17,6 +17,7 @@ import LateEntryDialog from '@/components/poker/LateEntryDialog';
 import ReentryDialog from '@/components/poker/ReentryDialog';
 import RebuyDialog from '@/components/poker/RebuyDialog';
 import ShareDialog from '@/components/poker/ShareDialog';
+import SettingsModal from '@/components/poker/SettingsModal';
 import StartScreen from '@/components/poker/StartScreen';
 import EndSessionDialog from '@/components/poker/EndSessionDialog';
 import BreakDialog from '@/components/poker/BreakDialog';
@@ -24,9 +25,11 @@ import GameOverScreen from '@/components/poker/GameOverScreen';
 import SetLevelDialog from '@/components/poker/SetLevelDialog';
 import BombPotDialog from '@/components/poker/BombPotDialog';
 import CompactModeView from '@/components/poker/CompactModeView';
+import GoModeView from '@/components/poker/GoModeView';
 import TemporaryGameModal from '@/components/poker/TemporaryGameModal';
 import { findPlanForHand } from '@/lib/tempGameScheduler';
-import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, Clock, UserPlus, Minimize2, Maximize2, Zap } from 'lucide-react';
+import { dealGoHoleCards, fillGoCommunityCards, runOutGoBoardIfFrozen, dealNextGoStreet, getDefaultStackRounding, getLowestDenomination } from '@/lib/goMode';
+import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, Clock, UserPlus, Minimize2, Maximize2, Zap, Settings } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { sessionStore } from '@/lib/sessionStore';
 import { useAuth } from '@/lib/AuthContext';
@@ -35,6 +38,8 @@ import {
   publishLive, getShareCode, setShareCode, ensureSaveCode, saveNow, loadSavedSession,
   discardSavedSession, getSaveStatus, subscribeSaveStatus,
 } from '@/lib/liveSync';
+import { saveCompletedSession } from '@/lib/completedSessionsStore';
+import { saveHandHistory, findHandHistoryByCode } from '@/lib/handHistoriesStore';
 import {
   startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots,
   positionForSeat, getButtonIndex, money, formatPotAmount, formatPotOutcome, formatSessionName, getMultipleBoardWinPercentages, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone, calcAnteForType,
@@ -73,6 +78,13 @@ export default function PokerTracker() {
       return 'chips';
     }
   });
+  const [showPosition, setShowPosition] = useState(true);
+  const [suitColors, setSuitColors] = useState(2);
+  const [actionDisplayMode, setActionDisplayMode] = useState('all');
+  const [isGoMode, setIsGoMode] = useState(() => config?.isGoMode || hand?.isGoMode || false);
+  const [stackRounding, setStackRounding] = useState(() => config?.stackRounding || hand?.stackRounding || getDefaultStackRounding(config?.smallBlind || hand?.smallBlind || 25));
+  const [goHoleCards, setGoHoleCards] = useState({});
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [discards, setDiscards] = useState({});
   const [actionError, setActionError] = useState('');
   const [showShare, setShowShare] = useState(false);
@@ -88,6 +100,7 @@ export default function PokerTracker() {
   const [showSetLevel, setShowSetLevel] = useState(false);
   const [bonusApplied, setBonusApplied] = useState(false);
   const [sevenTwoFoldWinner, setSevenTwoFoldWinner] = useState(null);
+  const [showSwitchModeConfirm, setShowSwitchModeConfirm] = useState(null);
 
   // Compact Mode state (auto-enabled on small screens, persists preference)
   const [isCompactMode, setIsCompactMode] = useState(() => {
@@ -110,6 +123,32 @@ export default function PokerTracker() {
     }
   }, [hand?.variant, hand?.bombPot, hand?.handNumber]);
 
+  useEffect(() => {
+    if (isGoMode && hand && hand.players && hand.players.length > 0) {
+      setGoHoleCards((prev) => {
+        const keys = Object.keys(prev || {});
+        if (keys.length === 0 || (hand?.street === 'preflop' && (!hand?.actionHistory || hand.actionHistory.length === 0))) {
+          return dealGoHoleCards(hand.players, effectiveHoleSize(hand), hand.communityCards);
+        }
+        return prev;
+      });
+    }
+  }, [isGoMode, hand?.handNumber, hand?.street]);
+
+  // Auto-adjust GO Mode stack approximation on level changes / color ups
+  useEffect(() => {
+    if (!hand || !isGoMode) return;
+    const lowest = getLowestDenomination(hand);
+    const def = getDefaultStackRounding(lowest);
+    setStackRounding((prev) => {
+      const curVal = prev === 'exact' ? 0 : Number(prev);
+      if (curVal < def) {
+        return def;
+      }
+      return prev;
+    });
+  }, [hand?.blindLevel, hand?.tLevel, hand?.smallBlind, hand?.chipDenominations, isGoMode]);
+
   // Action Clock System
   const [shotClockEnabled, setShotClockEnabled] = useState(true);
   const [calledClockActive, setCalledClockActive] = useState(false);
@@ -129,7 +168,7 @@ export default function PokerTracker() {
     if (cfg.postflopSplitStreet) {
       if (h.street === 'flop') return Number(cfg.flopSeconds) || 40;
       if (h.street === 'turn') return Number(cfg.turnSeconds) || 40;
-      if (h.street === 'river') return Number(cfg.riverSeconds) || 40;
+      if (h.street === 'river' || h.street === 'ocean') return Number(cfg.riverSeconds) || 40;
     }
     return Number(cfg.postflopSeconds) || 40;
   };
@@ -143,7 +182,7 @@ export default function PokerTracker() {
       setActionClockType(null);
       return;
     }
-    const sec = Number(hand.clockConfig?.callClockSeconds) || 60;
+    const sec = Number(hand.clockConfig?.callClockSeconds) || 30;
     setCalledClockActive(true);
     setActionClockSecondsLeft(sec);
     setActionClockTotal(sec);
@@ -314,7 +353,7 @@ export default function PokerTracker() {
   }, [hand]);
 
   useEffect(() => { if (hand) ensureSaveCode(); }, [hand]);
-  useEffect(() => { publishLive({ config, hand, gameOver, equity, hideAmounts, holeCards }); }, [config, hand, gameOver, equity, hideAmounts, holeCards, shareVersion]);
+  useEffect(() => { publishLive({ config, hand, gameOver, equity, hideAmounts, showPosition, suitColors, actionDisplayMode, displayUnit, holeCards, isGoMode, history: sessionStore.get().history }); }, [config, hand, gameOver, equity, hideAmounts, showPosition, suitColors, actionDisplayMode, displayUnit, holeCards, isGoMode, shareVersion]);
 
   useEffect(() => {
     if (!hand || !hand.players) return;
@@ -369,7 +408,7 @@ export default function PokerTracker() {
       communityCards: h.communityCards,
       actions: h.actionHistory,
       actionHistory: h.actionHistory,
-      holeCards: { ...holeCards },
+      holeCards: isGoMode ? { ...goHoleCards } : { ...holeCards },
       pots: h.pots,
       winners: h.winners,
       notes: h.sideNotes || [],
@@ -381,7 +420,9 @@ export default function PokerTracker() {
         name: p.name,
         seat: p.seat,
         initialStack: p.initialStack,
-        stack: p.stack,
+        endStack: p.stack,
+        stack: p.initialStack != null ? p.initialStack : p.stack,
+        totalBet: p.totalBet || 0,
         position: positionForSeat(h.players.length, bi, i, h.variant),
       })),
     });
@@ -519,8 +560,13 @@ export default function PokerTracker() {
       const exists = pool.some((p) => p.seat === chosenSeat);
       btn = exists ? chosenSeat : pool[0].seat;
     }
+    if (cfg.isGoMode !== undefined) setIsGoMode(cfg.isGoMode);
+    if (cfg.stackRounding !== undefined) setStackRounding(cfg.stackRounding);
     const newHand = initLevelTimer(startHand(cfg, btn, 1), cfg.levelConfig);
     setHand(newHand);
+    if (cfg.isGoMode) {
+      setGoHoleCards(dealGoHoleCards(newHand.players, effectiveHoleSize(newHand), newHand.communityCards));
+    }
     const initFrozen = {};
     cfg.players.forEach((p) => { initFrozen[p.seat] = p.stack; });
     setFrozenStacks(initFrozen);
@@ -536,28 +582,92 @@ export default function PokerTracker() {
     setFrozenStacks(snap);
   };
 
-  const handleAction = (type, amount) => {
+  const handleAction = (...args) => {
+    let type;
+    let amount;
+    let actingPlayerId = hand?.currentPlayer;
+
+    if (args.length >= 2 && typeof args[1] === 'string') {
+      // Called as onAction(playerId, type, amount)
+      actingPlayerId = args[0];
+      type = args[1];
+      amount = args[2];
+      if (typeof actingPlayerId === 'string' && hand?.players) {
+        const idx = hand.players.findIndex((p) => p.id === actingPlayerId);
+        if (idx >= 0) actingPlayerId = idx;
+      }
+    } else {
+      // Called as onAction(type, amount)
+      type = args[0];
+      amount = args[1];
+    }
+
     setCalledClockActive(false);
-    const next = applyAction(hand, hand.currentPlayer, type, amount);
+    let next = applyAction(hand, actingPlayerId, type, amount);
     if (next && next.error) { setActionError(next.error); return; }
+    if (isGoMode && next) {
+      const nf = next.players.filter((p) => p.status !== 'folded');
+      if (nf.length === 1) {
+        next.phase = 'ended';
+      } else if (bettingFrozen(next)) {
+        // All-in situation with 2+ players: do NOT auto-run all cards.
+        // Keep cards as they are, let user manually press Deal Flop / Deal Turn / Deal River!
+        next.currentPlayer = -1;
+      } else {
+        next = fillGoCommunityCards(next, goHoleCards);
+      }
+    }
     setActionError('');
     pushHistory(hand);
+    const activeHoleCards = isGoMode ? goHoleCards : holeCards;
     if (next.phase === 'ended') {
       const nf = next.players.filter((p) => p.status !== 'folded');
       if (nf.length === 1) {
         const pots = computePots(next.players, bbaPotOpts(next));
         const winners = {};
         pots.forEach((pot, i) => { winners[i] = nf[0].id; });
-        const awarded = awardPots(next, winners, { holeCards });
+        const awarded = awardPots(next, winners, { holeCards: activeHoleCards });
         updateFrozenStacks(awarded);
         setHand(awarded);
         advanceAfterAward(awarded);
       } else {
-        setHand(next);
+        const w = tryAutoWinners(next, activeHoleCards);
+        if (w) {
+          const awarded = awardPots(next, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, holeCards: activeHoleCards });
+          updateFrozenStacks(awarded);
+          setHand(awarded);
+          advanceAfterAward(awarded);
+        } else {
+          updateFrozenStacks(next);
+          setHand(next);
+          if (!isGoMode) {
+            setShowEnd(true);
+          }
+        }
       }
     } else {
       setHand(next);
     }
+  };
+
+  const handleDealNextGoStreet = () => {
+    if (!hand || !isGoMode) return;
+    const next = dealNextGoStreet(hand, goHoleCards);
+    const activeHoleCards = goHoleCards;
+    const targetLen = (next.variant === 'three_two_one' || next.variant === 'ocean') ? 6 : 5;
+    const finalStreet = next.variant === 'ocean' ? 'ocean' : 'river';
+    if (next.communityCards.length >= targetLen || next.street === finalStreet) {
+      const w = tryAutoWinners(next, activeHoleCards);
+      if (w) {
+        const awarded = awardPots(next, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, holeCards: activeHoleCards });
+        updateFrozenStacks(awarded);
+        recordHand(awarded);
+        setHand(awarded);
+        advanceAfterAward(awarded);
+        return;
+      }
+    }
+    setHand(next);
   };
 
   const handleRecordOutOfTurn = (playerId, kind, amount) => {
@@ -612,15 +722,24 @@ export default function PokerTracker() {
       if (!prev) return prev;
       pushHistory(prev);
       const h = clone(prev);
+      const targetLen = (h.variant === 'three_two_one' || h.variant === 'ocean') ? 6 : 5;
+
       if (boardIndex === 1) {
         const existing = (h.communityCards || []).filter((c) => !c.hidden);
         h.communityCards = [...existing, ...cards];
-        if (h.communityCards.length >= 5) {
-          h.street = 'river';
-        } else if (h.communityCards.length >= 4) {
-          h.street = 'turn';
-        } else if (h.communityCards.length >= 3) {
-          h.street = 'flop';
+        if (h.variant === 'three_two_one') {
+          if (h.communityCards.length >= 6) h.street = 'river';
+          else if (h.communityCards.length >= 5) h.street = 'turn';
+          else if (h.communityCards.length >= 3) h.street = 'flop';
+        } else if (h.variant === 'ocean') {
+          if (h.communityCards.length >= 6) h.street = 'ocean';
+          else if (h.communityCards.length >= 5) h.street = 'river';
+          else if (h.communityCards.length >= 4) h.street = 'turn';
+          else if (h.communityCards.length >= 3) h.street = 'flop';
+        } else {
+          if (h.communityCards.length >= 5) h.street = 'river';
+          else if (h.communityCards.length >= 4) h.street = 'turn';
+          else if (h.communityCards.length >= 3) h.street = 'flop';
         }
       } else if (boardIndex === 2) {
         const existing = (h.boardB || []).filter((c) => !c.hidden);
@@ -631,15 +750,24 @@ export default function PokerTracker() {
       }
 
       const aLen = (h.communityCards || []).filter((c) => !c.hidden).length;
-      const bLen = (h.boardB || []).filter((c) => !c.hidden).length;
+      const isMultiRun = Number(h.runTimes) >= 2 || h.doubleBoard;
+      const bLen = isMultiRun ? (h.boardB || []).filter((c) => !c.hidden).length : targetLen;
       const is3x = (Number(h.runTimes) >= 3) || (Number(h.bombBoards) >= 3);
-      const cLen = is3x ? (h.boardC || []).filter((c) => !c.hidden).length : 5;
+      const cLen = is3x ? (h.boardC || []).filter((c) => !c.hidden).length : targetLen;
 
-      if (aLen >= 5 && bLen >= 5 && cLen >= 5) {
+      const lastCard = h.communityCards && h.communityCards.length ? h.communityCards[h.communityCards.length - 1] : null;
+      const isRedContinuation = h.variant === 'red_river' && aLen >= 5 && lastCard && !lastCard.hidden && (lastCard.suit === 'd' || lastCard.suit === 'h' || lastCard.suit === '♦' || lastCard.suit === '♥');
+
+      if (aLen >= targetLen && bLen >= targetLen && cLen >= targetLen && !isRedContinuation) {
         h.phase = 'ended';
         h.currentPlayer = -1;
-        h.street = 'river';
+        h.street = h.variant === 'ocean' ? 'ocean' : 'river';
         h.message = 'Hand complete – award the pots to finish.';
+      } else if (isRedContinuation) {
+        h.phase = 'playing';
+        h.currentPlayer = -1;
+        h.street = 'river';
+        h.message = 'Red River card is RED! Deal next river card.';
       } else {
         h.message = `Board ${boardIndex} updated.`;
       }
@@ -654,11 +782,24 @@ export default function PokerTracker() {
       if (!prev) return prev;
       pushHistory(prev);
       const h = clone(prev);
+      const targetLen = (h.variant === 'three_two_one' || h.variant === 'ocean') ? 6 : 5;
+
       if (boardIndex === 1) {
         h.communityCards = cards;
-        if (cards.length >= 5) h.street = 'river';
-        else if (cards.length >= 4) h.street = 'turn';
-        else if (cards.length >= 3) h.street = 'flop';
+        if (h.variant === 'three_two_one') {
+          if (cards.length >= 6) h.street = 'river';
+          else if (cards.length >= 5) h.street = 'turn';
+          else if (cards.length >= 3) h.street = 'flop';
+        } else if (h.variant === 'ocean') {
+          if (cards.length >= 6) h.street = 'ocean';
+          else if (cards.length >= 5) h.street = 'river';
+          else if (cards.length >= 4) h.street = 'turn';
+          else if (cards.length >= 3) h.street = 'flop';
+        } else {
+          if (cards.length >= 5) h.street = 'river';
+          else if (cards.length >= 4) h.street = 'turn';
+          else if (cards.length >= 3) h.street = 'flop';
+        }
       } else if (boardIndex === 2) {
         h.boardB = cards;
       } else if (boardIndex === 3) {
@@ -667,16 +808,24 @@ export default function PokerTracker() {
 
       const aLen = (h.communityCards || []).filter((c) => !c.hidden).length;
       const bLen = (h.boardB || []).filter((c) => !c.hidden).length;
-      const isMultiRun = Number(h.runTimes) >= 2;
+      const isMultiRun = Number(h.runTimes) >= 2 || h.doubleBoard;
       const is3x = (Number(h.runTimes) >= 3) || (Number(h.bombBoards) >= 3);
-      const cLen = is3x ? (h.boardC || []).filter((c) => !c.hidden).length : 5;
+      const cLen = is3x ? (h.boardC || []).filter((c) => !c.hidden).length : targetLen;
 
-      const allComplete = is3x ? (aLen >= 5 && bLen >= 5 && cLen >= 5) : isMultiRun ? (aLen >= 5 && bLen >= 5) : (aLen >= 5);
-      if (allComplete) {
+      const lastCard = h.communityCards && h.communityCards.length ? h.communityCards[h.communityCards.length - 1] : null;
+      const isRedContinuation = h.variant === 'red_river' && aLen >= 5 && lastCard && !lastCard.hidden && (lastCard.suit === 'd' || lastCard.suit === 'h' || lastCard.suit === '♦' || lastCard.suit === '♥');
+
+      const allComplete = is3x ? (aLen >= targetLen && bLen >= targetLen && cLen >= targetLen) : isMultiRun ? (aLen >= targetLen && bLen >= targetLen) : (aLen >= targetLen);
+      if (allComplete && !isRedContinuation) {
         h.phase = 'ended';
         h.currentPlayer = -1;
-        h.street = 'river';
+        h.street = h.variant === 'ocean' ? 'ocean' : 'river';
         h.message = 'Hand complete – award the pots to finish.';
+      } else if (isRedContinuation) {
+        h.phase = 'playing';
+        h.currentPlayer = -1;
+        h.street = 'river';
+        h.message = 'Red River card is RED! Deal next river card.';
       }
 
       return h;
@@ -963,8 +1112,32 @@ export default function PokerTracker() {
     const res = advanceToNextHand(currentHand);
     setHistory([]);
     if (res.gameOver) {
-      setGameOver(res.remaining[0]);
+      const winner = res.remaining[0];
+      setGameOver(winner);
       setHand(null);
+      const hands = sessionStore.get().history || [];
+      if (hands.length > 0 || currentHand) {
+        const compSession = {
+          id: 'completed_' + Date.now(),
+          shareCode: getShareCode() || ('code_' + Date.now()),
+          sessionName: formatSessionName(currentHand || { handNumber: hands.length || 1, variant: config?.variant }),
+          mode: (currentHand?.mode || config?.mode || 'tournament') === 'tournament' ? 'tournament' : 'cash',
+          variant: currentHand?.variant || config?.variant || 'nlh',
+          handCount: hands.length,
+          currency: currentHand?.currency || config?.currency || '$',
+          smallBlind: currentHand?.smallBlind || config?.smallBlind || 25,
+          bigBlind: currentHand?.bigBlind || config?.bigBlind || 50,
+          playerNames: (currentHand?.players || config?.players || []).map((p) => p.name || `Player ${p.seat}`),
+          winnerName: winner?.name,
+          hands: hands,
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          isCompleted: true,
+        };
+        saveCompletedSession(compSession);
+        saveHandHistory(compSession);
+        discardSavedSession().catch(() => {});
+      }
     } else {
       const snap = {};
       res.hand.players.forEach((p) => {
@@ -1127,6 +1300,15 @@ export default function PokerTracker() {
       if (cards) next[pid] = cards; else delete next[pid];
       return next;
     });
+
+    if (hand && hand.variant === 'deuces_wild' && cards && cards.filter((c) => c && c.rank === '2').length >= 2) {
+      const p = hand.players.find((item) => item.id === pid);
+      const name = p ? p.name : `Player ${pid}`;
+      alert(`${name} was dealt 22 in Deuces Wild! Hole cards must be shown immediately, hand is redealt, and ${name} wins the blinds and antes.`);
+      const awarded = awardPots(hand, { 0: pid }, { holeCards: { [pid]: cards } });
+      setHand(awarded);
+      setTimeout(() => proceedToNextHand(), 600);
+    }
   };
 
   const handlePickDiscard = (pid, idx) => setDiscards((prev) => ({ ...prev, [pid]: idx }));
@@ -1145,78 +1327,126 @@ export default function PokerTracker() {
     setDiscards({});
   };
 
+  const handleSelectRedRiverColor = (color) => {
+    if (!hand) return;
+    pushHistory(hand);
+    setHand((prev) => {
+      if (!prev) return prev;
+      const h = clone(prev);
+      const isRed = color === 'red';
+      const realCards = (h.communityCards || []).filter((c) => !c.hidden);
+      const cCount = realCards.length + 1;
+      const suit = isRed ? 'h' : 's';
+      const rank = isRed ? 'R' : 'B';
+      const newCard = { rank, suit, hidden: false, isColorTag: true };
+
+      h.communityCards = [...realCards, newCard];
+      h.redRiverPendingChoice = false;
+
+      if (isRed) {
+        h.phase = 'playing';
+        h.street = 'river';
+        h.players.forEach((p) => {
+          if (p.status === 'active' && p.stack > 0) {
+            p.currentBet = 0;
+            p.hasActed = false;
+            p.lastAction = null;
+          }
+        });
+        h.currentBet = 0;
+        h.lastRaiseAmount = h.bigBlind;
+        h.raiseLevel = 0;
+        h.currentPlayer = firstActiveAfter(h.players, getButtonIndex(h));
+        h.message = `River card #${cCount} was RED! Next round of betting.`;
+      } else {
+        h.phase = 'ended';
+        h.street = 'river';
+        h.currentPlayer = -1;
+        h.message = `River card #${cCount} was BLACK! Showdown reached – award the pots to finish.`;
+      }
+      return h;
+    });
+  };
+
   useEffect(() => {
     if (!hand || hand.phase === 'awarded') { setEquity(null); return; }
+    if (!bettingFrozen(hand) && !isAllInShowdown(hand)) { setEquity(null); return; }
     const nf = hand.players.filter((p) => p.status !== 'folded');
-    if (nf.length < 2 || !nf.some((p) => p.status === 'allin')) { setEquity(null); return; }
-    if (hand.currentPlayer !== -1) { setEquity(null); return; }
+    if (nf.length < 2) { setEquity(null); return; }
+    const knownCount = nf.filter((p) => holeCards[p.id] && holeCardsComplete(hand, holeCards[p.id])).length;
+    if (knownCount < 2) { setEquity(null); return; }
+
     const variant = hand.variant || 'nlh';
     const meta = variantMeta(variant);
-    const holes = nf.map((p) => holeCards[p.id]);
-    if (holes.some((h) => !h || !holeCardsComplete(hand, h))) { setEquity(null); return; }
-    const drawSize = holes[0].length;
+    const drawSize = effectiveHoleSize(hand);
+    const holes = nf.map((p) => (holeCards[p.id] && holeCardsComplete(hand, holeCards[p.id])) ? holeCards[p.id] : null);
+
     const t = setTimeout(() => {
-      const iters = meta.group === 'omaha' ? (meta.holeSize <= 4 ? 5000 : 3000) : 20000;
-      const byId = {};
-      let splitPct = 0;
-      const isMultiRun = Number(hand.runTimes) >= 2;
-      const isTripleRun = Number(hand.runTimes) >= 3;
-      const isTripleBomb = (Number(hand.bombBoards) >= 3) || (hand.boardC && hand.boardC.length > 0);
+      try {
+        const iters = meta.group === 'omaha' ? (meta.holeSize <= 4 ? 5000 : 3000) : 20000;
+        const byId = {};
+        let splitPct = 0;
+        const isMultiRun = Number(hand.runTimes) >= 2;
+        const isTripleRun = Number(hand.runTimes) >= 3;
+        const isTripleBomb = (Number(hand.bombBoards) >= 3) || (hand.boardC && hand.boardC.length > 0);
 
-      if (isMultiRun) {
-        // Multi-run (Run it 2x / 3x): Live equity is for the CURRENT BOARD ONLY!
-        const cardsA = (hand.communityCards || []).filter((c) => c && !c.hidden);
-        const cardsB = (hand.boardB || []).filter((c) => c && !c.hidden);
-        const cardsC = (hand.boardC || []).filter((c) => c && !c.hidden);
+        if (isMultiRun) {
+          // Multi-run (Run it 2x / 3x): Live equity is for the CURRENT BOARD ONLY!
+          const cardsA = (hand.communityCards || []).filter((c) => c && !c.hidden);
+          const cardsB = (hand.boardB || []).filter((c) => c && !c.hidden);
+          const cardsC = (hand.boardC || []).filter((c) => c && !c.hidden);
 
-        let activeBoard = cardsA;
-        let deadCards = [];
-        let currentBoardIndex = 1;
+          let activeBoard = cardsA;
+          let deadCards = [];
+          let currentBoardIndex = 1;
 
-        if (cardsA.length < 5) {
-          activeBoard = cardsA;
-          deadCards = [];
-          currentBoardIndex = 1;
-        } else if (cardsB.length < 5) {
-          activeBoard = cardsB;
-          deadCards = cardsA;
-          currentBoardIndex = 2;
-        } else if (isTripleRun && cardsC.length < 5) {
-          activeBoard = cardsC;
-          deadCards = [...cardsA, ...cardsB];
-          currentBoardIndex = 3;
-        } else {
-          // All boards complete: Show final board win percentages at the end!
-          const boardWinPcts = getMultipleBoardWinPercentages(hand, holeCards);
-          if (boardWinPcts) {
-            setEquity({ byId: boardWinPcts, split: 0, currentBoardIndex: 'final', isFinal: true });
-            return;
+          if (cardsA.length < 5) {
+            activeBoard = cardsA;
+            deadCards = [];
+            currentBoardIndex = 1;
+          } else if (cardsB.length < 5) {
+            activeBoard = cardsB;
+            deadCards = cardsA;
+            currentBoardIndex = 2;
+          } else if (isTripleRun && cardsC.length < 5) {
+            activeBoard = cardsC;
+            deadCards = [...cardsA, ...cardsB];
+            currentBoardIndex = 3;
+          } else {
+            // All boards complete: Show final board win percentages at the end!
+            const boardWinPcts = getMultipleBoardWinPercentages(hand, holeCards);
+            if (boardWinPcts) {
+              setEquity({ byId: boardWinPcts, split: 0, currentBoardIndex: 'final', isFinal: true });
+              return;
+            }
+            activeBoard = isTripleRun ? cardsC : cardsB;
           }
-          activeBoard = isTripleRun ? cardsC : cardsB;
-        }
 
-        const res = calcEquity(holes, activeBoard, iters, variant, drawSize, deadCards);
-        nf.forEach((p, i) => { byId[p.id] = res.results[i].win; });
-        splitPct = res.split;
-        setEquity({ byId, split: splitPct, currentBoardIndex, isFinal: false });
-      } else if (isTripleBomb) {
-        const resA = calcEquity(holes, hand.communityCards, iters, variant, drawSize);
-        const resB = calcEquity(holes, hand.boardB || [], iters, variant, drawSize);
-        const resC = calcEquity(holes, hand.boardC || [], iters, variant, drawSize);
-        nf.forEach((p, i) => { byId[p.id] = (resA.results[i].win + resB.results[i].win + resC.results[i].win) / 3; });
-        splitPct = (resA.split + resB.split + resC.split) / 3;
-        setEquity({ byId, split: splitPct });
-      } else if (hand.doubleBoard) {
-        const resA = calcEquity(holes, hand.communityCards, iters, variant, drawSize);
-        const resB = calcEquity(holes, hand.boardB || [], iters, variant, drawSize);
-        nf.forEach((p, i) => { byId[p.id] = (resA.results[i].win + resB.results[i].win) / 2; });
-        splitPct = (resA.split + resB.split) / 2;
-        setEquity({ byId, split: splitPct });
-      } else {
-        const res = calcEquity(holes, hand.communityCards, iters, variant, drawSize);
-        nf.forEach((p, i) => { byId[p.id] = res.results[i].win; });
-        splitPct = res.split;
-        setEquity({ byId, split: splitPct });
+          const res = calcEquity(holes, activeBoard, iters, variant, drawSize, deadCards);
+          nf.forEach((p, i) => { byId[p.id] = res.results[i].win; });
+          splitPct = res.split;
+          setEquity({ byId, split: splitPct, currentBoardIndex, isFinal: false });
+        } else if (isTripleBomb) {
+          const resA = calcEquity(holes, hand.communityCards, iters, variant, drawSize);
+          const resB = calcEquity(holes, hand.boardB || [], iters, variant, drawSize);
+          const resC = calcEquity(holes, hand.boardC || [], iters, variant, drawSize);
+          nf.forEach((p, i) => { byId[p.id] = (resA.results[i].win + resB.results[i].win + resC.results[i].win) / 3; });
+          splitPct = (resA.split + resB.split + resC.split) / 3;
+          setEquity({ byId, split: splitPct });
+        } else if (hand.doubleBoard) {
+          const resA = calcEquity(holes, hand.communityCards, iters, variant, drawSize);
+          const resB = calcEquity(holes, hand.boardB || [], iters, variant, drawSize);
+          nf.forEach((p, i) => { byId[p.id] = (resA.results[i].win + resB.results[i].win) / 2; });
+          splitPct = (resA.split + resB.split) / 2;
+          setEquity({ byId, split: splitPct });
+        } else {
+          const res = calcEquity(holes, hand.communityCards, iters, variant, drawSize);
+          nf.forEach((p, i) => { byId[p.id] = res.results[i].win; });
+          splitPct = res.split;
+          setEquity({ byId, split: splitPct });
+        }
+      } catch (err) {
+        console.error('Equity calc error:', err);
       }
     }, 20);
     return () => clearTimeout(t);
@@ -1526,7 +1756,8 @@ export default function PokerTracker() {
     setHand((prev) => {
       let finalSeat = seat ? Number(seat) : null;
       if (!finalSeat && leftOfPlayerId != null) {
-        const targetIdx = prev.players.findIndex((p) => p.id === leftOfPlayerId || p.seat === leftOfPlayerId);
+        let targetIdx = prev.players.findIndex((p) => p.id === leftOfPlayerId);
+        if (targetIdx < 0) targetIdx = prev.players.findIndex((p) => p.seat === leftOfPlayerId);
         if (targetIdx >= 0) {
           finalSeat = prev.players[targetIdx].seat + 0.5;
         }
@@ -1567,16 +1798,27 @@ export default function PokerTracker() {
     if (!saved.hand) return;
     const cfg = saved.config || null;
     setConfig(cfg);
+    const restoredIsGo = saved.isGoMode ?? saved.config?.isGoMode ?? saved.hand?.isGoMode ?? false;
+    setIsGoMode(restoredIsGo);
     const restoredHand = saved.hand.levelConfig ? saved.hand : { ...saved.hand, levelConfig: cfg?.levelConfig || undefined, levelStartEpoch: saved.hand.levelStartEpoch || Date.now(), levelHandsCompleted: saved.hand.levelHandsCompleted || 0, levelCount: saved.hand.levelCount || Math.max(1, (saved.hand.players || []).length) };
     setHand(restoredHand);
     setGameOver(saved.gameOver || null);
     setHoleCards(saved.holeCards || {});
-    setDiscards({});
-    setHistory([]);
+    let savedHistory = saved.history || [];
+    if (savedHistory.length === 0) {
+      const existingHH = findHandHistoryByCode(saved.shareCode || saved.id || getShareCode());
+      if (existingHH?.hands?.length > 0) {
+        savedHistory = existingHH.hands;
+      }
+    }
+    savedHistory.forEach((h) => {
+      if (h.handNumber) recordedHandNumbers.current.add(h.handNumber);
+    });
+    setHistory(savedHistory);
     const resumeFrozen = {};
     (restoredHand.players || []).forEach((p) => { resumeFrozen[p.seat] = p.stack; });
     setFrozenStacks(resumeFrozen);
-    sessionStore.set({ config: cfg, hand: saved.hand, gameOver: saved.gameOver || null });
+    sessionStore.set({ config: cfg, hand: saved.hand, gameOver: saved.gameOver || null, history: savedHistory });
     setSavedSession(null);
   };
 
@@ -1594,23 +1836,49 @@ export default function PokerTracker() {
       }
       const cfg = res.saved.config || null;
       setConfig(cfg);
+      const restoredIsGo = res.saved.isGoMode ?? res.saved.config?.isGoMode ?? res.saved.hand?.isGoMode ?? false;
+      setIsGoMode(restoredIsGo);
       const restoredHand = res.saved.hand?.levelConfig ? res.saved.hand : { ...res.saved.hand, levelConfig: cfg?.levelConfig || undefined, levelStartEpoch: res.saved.hand?.levelStartEpoch || Date.now(), levelHandsCompleted: res.saved.hand?.levelHandsCompleted || 0, levelCount: res.saved.hand?.levelCount || Math.max(1, (res.saved.hand?.players || []).length) };
       setHand(restoredHand);
       setGameOver(res.saved.gameOver || null);
       setHoleCards(res.saved.holeCards || {});
-      setDiscards({});
-      setHistory([]);
+      let savedHistory = res.saved?.history || [];
+      if (savedHistory.length === 0) {
+        const existingHH = findHandHistoryByCode(target);
+        if (existingHH?.hands?.length > 0) {
+          savedHistory = existingHH.hands;
+        }
+      }
+      savedHistory.forEach((h) => {
+        if (h.handNumber) recordedHandNumbers.current.add(h.handNumber);
+      });
+      setHistory(savedHistory);
       const resumeFrozen = {};
       (restoredHand.players || []).forEach((p) => { resumeFrozen[p.seat] = p.stack; });
       setFrozenStacks(resumeFrozen);
-      sessionStore.set({ config: cfg, hand: restoredHand, gameOver: res.saved.gameOver || null });
+      sessionStore.set({ config: cfg, hand: restoredHand, gameOver: res.saved.gameOver || null, history: savedHistory });
       setSavedSession(null);
       setResumeChecked(true);
     } catch { /* ignored */ }
   };
 
   const handleSaveSession = () => {
-    saveNow({ config, hand, gameOver, equity, hideAmounts, holeCards });
+    const hist = sessionStore.get().history || [];
+    if (hist.length > 0) {
+      saveHandHistory({
+        sessionId: getShareCode() || hand?.id || 'session_' + Date.now(),
+        shareCode: getShareCode(),
+        sessionName: formatSessionName(hand || { variant: config?.variant }),
+        mode: hand?.mode || config?.mode || 'cash',
+        variant: hand?.variant || config?.variant || 'nlh',
+        currency: hand?.currency || config?.currency || '$',
+        smallBlind: hand?.smallBlind || config?.smallBlind || 25,
+        bigBlind: hand?.bigBlind || config?.bigBlind || 50,
+        playerNames: (hand?.players || config?.players || []).map((p) => p.name || `Player ${p.seat}`),
+        hands: hist,
+      });
+    }
+    saveNow({ config, hand, gameOver, equity, hideAmounts, holeCards, isGoMode, history: hist });
   };
 
   const handleDismissSavedGuest = async () => {
@@ -1636,13 +1904,13 @@ export default function PokerTracker() {
     handleNewSession();
   };
 
-  const handleNewSession = () => {
+  const handleNewSession = (overrides) => {
     setSavedSession(null);
     setSavedUpdatedAt(null);
     setResumeChecked(true);
     recordedHandNumbers.current.clear();
     sessionStore.reset();
-    setConfig(null);
+    setConfig(overrides ? { ...overrides } : null);
     setHand(null);
     setHistory([]);
     setGameOver(null);
@@ -1654,10 +1922,57 @@ export default function PokerTracker() {
     setFreezeStacks(true);
   };
 
+  const isSessionComplete = () => {
+    if (!hand && !config) return false;
+    const mode = hand?.mode || config?.mode || 'tournament';
+    const players = hand?.players || config?.players || [];
+    const activeWithChips = players.filter((p) => p.status !== 'eliminated' && p.status !== 'out' && p.stack > 0);
+    return !!gameOver || activeWithChips.length <= 1;
+  };
+
   const handleEndSessionSave = async () => {
     setEndingSession(true);
     try {
-      await saveNow({ config, hand, gameOver, equity, hideAmounts, holeCards });
+      const hands = sessionStore.get().history || [];
+      const complete = isSessionComplete();
+
+      if (complete && (hands.length > 0 || hand)) {
+        const compSession = {
+          id: 'completed_' + Date.now(),
+          shareCode: getShareCode() || ('code_' + Date.now()),
+          sessionName: formatSessionName(hand || { handNumber: hands.length || 1, variant: config?.variant }),
+          mode: (hand?.mode || config?.mode || 'tournament') === 'tournament' ? 'tournament' : 'cash',
+          variant: hand?.variant || config?.variant || 'nlh',
+          handCount: hands.length,
+          currency: hand?.currency || config?.currency || '$',
+          smallBlind: hand?.smallBlind || config?.smallBlind || 25,
+          bigBlind: hand?.bigBlind || config?.bigBlind || 50,
+          playerNames: (hand?.players || config?.players || []).map((p) => p.name || `Player ${p.seat}`),
+          hands: hands,
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          isCompleted: true,
+        };
+        saveCompletedSession(compSession);
+        saveHandHistory(compSession);
+        await discardSavedSession();
+      } else {
+        if (hands.length > 0) {
+          saveHandHistory({
+            sessionId: getShareCode() || hand?.id || 'session_' + Date.now(),
+            shareCode: getShareCode(),
+            sessionName: formatSessionName(hand || { handNumber: hands.length || 1, variant: config?.variant }),
+            mode: (hand?.mode || config?.mode || 'tournament') === 'tournament' ? 'tournament' : 'cash',
+            variant: hand?.variant || config?.variant || 'nlh',
+            currency: hand?.currency || config?.currency || '$',
+            smallBlind: hand?.smallBlind || config?.smallBlind || 25,
+            bigBlind: hand?.bigBlind || config?.bigBlind || 50,
+            playerNames: (hand?.players || config?.players || []).map((p) => p.name || `Player ${p.seat}`),
+            hands: hands,
+          });
+        }
+        await saveNow({ config, hand, gameOver, equity, hideAmounts, holeCards, isGoMode, history: sessionStore.get().history });
+      }
     } finally { setEndingSession(false); }
     setShowEndSession(false);
     resetToStart();
@@ -1687,6 +2002,7 @@ export default function PokerTracker() {
     setShowSetup(false);
     setFrozenStacks({});
     setFreezeStacks(true);
+    navigate('/');
   };
 
   const variant = hand?.variant || 'nlh';
@@ -1709,14 +2025,20 @@ export default function PokerTracker() {
   const activeWithChips = nonFolded.filter((p) => p.status !== 'allin' && p.stack > 0).length;
   const frozen = hand ? bettingFrozen(hand) : false;
   const isAllInAllPlayers = nonFolded.length >= 2 && frozen;
-  const isRiverEnd = hand?.street === 'river' && (hand.currentPlayer === -1 || frozen);
-  const showHoleEntry = hand && hand.phase !== 'awarded' && nonFolded.length >= 2 && (
-    hand.phase === 'ended' ||
-    (hand.currentPlayer === -1 && (isAllInAllPlayers || isRiverEnd)) ||
-    (frozen && isAllInAllPlayers)
+  const isRedRiverPending = hand?.variant === 'red_river' && hand?.phase !== 'ended';
+  const isFinalStreet = hand?.variant === 'ocean' ? hand?.street === 'ocean' : hand?.street === 'river';
+  const isRiverEnd = isFinalStreet && (hand.currentPlayer === -1 || frozen) && !isRedRiverPending;
+  const isShowtime = hand?.variant === 'showtime';
+  const showHoleEntry = hand && hand.phase !== 'awarded' && (
+    isShowtime ||
+    (nonFolded.length >= 2 && (
+      hand.phase === 'ended' ||
+      (hand.currentPlayer === -1 && (isAllInAllPlayers || isRiverEnd)) ||
+      (frozen && isAllInAllPlayers)
+    ))
   );
   const showDiscardStep = hand && hand.variant === 'crazy_pineapple' && hand.cpNeedsDiscard && !hand.cpDiscarded && hand.currentPlayer === -1 && hand.phase !== 'awarded' && hand.communityCards.length >= 3 && nonFolded.length >= 2 && nonFolded.every((p) => holeCards[p.id] && holeCards[p.id].length === 3);
-  const isCash = hand?.mode === 'cash';
+  const isCash = hand?.mode === 'cash' || config?.mode === 'cash' || gameOver?.mode === 'cash' || (sessionStore.get()?.config?.mode === 'cash');
   const lowGame = variantMeta(variant).group === 'low';
 
   const { highlightKeys, winningPlayerIds } = useMemo(() => {
@@ -1778,7 +2100,7 @@ export default function PokerTracker() {
   })();
 
   if (gameOver) {
-    return <GameOverScreen gameOver={gameOver} isCash={isCash} onNewSession={handleNewSession} />;
+    return <GameOverScreen gameOver={gameOver} isCash={isCash} onNewSession={resetToStart} />;
   }
 
   if (!hand) {
@@ -1805,7 +2127,28 @@ export default function PokerTracker() {
 
   return (
     <div className="min-h-screen bg-[#121417] text-white">
-      {isCompactMode ? (
+      {isGoMode ? (
+        <GoModeView
+          hand={hand}
+          onAction={handleAction}
+          onUndo={handleUndo}
+          canUndo={history.length > 0}
+          goHoleCards={goHoleCards}
+          stackRounding={stackRounding}
+          suitColors={suitColors}
+          displayUnit={displayUnit}
+          onNextHand={proceedToNextHand}
+          onEndHand={handleEndHand}
+          onDeal={handleDeal}
+          onDealBoard={handleDealBoard}
+          onFillBoard={handleFillBoard}
+          onDealNextStreet={handleDealNextGoStreet}
+          onOpenSettings={() => setShowSettingsModal(true)}
+          onEndSession={() => setShowEndSession(true)}
+          showPosition={showPosition}
+          onToggleGoMode={() => setShowSwitchModeConfirm('action')}
+        />
+      ) : isCompactMode ? (
         <div className="max-w-2xl mx-auto p-2 sm:p-4">
           <CompactModeView
             hand={hand}
@@ -1814,6 +2157,9 @@ export default function PokerTracker() {
             canUndo={history.length > 0}
             onExitCompact={() => setIsCompactMode(false)}
             hideAmounts={hideAmounts}
+            showPosition={showPosition}
+            suitColors={suitColors}
+            actionDisplayMode={actionDisplayMode}
             onToggleHideAmounts={() => setHideAmounts((v) => !v)}
             onDeal={handleDeal}
             onDealBoard={handleDealBoard}
@@ -1834,7 +2180,7 @@ export default function PokerTracker() {
           />
         </div>
       ) : (
-        <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
+        <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-4">
           {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -1847,22 +2193,33 @@ export default function PokerTracker() {
             )}
             {levelTimerState(hand, now).active && (() => {
               const st = levelTimerState(hand, now);
-              const label = formatTimerLabel(st);
+              const lvlNum = scheduledLevelNumber(hand);
+              const blindsStr = formatBlinds(hand);
               return (
-                <span className={`text-xs font-semibold px-2 py-1 rounded-lg border ${
+                <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg border flex items-center gap-2 ${
                   st.expired
                     ? 'bg-[#3a2020] border-[#c94c4c] text-rose-300'
                     : st.method === 'minutes' && (st.remainingMs || 0) <= 60000
                     ? 'bg-[#3a3320] border-[#8a7a3a] text-amber-300'
                     : 'bg-[#1e2a1e] border-[#4a5a4a] text-emerald-300'
                 }`}>
-                  {st.expired ? 'Level time' : 'Next level'}
-                  <span className="ml-1.5 font-mono text-sm">{formatTimer(st)} {label}</span>
+                  <span className="font-mono text-sm font-black">{formatTimer(st)}</span>
+                  <span className="text-slate-400">•</span>
+                  <span>{st.phase === 'break' || hand.inBreak ? 'Break' : `Level ${lvlNum}`}</span>
+                  <span className="text-slate-400">•</span>
+                  <span className="font-mono text-emerald-300 font-bold">{blindsStr}</span>
                 </span>
               );
             })()}
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setShowSwitchModeConfirm('go')}
+              className="rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95 border border-emerald-500/50"
+              title="Switch to GO Mode (fast live action with automatic card dealing & pot tracking)"
+            >
+              <Zap size={16} /> GO Mode
+            </button>
             <button
               onClick={() => setIsCompactMode(true)}
               className="rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95"
@@ -1873,15 +2230,12 @@ export default function PokerTracker() {
             <button onClick={handleUndo} disabled={!history.length} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer">
               <Undo2 size={16} /> Undo
             </button>
-            <button onClick={() => setHideAmounts((v) => !v)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 flex items-center gap-1 cursor-pointer">
-              {hideAmounts ? <EyeOff size={16} /> : <Eye size={16} />} {hideAmounts ? 'Show' : 'Hide'} amounts
+            <button onClick={() => setShowSettingsModal(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer font-semibold text-amber-300 border border-amber-500/40">
+              <Settings size={16} /> Settings
             </button>
             <a href="/tv" target="_blank" rel="noopener noreferrer" className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2">TV view ↗</a>
             <button onClick={() => setShowShare(true)} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2 flex items-center gap-1 cursor-pointer">
               <Share2 size={16} /> Share
-            </button>
-            <button onClick={handleSaveSession} disabled={saveStatus.saving} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2 flex items-center gap-1 disabled:opacity-60 cursor-pointer">
-              <Save size={16} /> {saveStatus.saving ? 'Saving…' : 'Save session'}
             </button>
             <Link to="/history" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2">Hand history</Link>
             {isCash && (
@@ -2030,7 +2384,7 @@ export default function PokerTracker() {
           return (
             <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#6b5a2a] bg-[#3a3320] px-4 py-3">
               <span className="text-sm font-semibold text-amber-200">Break</span>
-              <span className="text-sm font-mono text-amber-300">{formatTimer(levelTimerState(hand, now))} {formatTimerLabel(levelTimerState(hand, now))}</span>
+              <span className="text-sm font-mono text-amber-300 font-bold">{formatTimer(levelTimerState(hand, now))}</span>
               <span className="text-xs text-amber-300/70">{hand.blindsPosted === false ? 'Blinds post when play resumes.' : 'Blinds update when the next hand starts.'}</span>
               {hasRace && (
                 <button
@@ -2099,59 +2453,47 @@ export default function PokerTracker() {
           positions={positions(hand)}
           currency={hand.currency}
           hideAmounts={hideAmounts}
+          showPosition={showPosition}
           tableSize={hand.tableSize}
           freezeStacks={true}
           frozenStacks={frozenStacks}
           displayUnit={displayUnit}
         />
 
-        {/* Poker Table Graphic */}
-        <PokerTable
-          hand={{ ...hand, displayUnit }}
-          positions={positions(hand)}
-          pot={mainPot}
-          sidePots={sidePots}
-          holeCards={holeCards}
-          equity={equity}
-          hideAmounts={hideAmounts}
-          highlightKeys={highlightKeys}
-          winningPlayerIds={winningPlayerIds}
-          displayUnit={displayUnit}
-          helpMode={false}
-          clockSecondsLeft={actionClockSecondsLeft}
-          clockActive={actionClockSecondsLeft != null}
-          clockType={actionClockType}
-          onUseTimeBank={handleUseTimeBank}
-          onAdjustTimeBanks={handleAdjustTimeBanks}
-        />
+        {/* Desktop: Table/List View on left, Action Entry right beside it so no scrolling is needed */}
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px] gap-4 items-start">
+          <div className="min-w-0">
+            <PokerTable
+              hand={{ ...hand, displayUnit }}
+              positions={positions(hand)}
+              pot={mainPot}
+              sidePots={sidePots}
+              holeCards={holeCards}
+              equity={equity}
+              hideAmounts={hideAmounts}
+              showPosition={showPosition}
+              suitColors={suitColors}
+              actionDisplayMode={actionDisplayMode}
+              highlightKeys={highlightKeys}
+              winningPlayerIds={winningPlayerIds}
+              displayUnit={displayUnit}
+              helpMode={false}
+              clockSecondsLeft={actionClockSecondsLeft}
+              clockActive={actionClockSecondsLeft != null}
+              clockType={actionClockType}
+              onUseTimeBank={handleUseTimeBank}
+              onAdjustTimeBanks={handleAdjustTimeBanks}
+            />
+          </div>
 
-        {hand.phase !== 'awarded' ? (
-          <>
-            {!lowGame && (
-              <CommunityCardInput
-                hand={hand}
-                onDeal={handleDeal}
-                onDealHidden={handleDealHidden}
-                onFillBoard={handleFillBoard}
-                holeCards={holeCards}
-                onRunIt={handleRunIt}
-                onDealBoard={handleDealBoard}
-              />
-            )}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="space-y-3">
-                {/* 1. Hole Cards */}
-                {showHoleEntry && (
-                  <AllInEquity hand={hand} nonFolded={nonFolded} holeCards={holeCards} onHoleChange={handleHoleChange} />
-                )}
-                {showDiscardStep && (
-                  <DiscardStep players={nonFolded} holeCards={holeCards} discards={discards} onPick={handlePickDiscard} onConfirm={handleConfirmDiscard} />
-                )}
+          <div className="space-y-3">
+            {hand.phase !== 'awarded' ? (
+              <>
+                {/* 1. Primary Action Buttons right next to Table / List View */}
+                <ActionRecorder hand={hand} onAction={handleAction} onUndo={handleUndo} canUndo={history.length > 0} onSelectRedRiverColor={handleSelectRedRiverColor} />
+                {actionError && <div className="text-sm text-rose-400">{actionError}</div>}
 
-                {/* 2. Action */}
-                <ActionRecorder hand={hand} onAction={handleAction} onUndo={handleUndo} canUndo={history.length > 0} />
-
-                {/* 3. Time Controls: Active Clock Banner & Dedicated Time Banks Bar */}
+                {/* 2. Active Clock Banner */}
                 {actionClockSecondsLeft != null && hand?.currentPlayer >= 0 && (
                   <div className="rounded-xl border border-slate-700 bg-[#161a22] p-3 shadow-lg flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
@@ -2214,148 +2556,174 @@ export default function PokerTracker() {
                   </div>
                 )}
 
-                {/* Dedicated Time Banks Tracker Bar */}
-                {hand?.clockConfig?.clockSystem === 'time_banks' && (
-                  <div className="rounded-xl border border-slate-700/80 bg-[#14181f] p-3 shadow-md">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-800">
-                      <div className="flex items-center gap-2">
-                        <Clock size={15} className="text-amber-400" />
-                        <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                          Player Time Banks
-                        </span>
-                        <span className="text-[11px] text-slate-400">
-                          (+{hand.clockConfig?.timeBankAddSeconds || 30}s per chip)
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-slate-500">
-                        Host +/- controls · Use bank during turn
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {hand.players.map((p, idx) => {
-                        const isCurrent = hand.phase === 'playing' && hand.currentPlayer === idx;
-                        const banksLeft = p.timeBanks ?? hand.clockConfig?.initialTimeBanks ?? 3;
-                        const isFolded = p.status === 'folded';
-                        return (
-                          <div
-                            key={p.id}
-                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
-                              isCurrent
-                                ? 'border-emerald-500/80 bg-[#122b1c] shadow-[0_0_12px_rgba(16,185,129,0.3)] ring-1 ring-emerald-400/60'
-                                : isFolded
-                                ? 'border-slate-800 bg-[#161a22]/60 opacity-60'
-                                : 'border-[#2a323f] bg-[#1a202a]'
-                            }`}
-                          >
-                            <span className="font-semibold text-slate-200 truncate max-w-[90px]" title={p.name}>
-                              {p.name}
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded bg-black/50 text-amber-300 font-mono font-bold text-[11px] border border-amber-500/30">
-                              {banksLeft} ⏳
-                            </span>
-                            {p.usedBanks > 0 && (
-                              <span className="text-[9px] text-amber-400/80 font-medium">
-                                ({p.usedBanks} used)
-                              </span>
-                            )}
-                            {isCurrent && (
-                              <button
-                                type="button"
-                                onClick={() => handleUseTimeBank(p.id)}
-                                disabled={banksLeft <= 0}
-                                title={`Use 1 time bank (+${hand.clockConfig?.timeBankAddSeconds || 30}s)`}
-                                className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-[10px] font-bold text-white shadow cursor-pointer"
-                              >
-                                Use
-                              </button>
-                            )}
-                            <div className="flex items-center gap-0.5 ml-1 border-l border-slate-700 pl-1.5">
-                              <button
-                                type="button"
-                                onClick={() => handleAdjustTimeBanks(p.id, -1)}
-                                disabled={banksLeft <= 0}
-                                title="Host: Deduct 1 time bank"
-                                className="w-5 h-5 flex items-center justify-center rounded bg-[#252b35] hover:bg-[#333b49] text-slate-400 hover:text-white disabled:opacity-30 cursor-pointer font-bold"
-                              >
-                                -
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleAdjustTimeBanks(p.id, 1)}
-                                title="Host: Grant 1 time bank"
-                                className="w-5 h-5 flex items-center justify-center rounded bg-[#252b35] hover:bg-[#333b49] text-slate-400 hover:text-white cursor-pointer font-bold"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                {/* 3. Community Cards & Street Dealing */}
+                {!lowGame && (
+                  <CommunityCardInput
+                    hand={hand}
+                    onDeal={handleDeal}
+                    onDealHidden={handleDealHidden}
+                    onFillBoard={handleFillBoard}
+                    holeCards={holeCards}
+                    onRunIt={handleRunIt}
+                    onDealBoard={handleDealBoard}
+                    onEndHand={handleEndHand}
+                  />
                 )}
 
-                {/* 4. Out of Turn Action */}
-                <div className="pt-1">
-                  <OutOfTurnRecorder hand={hand} onFoldOutOfTurn={handleFoldOutOfTurn} onRecordOutOfTurn={handleRecordOutOfTurn} />
+                {showDiscardStep && (
+                  <DiscardStep players={nonFolded} holeCards={holeCards} discards={discards} onPick={handlePickDiscard} onConfirm={handleConfirmDiscard} />
+                )}
+              </>
+            ) : (
+              <div className="rounded-xl border border-[#4a5a4a] bg-[#1e2227] p-4">
+                <div className="text-sm font-semibold text-emerald-300 mb-2">Pots awarded</div>
+                {hand.pots.map((pot, i) => {
+                  const summary = formatPotOutcome(pot, i, hand.winners, hand.players, hand.currency);
+                  if (!summary) return null;
+                  return (
+                    <div key={i} className="text-sm text-slate-300">
+                      {summary}
+                    </div>
+                  );
+                })}
+                {hand.sideNotes && hand.sideNotes.length > 0 && (
+                  <div className="mt-2 space-y-1 border-t border-[#2a2f37] pt-2">
+                    {hand.sideNotes.map((n, i) => (
+                      <div key={i} className="text-xs text-amber-300/90">{n}</div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-4 flex flex-wrap items-center gap-3 pt-2 border-t border-[#2a2f37]">
+                  <button
+                    onClick={proceedToNextHand}
+                    className="rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-base px-5 py-2.5 shadow-lg shadow-emerald-950/40 cursor-pointer flex items-center gap-2 transition-all"
+                  >
+                    <span>Next Hand</span>
+                    <span className="text-emerald-200">→</span>
+                  </button>
+                  <button
+                    onClick={handleUndo}
+                    disabled={!history.length}
+                    className="rounded-xl bg-[#2a2f37] hover:bg-[#363c45] text-slate-200 font-semibold text-sm px-4 py-2.5 flex items-center gap-1.5 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    title="Undo final board card or pot award in case it was mistyped"
+                  >
+                    <Undo2 size={16} />
+                    <span>Undo (Fix Board)</span>
+                  </button>
                 </div>
-                {actionError && <div className="mt-2 text-sm text-rose-400">{actionError}</div>}
-              </div>
-              <ActionHistory history={hand.actionHistory} hideAmounts={hideAmounts} />
-            </div>
-          </>
-        ) : (
-          <div className="rounded-xl border border-[#4a5a4a] bg-[#1e2227] p-4">
-            <div className="text-sm font-semibold text-emerald-300 mb-2">Pots awarded</div>
-            {hand.pots.map((pot, i) => {
-              const summary = formatPotOutcome(pot, i, hand.winners, hand.players, hand.currency);
-              if (!summary) return null;
-              return (
-                <div key={i} className="text-sm text-slate-300">
-                  {summary}
-                </div>
-              );
-            })}
-            {hand.sideNotes && hand.sideNotes.length > 0 && (
-              <div className="mt-2 space-y-1 border-t border-[#2a2f37] pt-2">
-                {hand.sideNotes.map((n, i) => (
-                  <div key={i} className="text-xs text-amber-300/90">{n}</div>
-                ))}
+                {sevenTwoActive(hand) && !bonusApplied && (() => {
+                  const mainWinners = hand.winners.filter((w) => w.potIndex === 0 && w.board !== 'b');
+                  const pre = mainWinners.length === 1 && holeCards[mainWinners[0].playerId]?.length >= 2
+                    ? mainWinners[0].playerId : null;
+                  return (
+                    <SevenTwoAward
+                      hand={hand}
+                      holeCards={holeCards}
+                      onAward={handleSevenTwoAward}
+                      onSkip={handleSevenTwoSkip}
+                      foldWinnerId={sevenTwoFoldWinner}
+                      preselectId={pre}
+                    />
+                  );
+                })()}
               </div>
             )}
-            <div className="mt-4 flex flex-wrap items-center gap-3 pt-2 border-t border-[#2a2f37]">
-              <button
-                onClick={proceedToNextHand}
-                className="rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-base px-6 py-2.5 shadow-lg shadow-emerald-950/40 cursor-pointer flex items-center gap-2 transition-all"
-              >
-                <span>Next Hand</span>
-                <span className="text-emerald-200">→</span>
-              </button>
-              <button
-                onClick={handleUndo}
-                disabled={!history.length}
-                className="rounded-xl bg-[#2a2f37] hover:bg-[#363c45] text-slate-200 font-semibold text-sm px-4 py-2.5 flex items-center gap-1.5 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                title="Undo river card or pot award in case the river was mistyped"
-              >
-                <Undo2 size={16} />
-                <span>Undo (Fix Mistyped River)</span>
-              </button>
+          </div>
+        </div>
+
+        {hand.phase !== 'awarded' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="space-y-3">
+              {/* Hole Cards (All-In / Showdown / Showtime) */}
+              {showHoleEntry && (
+                <AllInEquity hand={hand} nonFolded={nonFolded} holeCards={holeCards} onHoleChange={handleHoleChange} />
+              )}
+
+              {/* Dedicated Time Banks Tracker Bar */}
+              {hand?.clockConfig?.clockSystem === 'time_banks' && (
+                <div className="rounded-xl border border-slate-700/80 bg-[#14181f] p-3 shadow-md">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <Clock size={15} className="text-amber-400" />
+                      <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                        Player Time Banks
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        (+{hand.clockConfig?.timeBankAddSeconds || 30}s per chip)
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-500">
+                      Host +/- controls · Use bank during turn
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {hand.players.map((p, idx) => {
+                      const isCurrent = hand.phase === 'playing' && hand.currentPlayer === idx;
+                      const banksLeft = p.timeBanks ?? hand.clockConfig?.initialTimeBanks ?? 3;
+                      const isFolded = p.status === 'folded';
+                      return (
+                        <div
+                          key={p.id}
+                          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
+                            isCurrent
+                              ? 'border-emerald-500/80 bg-[#122b1c] shadow-[0_0_12px_rgba(16,185,129,0.3)] ring-1 ring-emerald-400/60'
+                              : isFolded
+                              ? 'border-slate-800 bg-[#161a22]/60 opacity-60'
+                              : 'border-[#2a323f] bg-[#1a202a]'
+                          }`}
+                        >
+                          <span className="font-semibold text-slate-200 truncate max-w-[90px]" title={p.name}>
+                            {p.name}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded bg-black/50 text-amber-300 font-mono font-bold text-[11px] border border-amber-500/30">
+                            {banksLeft} ⏳
+                          </span>
+                          {p.usedBanks > 0 && (
+                            <span className="text-[9px] text-amber-400/80 font-medium">
+                              ({p.usedBanks} used)
+                            </span>
+                          )}
+                          {isCurrent && (
+                            <button
+                              type="button"
+                              onClick={() => handleUseTimeBank(p.id)}
+                              disabled={banksLeft <= 0}
+                              title={`Use 1 time bank (+${hand.clockConfig?.timeBankAddSeconds || 30}s)`}
+                              className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-[10px] font-bold text-white shadow cursor-pointer"
+                            >
+                              Use
+                            </button>
+                          )}
+                          <div className="flex items-center gap-0.5 ml-1 border-l border-slate-700 pl-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleAdjustTimeBanks(p.id, -1)}
+                              disabled={banksLeft <= 0}
+                              title="Host: Deduct 1 time bank"
+                              className="w-5 h-5 flex items-center justify-center rounded bg-[#252b35] hover:bg-[#333b49] text-slate-400 hover:text-white disabled:opacity-30 cursor-pointer font-bold"
+                            >
+                              -
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleAdjustTimeBanks(p.id, 1)}
+                              title="Host: Grant 1 time bank"
+                              className="w-5 h-5 flex items-center justify-center rounded bg-[#252b35] hover:bg-[#333b49] text-slate-400 hover:text-white cursor-pointer font-bold"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Out of Turn Action */}
+              <OutOfTurnRecorder hand={hand} onFoldOutOfTurn={handleFoldOutOfTurn} onRecordOutOfTurn={handleRecordOutOfTurn} />
             </div>
-            {sevenTwoActive(hand) && !bonusApplied && (() => {
-              const mainWinners = hand.winners.filter((w) => w.potIndex === 0 && w.board !== 'b');
-              const pre = mainWinners.length === 1 && holeCards[mainWinners[0].playerId]?.length >= 2
-                ? mainWinners[0].playerId : null;
-              return (
-                <SevenTwoAward
-                  hand={hand}
-                  holeCards={holeCards}
-                  onAward={handleSevenTwoAward}
-                  onSkip={handleSevenTwoSkip}
-                  foldWinnerId={sevenTwoFoldWinner}
-                  preselectId={pre}
-                />
-              );
-            })()}
+            <ActionHistory history={hand.actionHistory} hideAmounts={hideAmounts} />
           </div>
         )}
       </div>
@@ -2528,6 +2896,72 @@ export default function PokerTracker() {
         onDeletePlan={handleDeleteTemporaryPlan}
         onRevertToBaseGame={handleRevertToBaseGame}
       />
+
+      {/* Poker Display Settings Modal */}
+      <SettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+        isGoMode={isGoMode}
+        settings={{
+          sessionName: hand?.sessionName || config?.sessionName || '',
+          hideAmounts,
+          showPosition,
+          displayUnit,
+          suitColors,
+          actionDisplayMode,
+          isGoMode,
+          stackRounding,
+        }}
+        onUpdateSettings={(newVals) => {
+          if (newVals.sessionName !== undefined) {
+            const val = newVals.sessionName.trim() || undefined;
+            setConfig((prev) => (prev ? { ...prev, sessionName: val } : prev));
+            setHand((prev) => (prev ? { ...prev, sessionName: val } : prev));
+          }
+          if (newVals.hideAmounts !== undefined) setHideAmounts(newVals.hideAmounts);
+          if (newVals.showPosition !== undefined) setShowPosition(newVals.showPosition);
+          if (newVals.displayUnit !== undefined) setDisplayUnit(newVals.displayUnit);
+          if (newVals.suitColors !== undefined) setSuitColors(newVals.suitColors);
+          if (newVals.actionDisplayMode !== undefined) setActionDisplayMode(newVals.actionDisplayMode);
+          if (newVals.isGoMode !== undefined) setIsGoMode(newVals.isGoMode);
+          if (newVals.stackRounding !== undefined) setStackRounding(newVals.stackRounding);
+        }}
+      />
+      {/* Mode Switch Confirmation Modal */}
+      {showSwitchModeConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#1c2026] border border-[#2a303c] rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+            <h3 className="text-xl font-bold text-white flex items-center gap-2">
+              <Zap size={20} className="text-amber-400" />
+              {showSwitchModeConfirm === 'go' ? 'Switch to GO Mode?' : 'Switch to Action Tracking Mode?'}
+            </h3>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              {showSwitchModeConfirm === 'go'
+                ? 'GO Mode is designed for fast live gameplay with card peek security, automated pot tracking, and quick street dealing.'
+                : 'Action Tracking Mode lets you manually record actions, track complex side games, and edit table state step-by-step.'}
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowSwitchModeConfirm(null)}
+                className="px-4 py-2 rounded-xl bg-[#2a303c] hover:bg-[#363e4e] text-slate-200 text-sm font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsGoMode(showSwitchModeConfirm === 'go');
+                  setShowSwitchModeConfirm(null);
+                }}
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg cursor-pointer transition-all"
+              >
+                Confirm Switch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

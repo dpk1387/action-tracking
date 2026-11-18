@@ -100,7 +100,7 @@ export function formatBlindsText(levelObj, tournamentAnteType = 'bba') {
 
   if (anteType === 'sb_half_ante') {
     const halfAnte = anteVal > 0 ? anteVal : Math.max(1, Math.round(bbVal * 0.5));
-    return `${sb} / ${bb} - ${halfAnte.toLocaleString()} (SB 1/2 ANTE)`;
+    return `${sb} / ${bb} - ${halfAnte.toLocaleString()} (BB 1/2 ANTE)`;
   }
 
   // BBA format: SB / BB - 50 (BBA) (e.g. 25 / 50 - 50 (BBA))

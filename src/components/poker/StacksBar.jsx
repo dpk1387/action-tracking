@@ -9,6 +9,7 @@ export default function StacksBar({
   positions = [],
   currency,
   hideAmounts,
+  showPosition = true,
   stackVisibleIds,
   freezeStacks,
   frozenStacks,
@@ -219,7 +220,7 @@ export default function StacksBar({
         }`}
       >
         <div className="text-xs text-slate-400 truncate flex items-center justify-between">
-          <span className="truncate">{p.name} · {(item.position || '').replace('UTG+', '+')}</span>
+          <span className="truncate">{p.name}{showPosition ? ` · ${(item.position || '').replace('UTG+', '+')}` : ''}</span>
           {isBustedAwarded && (
             <span className="ml-1 text-[8px] bg-rose-500 text-white px-1 py-0.5 rounded font-bold uppercase shrink-0">
               OUT

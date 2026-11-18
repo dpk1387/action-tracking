@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, FileSpreadsheet, Loader2, ExternalLink } from 'lucide-react';
 import { useSession } from '@/lib/sessionStore';
 import HandHistoryCard from '@/components/poker/HandHistoryCard';
-import { exportHandsToGoogleSheet } from '@/lib/googleSheetsExport';
+import { exportHandsToGoogleSheet, exportHandsToCSV } from '@/lib/googleSheetsExport';
+import { Download } from 'lucide-react';
 
 export default function HandHistory() {
   const session = useSession();
-  const hands = session.history;
+  const hands = session.history || [];
+  const [unit, setUnit] = useState('chips'); // 'chips' | 'bb'
   const [exporting, setExporting] = useState(false);
   const [exportUrl, setExportUrl] = useState(null);
   const [sheetTitle, setSheetTitle] = useState('');
@@ -19,7 +21,7 @@ export default function HandHistory() {
     setError('');
     setExportUrl(null);
     try {
-      const res = await exportHandsToGoogleSheet(hands);
+      const res = await exportHandsToGoogleSheet(hands, { unit });
       if (res.spreadsheetUrl) {
         setExportUrl(res.spreadsheetUrl);
         setSheetTitle(res.title || 'Google Sheet');
@@ -33,12 +35,52 @@ export default function HandHistory() {
     }
   };
 
+  const handleExportCSV = () => {
+    if (!hands.length) return;
+    try {
+      exportHandsToCSV(hands, { unit });
+    } catch (e) {
+      setError(e?.message || 'Export to CSV failed.');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#121417] text-white">
       <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h1 className="text-xl font-semibold">Session hand history</h1>
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-xl font-semibold">Session hand history</h1>
+            {/* Unit Toggle */}
+            <div className="flex items-center gap-1 bg-[#181d26] p-1 rounded-xl border border-slate-700">
+              <button
+                type="button"
+                onClick={() => setUnit('chips')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  unit === 'chips' ? 'bg-amber-500 text-black shadow' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {session.config?.mode === 'cash' || session.hand?.mode === 'cash' ? 'Money' : 'Chips'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setUnit('bb')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  unit === 'bb' ? 'bg-amber-500 text-black shadow' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Big Blinds
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={handleExportCSV}
+              disabled={!hands.length}
+              className="rounded-lg bg-blue-700 hover:bg-blue-600 text-sm px-3.5 py-2 font-bold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow transition-colors"
+            >
+              <Download size={16} />
+              Export CSV
+            </button>
             <button
               onClick={handleExport}
               disabled={!hands.length || exporting}
@@ -72,7 +114,7 @@ export default function HandHistory() {
           <div className="text-slate-400 text-sm">No hands played yet in this session.</div>
         ) : (
           <div className="space-y-4">
-            {[...hands].reverse().map((h) => <HandHistoryCard key={h.handNumber} h={h} />)}
+            {[...hands].reverse().map((h) => <HandHistoryCard key={h.handNumber} h={h} displayUnit={unit} />)}
           </div>
         )}
       </div>

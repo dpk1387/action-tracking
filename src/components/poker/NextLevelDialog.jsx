@@ -167,7 +167,7 @@ function calcOddChips(stack, retired, replacement) {
           {anteType !== 'none' && anteType !== 'three_blinds' && (
             <div>
               <label className="text-xs text-slate-400 block mb-1">
-                Ante {isBBA ? '(= big blind)' : isBtnAnte ? '(= button ante 1 BB)' : isSBHalfAnte ? '(= SB half ante 0.5 BB)' : ''}
+                Ante {isBBA ? '(= big blind)' : isBtnAnte ? '(= button ante 1 BB)' : isSBHalfAnte ? '(= BB half ante 0.5 BB)' : ''}
               </label>
               <input
                 type="text"

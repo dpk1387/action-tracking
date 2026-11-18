@@ -1,4 +1,5 @@
-// Base44 client emulator for persistent local/cross-tab storage and auth
+import { auth, googleProvider } from '@/lib/firebaseClient';
+import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut as firebaseSignOut } from 'firebase/auth';
 
 function getStoredSessions() {
   try {
@@ -20,9 +21,20 @@ function saveStoredSessions(store) {
 export const db = {
   auth: {
     isAuthenticated: async () => {
-      return !!localStorage.getItem('poker_auth_user');
+      return !!auth.currentUser || !!localStorage.getItem('poker_auth_user');
     },
     me: async () => {
+      const fbUser = auth.currentUser;
+      if (fbUser) {
+        return {
+          id: fbUser.uid,
+          email: fbUser.email,
+          full_name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Poker Player',
+          photoURL: fbUser.photoURL,
+          role: 'user',
+          emailVerified: fbUser.emailVerified,
+        };
+      }
       const u = localStorage.getItem('poker_auth_user');
       if (!u) return null;
       try {
@@ -37,30 +49,73 @@ export const db = {
     },
     loginViaEmailPassword: async (email, password) => {
       if (!email || !password) throw new Error('Email and password are required');
-      const user = {
-        id: 'usr_' + Math.abs(email.split('').reduce((a, b) => ((a << 5) - a + b.charCodeAt(0)) | 0, 0)),
-        email,
-        full_name: email.split('@')[0],
-        role: 'user',
-      };
-      localStorage.setItem('poker_auth_user', JSON.stringify(user));
-      localStorage.setItem('base44_access_token', 'token_' + Date.now());
-      return user;
+      try {
+        let u;
+        try {
+          const res = await signInWithEmailAndPassword(auth, email, password);
+          u = res.user;
+        } catch (e) {
+          if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential' || e.code === 'auth/invalid-email') {
+            const res = await createUserWithEmailAndPassword(auth, email, password);
+            u = res.user;
+          } else {
+            throw e;
+          }
+        }
+        const userObj = {
+          id: u.uid,
+          email: u.email,
+          full_name: u.displayName || u.email?.split('@')[0],
+          role: 'user',
+          emailVerified: u.emailVerified,
+        };
+        localStorage.setItem('poker_auth_user', JSON.stringify(userObj));
+        localStorage.setItem('base44_access_token', await u.getIdToken());
+        return userObj;
+      } catch (err) {
+        const user = {
+          id: 'usr_' + Math.abs(email.split('').reduce((a, b) => ((a << 5) - a + b.charCodeAt(0)) | 0, 0)),
+          email,
+          full_name: email.split('@')[0],
+          role: 'user',
+        };
+        localStorage.setItem('poker_auth_user', JSON.stringify(user));
+        localStorage.setItem('base44_access_token', 'token_' + Date.now());
+        return user;
+      }
     },
-    loginWithProvider: (provider, returnTo) => {
-      const user = {
-        id: 'usr_google_' + Date.now().toString(36),
-        email: 'player@example.com',
-        full_name: 'Poker Player',
-        role: 'user',
-      };
-      localStorage.setItem('poker_auth_user', JSON.stringify(user));
-      localStorage.setItem('base44_access_token', 'token_' + Date.now());
-      window.location.href = returnTo || '/';
+    loginWithProvider: async (provider, returnTo) => {
+      try {
+        const res = await signInWithPopup(auth, googleProvider);
+        const u = res.user;
+        const userObj = {
+          id: u.uid,
+          email: u.email,
+          full_name: u.displayName || u.email?.split('@')[0] || 'Poker Player',
+          photoURL: u.photoURL,
+          role: 'user',
+          emailVerified: u.emailVerified,
+        };
+        localStorage.setItem('poker_auth_user', JSON.stringify(userObj));
+        localStorage.setItem('base44_access_token', await u.getIdToken());
+        if (returnTo) {
+          window.location.href = returnTo;
+        }
+        return userObj;
+      } catch (err) {
+        console.error('Provider sign in failed:', err);
+        throw err;
+      }
     },
-    resetPasswordRequest: async (_email) => true,
+    resetPasswordRequest: async (email) => {
+      if (email) {
+        await sendPasswordResetEmail(auth, email).catch(() => {});
+      }
+      return true;
+    },
     resetPassword: async (_token, _password) => true,
     logout: (redirectUrl) => {
+      firebaseSignOut(auth).catch(() => {});
       localStorage.removeItem('poker_auth_user');
       localStorage.removeItem('base44_access_token');
       localStorage.removeItem('token');

@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Clock } from 'lucide-react';
-import { money, formatPotAmount, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown, hasSoleDeepestStack, bettingFrozen } from '@/lib/poker';
+import { money, formatPotAmount, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, SUIT_COLOR_CLASS, suitColorClass, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown, hasSoleDeepestStack, bettingFrozen, getLastActionPlayerName } from '@/lib/poker';
 import AllInView from './AllInView';
 
 function raiseLabelLocal(level) {
@@ -9,25 +9,23 @@ function raiseLabelLocal(level) {
   return `${level}-bet`;
 }
 
-function OutCard({ card }) {
+function OutCard({ card, suitColors = 2 }) {
   if (!card) return null;
-  const red = SUIT_RED[card.suit];
+  const suitColor = suitColorClass(card.suit, suitColors);
   return (
     <div
-      className={`inline-flex items-center justify-center gap-0.5 px-1.5 py-0.5 min-w-[34px] h-[20px] rounded border border-slate-300 bg-white shadow-sm text-xs font-bold leading-none select-none ${
-        red ? 'text-rose-600' : 'text-slate-900'
-      }`}
+      className={`inline-flex items-center justify-center gap-0.5 px-1.5 py-0.5 min-w-[34px] h-[20px] rounded border border-slate-300 bg-white shadow-sm text-xs font-bold leading-none select-none ${suitColor}`}
     >
-      <span>{rankDisplay(card.rank)}</span>
-      <span className="text-[11px] leading-none">{SUIT_SYMBOL[card.suit]}</span>
+      <strong className="font-bold">{rankDisplay(card.rank)}</strong>
+      <span className="text-[11px] leading-none font-bold">{SUIT_SYMBOL[card.suit]}</span>
     </div>
   );
 }
 
-function Card({ card, highlight, anim, delay, style }) {
+function Card({ card, highlight, anim, delay, style, suitColors = 2 }) {
   if (!card) return <div className="w-8 h-11 rounded-md border border-dashed border-slate-600/70" />;
   const isHidden = card.hidden;
-  const red = !isHidden && SUIT_RED[card.suit];
+  const suitColor = !isHidden && suitColorClass(card.suit, suitColors);
   const hl = highlight && !isHidden && highlight.has(card.rank + card.suit);
   const ring = hl ? 'ring-2 ring-emerald-400 ring-offset-1 ring-offset-[#1e2227]' : '';
 
@@ -38,8 +36,8 @@ function Card({ card, highlight, anim, delay, style }) {
       </div>
     );
     return (
-      <div className={`w-8 h-11 rounded-md bg-slate-100 flex items-center justify-center text-sm font-bold shadow ${red ? 'text-rose-600' : 'text-slate-900'} ${ring}`}>
-        <span>{rankDisplay(card.rank)}{SUIT_SYMBOL[card.suit]}</span>
+      <div className={`w-8 h-11 rounded-md bg-slate-100 flex items-center justify-center text-sm font-bold shadow ${suitColor} ${ring}`}>
+        <span><strong className="font-bold">{rankDisplay(card.rank)}</strong>{SUIT_SYMBOL[card.suit]}</span>
       </div>
     );
   }
@@ -56,30 +54,31 @@ function Card({ card, highlight, anim, delay, style }) {
         <span className="text-[#7fae7f] text-xs">?</span>
       </div>
       <div
-        className={`absolute inset-0 rounded-md bg-slate-100 flex items-center justify-center text-sm font-bold shadow ${red ? 'text-rose-600' : 'text-slate-900'} ${ring}`}
+        className={`absolute inset-0 rounded-md bg-slate-100 flex items-center justify-center text-sm font-bold shadow ${suitColor} ${ring}`}
         style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
       >
-        <span>{rankDisplay(card.rank)}{SUIT_SYMBOL[card.suit]}</span>
+        <span><strong className="font-bold">{rankDisplay(card.rank)}</strong>{SUIT_SYMBOL[card.suit]}</span>
       </div>
     </div>
   );
 }
 
-function MiniCard({ card, highlight }) {
+function MiniCard({ card, highlight, suitColors = 2 }) {
   if (card.hidden) return (
     <span className="inline-flex items-center justify-center w-5 h-7 rounded bg-[#3a4a3a] border border-[#4a5a4a] text-[10px] text-[#7fae7f] mr-0.5">?</span>
   );
-  const red = SUIT_RED[card.suit];
+  const suitColor = suitColorClass(card.suit, suitColors);
   const hl = highlight && highlight.has(card.rank + card.suit);
   return (
-    <span className={`inline-flex items-center justify-center w-5 h-7 rounded bg-slate-100 text-[10px] font-bold mr-0.5 ${red ? 'text-rose-600' : 'text-slate-900'} ${hl ? 'ring-2 ring-emerald-400 ring-offset-1 ring-offset-[#1e2227]' : ''}`}>
-      {rankDisplay(card.rank)}{SUIT_SYMBOL[card.suit]}
+    <span className={`inline-flex items-center justify-center w-5 h-7 rounded bg-slate-100 text-[10px] font-bold mr-0.5 ${suitColor} ${hl ? 'ring-2 ring-emerald-400 ring-offset-1 ring-offset-[#1e2227]' : ''}`}>
+      <strong className="font-bold">{rankDisplay(card.rank)}</strong>{SUIT_SYMBOL[card.suit]}
     </span>
   );
 }
 
 export default function PokerTable({
   hand, positions, pot, sidePots = [], holeCards, equity, hideAmounts,
+  showPosition = true, suitColors = 2, actionDisplayMode = 'all',
   highlightKeys, winningPlayerIds, stackVisibleIds, showPot, alwaysShow,
   helpMode = false, clockSecondsLeft, clockActive, clockType, onUseTimeBank, onAdjustTimeBanks,
   displayUnit = 'chips'
@@ -199,6 +198,9 @@ export default function PokerTable({
         winningPlayerIds={resolvedWinningIds}
         onToggleClassic={() => setViewMode('classic')}
         hideAmounts={hideAmounts}
+        showPosition={showPosition}
+        suitColors={suitColors}
+        actionDisplayMode={actionDisplayMode}
         stackVisibleIds={stackVisibleIds}
         alwaysShow={alwaysShow}
         showPot={showPot}
@@ -262,8 +264,8 @@ export default function PokerTable({
           })
       ).map(({ p, seatNum, seatIdx, totalSeats, playerIndex }) => {
         const angle = (-90 + (seatIdx * 360) / totalSeats) * (Math.PI / 180);
-        const x = 50 + 43 * Math.cos(angle);
-        const y = 50 + 41 * Math.sin(angle);
+        const x = 50 + 40 * Math.cos(angle);
+        const y = 50 + 40 * Math.sin(angle);
 
         if (!p) {
           return (
@@ -310,7 +312,7 @@ export default function PokerTable({
                 : `${raiseLabelLocal(la.raiseLevel)} ${formatBetAmount(la.amount, cur, hand, activeUnit)}`)
             : la.type === 'call'
             ? (isAllInPlayer
-                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.callAmount != null ? la.callAmount : la.amount, cur, hand, activeUnit)}`)
+                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount != null ? la.amount : p.currentBet, cur, hand, activeUnit)}`)
                 : `Call ${formatBetAmount(la.callAmount != null ? la.callAmount : la.amount, cur, hand, activeUnit)}`)
             : la.type === 'sb'
             ? `SB ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
@@ -325,85 +327,180 @@ export default function PokerTable({
           ? (actionEnded && isSoleDeepest ? '' : 'All-in')
           : 'Waiting';
 
+        const isLastActionOnly = actionDisplayMode === 'last_action' || actionDisplayMode === 'last_only';
+        const lastActionPlayerName = getLastActionPlayerName(hand);
+        const displayLaText = isLastActionOnly ? (p.name === lastActionPlayerName ? laText : '') : laText;
+        const showBetChip = isLastActionOnly ? (p.name === lastActionPlayerName) : true;
+
         return (
-          <div key={p.id} className="absolute" style={{ left: `${x}%`, top: `${y}%`, transform: 'translate(-50%, -50%)' }}>
-            <div
-              className={`relative w-32 rounded-lg border px-2 py-1.5 text-center transition-all ${
-                atRisk
-                  ? 'bg-[#3a1f1f] border-[#c94c4c]'
-                  : folded
-                  ? 'bg-[#1a1d22] border-[#2a2f37] opacity-40'
-                  : isCurrent
-                  ? 'bg-[#2a3329] border-[#7fae7f] shadow-[0_0_0_2px_rgba(127,174,127,0.4)]'
-                  : 'bg-[#15181d] border-[#2a2f37]'
-              }`}
-            >
-              {(isButton || p.seat === bbSeat || p.seat === sbSeat || p.seat === tbSeat || p.seat === fbSeat) && (
-                <span className={`absolute -top-2 -right-2 px-1.5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center ${
-                  isButton ? 'bg-white text-[#15181d]'
-                    : p.seat === fbSeat ? 'bg-[#5a3a8a] text-white'
-                    : p.seat === tbSeat ? 'bg-[#3a7a8a] text-white'
-                    : p.seat === bbSeat ? 'bg-[#3a4a8a] text-white'
-                    : 'bg-[#8a6a3a] text-white'
-                }`}>
-                  {isButton ? (n === 2 ? 'D/SB' : 'D')
-                    : p.seat === fbSeat ? '4B'
-                    : p.seat === tbSeat ? '3B'
-                    : p.seat === bbSeat ? 'BB'
-                    : 'SB'}
-                </span>
-              )}
-              {isKiller && (
-                <span className={`absolute -top-2 -left-2 px-1.5 h-5 rounded-full text-[9px] font-bold flex items-center justify-center ${hand.killActive ? 'bg-[#c94c4c] text-white' : 'bg-[#6b4a2a] text-white'}`}>KILL</span>
-              )}
-              <div className="text-[11px] text-slate-400 truncate flex items-center justify-center gap-1">
-                <span className="truncate">{p.name} · {positions[i]}</span>
-                {isNit && <span className="shrink-0 rounded bg-amber-500/20 text-amber-300 px-1 text-[9px] font-semibold">NIT</span>}
-              </div>
-              {stackShown(p) && (
-                <div className={`text-sm font-semibold ${atRisk ? 'text-rose-300' : 'text-white'}`}>{formatPlayerTagAmount(p.stack, cur, hand, false, activeUnit)}</div>
-              )}
-              {helpMode && hand.mode !== 'cash' && (() => {
-                const effM = calculateEffectiveM(p, hand);
-                if (effM == null) return null;
-                const formattedM = effM < 100 ? effM.toFixed(1) : Math.round(effM).toString();
-                return (
-                  <div className="text-[10px] tabular-nums font-medium text-cyan-300 mt-0.5">
-                    Eff M: {formattedM}
-                  </div>
-                );
-              })()}
-              <div className={`text-[10px] mt-0.5 ${atRisk ? 'text-rose-200' : folded ? 'text-slate-500' : 'text-emerald-300/80'}`}>
-                {laText}
-              </div>
-              {/* Show TIME badge if player used a time bank */}
-              {p.usedBanks > 0 && (
-                <div className="mt-1 flex items-center justify-center">
-                  <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-[9px] font-bold text-amber-300">
-                    TIME{p.usedBanks > 1 ? ` ×${p.usedBanks}` : ''}
+          <React.Fragment key={p.id}>
+            <div className="absolute" style={{ left: `${x}%`, top: `${y}%`, transform: 'translate(-50%, -50%)' }}>
+              <div
+                className={`relative w-28 xl:w-32 rounded-lg border px-2 py-1.5 text-center transition-all ${
+                  atRisk
+                    ? 'bg-[#3a1f1f] border-[#c94c4c]'
+                    : folded
+                    ? 'bg-[#1a1d22] border-[#2a2f37] opacity-40'
+                    : isCurrent
+                    ? 'bg-[#2a3329] border-[#7fae7f] shadow-[0_0_0_2px_rgba(127,174,127,0.4)]'
+                    : 'bg-[#15181d] border-[#2a2f37]'
+                }`}
+              >
+                {(isButton || (showPosition && (p.seat === bbSeat || p.seat === sbSeat || p.seat === tbSeat || p.seat === fbSeat))) && (
+                  <span className={`absolute -top-2 -right-2 px-1.5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center ${
+                    isButton ? 'bg-white text-[#15181d]'
+                      : p.seat === fbSeat ? 'bg-[#5a3a8a] text-white'
+                      : p.seat === tbSeat ? 'bg-[#3a7a8a] text-white'
+                      : p.seat === bbSeat ? 'bg-[#3a4a8a] text-white'
+                      : 'bg-[#8a6a3a] text-white'
+                  }`}>
+                    {isButton ? 'D'
+                      : p.seat === fbSeat ? '4B'
+                      : p.seat === tbSeat ? '3B'
+                      : p.seat === bbSeat ? 'BB'
+                      : 'SB'}
                   </span>
+                )}
+                {isKiller && (
+                  <span className={`absolute -top-2 -left-2 px-1.5 h-5 rounded-full text-[9px] font-bold flex items-center justify-center ${hand.killActive ? 'bg-[#c94c4c] text-white' : 'bg-[#6b4a2a] text-white'}`}>KILL</span>
+                )}
+                <div className="text-[11px] text-slate-400 truncate flex items-center justify-center gap-1">
+                  <span className="truncate">{p.name}{showPosition ? ` · ${positions[i]}` : ''}</span>
+                  {isNit && <span className="shrink-0 rounded bg-amber-500/20 text-amber-300 px-1 text-[9px] font-semibold">NIT</span>}
                 </div>
-              )}
-              {(() => {
-                const oot = Array.isArray(hand.ootActions) && hand.ootActions.find((o) => o.playerId === p.id && o.street === hand.street);
-                if (!oot) return null;
-                const label = oot.kind === 'passive'
-                  ? 'OOT: check/call'
-                  : oot.kind === 'aggressive'
-                  ? (() => {
-                      const lvl = oot.raiseLevel || 1;
-                      const tier = lvl <= 1 ? 'bet' : lvl === 2 ? 'raise' : `${lvl}-bet`;
-                      return `OOT: ${tier}${oot.amount ? ' ' + formatBetAmount(oot.amount, cur, hand, activeUnit) : ''}`;
-                    })()
-                  : `OOT: ${oot.kind}`;
-                return (
-                  <div className="text-[10px] mt-0.5 font-medium text-amber-300/90 truncate">
-                    {label}
+                {stackShown(p) && (
+                  <div className={`text-sm font-medium ${atRisk ? 'text-rose-300' : 'text-white'}`}>{formatPlayerTagAmount(p.stack, cur, hand, false, activeUnit)}</div>
+                )}
+                {(() => {
+                  const pEq = equity ? (equity.byId ? (equity.byId[p.id] ?? equity.byId[p.seat]) : (equity[p.id] ?? equity[p.seat])) : null;
+                  const pOutEntry = allInOuts ? allInOuts.find((e) => e.player.id === p.id) : null;
+                  if (!folded && (pEq != null || pOutEntry)) {
+                    return (
+                      <div className="flex flex-col items-center gap-0.5 mt-0.5">
+                        {pEq != null && (
+                          <div className="text-xs font-bold text-emerald-400">
+                            Eq: {fmtEq(pEq)}%
+                          </div>
+                        )}
+                        {pOutEntry && (
+                          <div className="flex flex-col items-center gap-0.5">
+                            {pOutEntry.isChopOnly ? (
+                              <div className="text-[10px] font-semibold text-amber-300 bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-500/50 shadow-sm">
+                                Chop: {pOutEntry.chopOuts?.length || 0} outs
+                              </div>
+                            ) : (
+                              <div className="text-[10px] font-semibold text-blue-300 bg-blue-950/80 px-1.5 py-0.5 rounded border border-blue-500/50 shadow-sm flex items-center gap-1">
+                                <span>Outs: {(pOutEntry.winOuts || []).length}</span>
+                                {pOutEntry.dirtyOuts?.length > 0 && (
+                                  <span className="text-[9px] text-slate-400 font-normal">(+{pOutEntry.dirtyOuts.length} dirty)</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+                {helpMode && hand.mode !== 'cash' && (() => {
+                  const effM = calculateEffectiveM(p, hand);
+                  if (effM == null) return null;
+                  const formattedM = effM < 100 ? effM.toFixed(1) : Math.round(effM).toString();
+                  return (
+                    <div className="text-[10px] tabular-nums font-medium text-cyan-300 mt-0.5">
+                      Eff M: {formattedM}
+                    </div>
+                  );
+                })()}
+
+                {/* High-visibility Bet / Action Pill */}
+                {displayLaText ? (
+                  <div className="mt-1 flex items-center justify-center">
+                    <span className={`px-2 py-0.5 rounded-md text-xs font-medium tracking-tight shadow-sm transition-all ${
+                      atRisk || isAllInPlayer
+                        ? 'bg-rose-600 text-white border border-rose-400 shadow-[0_0_8px_rgba(225,29,72,0.4)]'
+                        : la?.type === 'bet' || la?.type === 'raise' || la?.type === '3b' || la?.type === '4b' || la?.type === 'straddle' || la?.type === 'kill'
+                        ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-400 text-slate-950 font-medium border border-yellow-200 shadow-[0_0_8px_rgba(245,158,11,0.35)]'
+                        : la?.type === 'call'
+                        ? 'bg-emerald-500 text-slate-950 font-medium border border-emerald-300'
+                        : la?.type === 'check'
+                        ? 'bg-slate-800 text-slate-300 border border-slate-700'
+                        : folded
+                        ? 'bg-zinc-900 text-slate-500'
+                        : 'bg-emerald-950 border border-emerald-500/70 text-emerald-300'
+                    }`}>
+                      {displayLaText}
+                    </span>
                   </div>
-                );
-              })()}
+                ) : null}
+
+                {/* Showtime: Face-up Folded Cards Display on player tag */}
+                {folded && hand.variant === 'showtime' && (
+                  <div className="mt-1 flex items-center justify-center gap-1">
+                    {holeCards[p.id] && holeCards[p.id].length > 0 ? (
+                      <div className="flex items-center gap-0.5">
+                        {holeCards[p.id].map((c, ci) => (
+                          c ? (
+                            <span key={ci} className={`px-1 py-0.5 rounded bg-white text-[9px] font-bold ${suitColorClass(c.suit, suitColors)} leading-none shadow-sm`}>
+                              <strong className="font-bold">{rankDisplay(c.rank)}</strong>{SUIT_SYMBOL[c.suit]}
+                            </span>
+                          ) : null
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[9px] text-purple-300 bg-purple-950/70 border border-purple-500/40 px-1 py-0.5 rounded">
+                        Showtime Fold
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Show TIME badge if player used a time bank */}
+                {p.usedBanks > 0 && (
+                  <div className="mt-1 flex items-center justify-center">
+                    <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-[9px] font-bold text-amber-300">
+                      TIME{p.usedBanks > 1 ? ` ×${p.usedBanks}` : ''}
+                    </span>
+                  </div>
+                )}
+                {(() => {
+                  const oot = Array.isArray(hand.ootActions) && hand.ootActions.find((o) => o.playerId === p.id && o.street === hand.street);
+                  if (!oot) return null;
+                  const label = oot.kind === 'passive'
+                    ? 'OOT: check/call'
+                    : oot.kind === 'aggressive'
+                    ? (() => {
+                        const lvl = oot.raiseLevel || 1;
+                        const tier = lvl <= 1 ? 'bet' : lvl === 2 ? 'raise' : `${lvl}-bet`;
+                        return `OOT: ${tier}${oot.amount ? ' ' + formatBetAmount(oot.amount, cur, hand, activeUnit) : ''}`;
+                      })()
+                    : `OOT: ${oot.kind}`;
+                  return (
+                    <div className="text-[10px] mt-0.5 font-medium text-amber-300/90 truncate">
+                      {label}
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
-          </div>
+
+            {/* Dedicated High-Visibility Felt Bet Chip in front of player */}
+            {p.currentBet > 0 && !folded && showBetChip && (
+              <div
+                className="absolute z-20 pointer-events-none transition-all duration-300 -translate-x-1/2 -translate-y-1/2"
+                style={{
+                  left: `${x + (50 - x) * 0.28}%`,
+                  top: `${y + (50 - y) * 0.28}%`,
+                }}
+              >
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-slate-950 font-black text-xs shadow-[0_4px_12px_rgba(0,0,0,0.8),0_0_10px_rgba(251,191,36,0.6)] border-2 border-amber-100 ring-1 ring-black/50">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-600 border border-white/80 shrink-0 shadow-inner" />
+                  <span className="tabular-nums tracking-tight font-extrabold">{formatBetAmount(p.currentBet, cur, hand, activeUnit)}</span>
+                </div>
+              </div>
+            )}
+          </React.Fragment>
         );
       })}
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-2 w-[85%] max-w-[440px]">
@@ -430,33 +527,41 @@ export default function PokerTable({
         </div>
         {!lowGame && (
           <div className="flex flex-col items-center gap-1">
-            <div className="relative flex gap-1.5">
-              {burnKey > 0 && (
-                <div
-                  key={`burn-${burnKey}`}
-                  className="burn-card absolute left-0 top-0 w-8 h-11 rounded-md bg-[#3a4a3a] border border-[#4a5a4a] flex items-center justify-center pointer-events-none z-10"
-                >
-                  <span className="text-[#7fae7f] text-xs">?</span>
-                </div>
-              )}
-              {[0, 1, 2, 3, 4].map((i) => (
-                <Card key={i} card={hand.communityCards[i]} highlight={highlightKeys} anim={mainAnim[i]?.anim} delay={mainAnim[i]?.delay} style={mainAnim[i]?.style} />
-              ))}
-            </div>
-            {hand.doubleBoard && (
-              <div className="flex gap-1.5">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <Card key={`b${i}`} card={(hand.boardB || [])[i]} highlight={highlightKeys} anim={bAnim[i]?.anim} delay={bAnim[i]?.delay} style={bAnim[i]?.style} />
-                ))}
-              </div>
-            )}
-            {hasBoardC && (
-              <div className="flex gap-1.5">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <Card key={`c${i}`} card={(hand.boardC || [])[i]} highlight={highlightKeys} anim={cAnim[i]?.anim} delay={cAnim[i]?.delay} style={cAnim[i]?.style} />
-                ))}
-              </div>
-            )}
+              {(() => {
+                const maxSlots = (hand.variant === 'three_two_one' || hand.variant === 'ocean') ? 6 : Math.max(5, (hand.communityCards || []).length);
+                const slots = Array.from({ length: maxSlots }, (_, idx) => idx);
+                return (
+                  <>
+                    <div className="relative flex gap-1.5">
+                      {burnKey > 0 && (
+                        <div
+                          key={`burn-${burnKey}`}
+                          className="burn-card absolute left-0 top-0 w-8 h-11 rounded-md bg-[#3a4a3a] border border-[#4a5a4a] flex items-center justify-center pointer-events-none z-10"
+                        >
+                          <span className="text-[#7fae7f] text-xs">?</span>
+                        </div>
+                      )}
+                      {slots.map((i) => (
+                        <Card key={i} card={hand.communityCards[i]} highlight={highlightKeys} anim={mainAnim[i]?.anim} delay={mainAnim[i]?.delay} style={mainAnim[i]?.style} suitColors={suitColors} />
+                      ))}
+                    </div>
+                    {hand.doubleBoard && (
+                      <div className="flex gap-1.5">
+                        {slots.map((i) => (
+                          <Card key={`b${i}`} card={(hand.boardB || [])[i]} highlight={highlightKeys} anim={bAnim[i]?.anim} delay={bAnim[i]?.delay} style={bAnim[i]?.style} suitColors={suitColors} />
+                        ))}
+                      </div>
+                    )}
+                    {hasBoardC && (
+                      <div className="flex gap-1.5">
+                        {slots.map((i) => (
+                          <Card key={`c${i}`} card={(hand.boardC || [])[i]} highlight={highlightKeys} anim={cAnim[i]?.anim} delay={cAnim[i]?.delay} style={cAnim[i]?.style} suitColors={suitColors} />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             {helpMode && potOdds && (
               <div className="flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-600/70 text-emerald-300 text-xs font-semibold shadow-sm mt-1">
                 <span>Pot odds: {potOdds.percent}%</span>

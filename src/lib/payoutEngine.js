@@ -57,6 +57,184 @@ export function getDefaultPayoutConfig(tablesCount = 1) {
   ];
 }
 
+const PRESET_PAYOUT_PERCENTAGES = {
+  1: [100],
+  2: [65, 35],
+  3: [50, 30, 20],
+  4: [45, 25, 18, 12],
+  5: [40, 25, 17, 11, 7],
+  6: [38, 24, 15, 10, 7, 6],
+  7: [37, 23, 15, 10, 7, 5, 3],
+  8: [36, 22, 15, 10, 7, 5, 3, 2],
+};
+
+export function buildTournamentBrackets(targetPlaces, totalPlayers = 10) {
+  const field = Math.max(targetPlaces, Math.round(Number(totalPlayers) || 10));
+  const brackets = [];
+  let curr = 1;
+
+  // Bracket step sizes scale dynamically with field size (avoiding overly coarse steps in smaller fields)
+  const step10_18 = field <= 30 ? 1 : field <= 60 ? 2 : 3;
+  const step19_90 = field <= 80 ? 3 : field <= 200 ? 5 : 9;
+  const step91_270 = field <= 400 ? 9 : field <= 800 ? 18 : 27;
+  const step271 = field <= 1500 ? 30 : field <= 3000 ? 45 : 54;
+
+  while (curr <= targetPlaces) {
+    if (curr <= 9) {
+      brackets.push({ start: curr, end: curr, count: 1 });
+      curr++;
+    } else if (curr <= 18) {
+      const end = Math.min(targetPlaces, curr + step10_18 - 1);
+      brackets.push({ start: curr, end, count: end - curr + 1 });
+      curr = end + 1;
+    } else if (curr <= 90) {
+      const end = Math.min(targetPlaces, curr + step19_90 - 1);
+      brackets.push({ start: curr, end, count: end - curr + 1 });
+      curr = end + 1;
+    } else if (curr <= 270) {
+      const end = Math.min(targetPlaces, curr + step91_270 - 1);
+      brackets.push({ start: curr, end, count: end - curr + 1 });
+      curr = end + 1;
+    } else {
+      const end = Math.min(targetPlaces, curr + step271 - 1);
+      brackets.push({ start: curr, end, count: end - curr + 1 });
+      curr = end + 1;
+    }
+  }
+  return brackets;
+}
+
+/**
+ * Generate a condensed tournament payout structure for a given number of ITM places (or % of field).
+ * Preserves existing defaults for 3-8 places when standard steepness (3) is chosen.
+ * Allows steepness slider (1 = Balanced, 3 = Standard, 5 = Top-Heavy) where higher steepness
+ * concentrates more money into the top spots while maintaining strictly higher pay for top ranks.
+ */
+export function generatePayoutStructure({
+  places,
+  percent,
+  totalPlayers = 10,
+  totalPool = null,
+  buyIn = 100,
+  steepness = 3,
+} = {}) {
+  const field = Math.max(1, Math.round(Number(totalPlayers) || 10));
+  let targetPlaces;
+  if (percent != null && percent !== '') {
+    const pct = Math.max(0.1, Math.min(100, Number(percent) || 15));
+    targetPlaces = Math.max(1, Math.min(field, Math.round((pct / 100) * field)));
+  } else {
+    targetPlaces = Math.max(1, Math.min(field, Math.round(Number(places) || 1)));
+  }
+
+  const sVal = Math.max(1, Math.min(5, Number(steepness) || 3));
+
+  // If standard steepness (3) and targetPlaces is 1-8, retain standard preset
+  if (sVal === 3 && PRESET_PAYOUT_PERCENTAGES[targetPlaces]) {
+    return PRESET_PAYOUT_PERCENTAGES[targetPlaces].map((val, idx) => ({
+      rank: idx + 1,
+      payout: { type: 'percent', value: val },
+    }));
+  }
+
+  const brackets = buildTournamentBrackets(targetPlaces, field);
+
+  // Final Table (top 9):
+  // Smoothly scales final table share from 100% (for 9 places) down to ~45-55% for massive fields
+  const ftBase = [0.35, 0.22, 0.15, 0.10, 0.07, 0.05, 0.035, 0.025, 0.02];
+  const alpha = 0.70 + (sVal - 1) * 0.25;
+  const ftCount = Math.min(9, targetPlaces);
+  const ftRawWeights = ftBase.slice(0, ftCount).map((w) => Math.pow(w, alpha));
+  const ftSum = ftRawWeights.reduce((s, x) => s + x, 0);
+
+  let baseFtShare = targetPlaces <= 9 ? 1.0 : Math.max(0.42, 1.0 - 0.36 * Math.pow(Math.log10(targetPlaces / 9), 0.85));
+  const ftMultiplier = 0.75 + (sVal - 1) * 0.125;
+  let ftShare = targetPlaces <= 9 ? 1.0 : Math.min(0.85, Math.max(0.30, baseFtShare * ftMultiplier));
+
+  // Minimum cash floor target (higher min-cash when balanced, lower min-cash when top-heavy)
+  const minCashMult = 2.0 - (sVal - 1) * 0.225;
+  const targetMinCashPct = Math.min((minCashMult / field) * 100, (100 / targetPlaces) * 0.65);
+  const minOutsideNeeded = targetPlaces > 9 ? (targetPlaces - 9) * targetMinCashPct : 0;
+  if (minOutsideNeeded + ftShare * 100 > 98) {
+    ftShare = Math.max(0.30, (100 - minOutsideNeeded) / 100);
+  }
+
+  const ftPcts = ftRawWeights.map((w) => (w / ftSum) * ftShare * 100);
+  const spotPcts = [...ftPcts];
+
+  if (targetPlaces > 9) {
+    const p9 = ftPcts[ftPcts.length - 1];
+    const targetRem = (1 - ftShare) * 100;
+    let low = 0.0, high = 6.0, bestGamma = 1.0;
+    for (let iter = 0; iter < 40; iter++) {
+      const mid = (low + high) / 2;
+      let sumMid = 0;
+      for (let r = 10; r <= targetPlaces; r++) {
+        sumMid += Math.max(targetMinCashPct, p9 * Math.pow(10 / r, mid));
+      }
+      if (sumMid > targetRem) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+      bestGamma = mid;
+    }
+
+    for (let r = 10; r <= targetPlaces; r++) {
+      spotPcts.push(Math.max(targetMinCashPct, p9 * Math.pow(10 / r, bestGamma)));
+    }
+  }
+
+  // Bracket rows: sum individual spot percentages within each bracket
+  const rawRows = brackets.map((b) => {
+    let sumBracket = 0;
+    for (let r = b.start; r <= b.end; r++) {
+      sumBracket += spotPcts[r - 1];
+    }
+    const rankLabel = b.start === b.end ? b.start : `${b.start}-${b.end}`;
+    return {
+      rank: rankLabel,
+      start: b.start,
+      end: b.end,
+      count: b.count,
+      rawPct: sumBracket,
+    };
+  });
+
+  // Round to 2 decimal places:
+  let rows = rawRows.map((r) => ({
+    rank: r.rank,
+    start: r.start,
+    end: r.end,
+    count: r.count,
+    payout: {
+      type: 'percent',
+      value: Math.max(0.01, Math.round(r.rawPct * 100) / 100),
+    },
+  }));
+
+  // Enforce monotonic non-increasing per-player payout:
+  for (let i = rows.length - 2; i >= 0; i--) {
+    const perPlayerCurr = rows[i].payout.value / rows[i].count;
+    const perPlayerNext = rows[i + 1].payout.value / rows[i + 1].count;
+    if (perPlayerCurr < perPlayerNext) {
+      rows[i].payout.value = Math.round(perPlayerNext * rows[i].count * 100) / 100;
+    }
+  }
+
+  // Balance sum to exactly 100.00:
+  let sum = Math.round(rows.reduce((s, r) => s + r.payout.value, 0) * 100) / 100;
+  let diff = Math.round((100 - sum) * 100) / 100;
+  if (diff !== 0) {
+    rows[0].payout.value = Math.round((rows[0].payout.value + diff) * 100) / 100;
+  }
+
+  return rows.map((r) => ({
+    rank: r.rank,
+    payout: r.payout,
+  }));
+}
+
 export function getOrdinalSuffix(i) {
   const j = i % 10,
     k = i % 100;
@@ -70,7 +248,7 @@ export function getOrdinalSuffix(i) {
  * Parse rank specification
  * @returns { start: number, end: number, isPercent: boolean, percentCount: number }
  */
-function parseRankSpec(rankSpec, totalPlayers, currentAssignedMaxRank) {
+export function parseRankSpec(rankSpec, totalPlayers, currentAssignedMaxRank) {
   const total = Math.max(1, totalPlayers);
 
   // If object { type: 'percent', value: 2 } or { type: 'range', start: 3, end: 5 }
@@ -270,30 +448,16 @@ export function calculateTournamentPayouts({
 
   individualRanks.sort((a, b) => a.place - b.place);
 
-  // Requirement: By default, the minimum payout ITM should be at least 1.5 buy-ins
-  const minCashTarget = Math.round(1.5 * bi);
-  if (bi > 0 && pool >= minCashTarget && individualRanks.length > 0) {
-    const minPaid = individualRanks[individualRanks.length - 1]?.amount || 0;
-    if (minPaid < minCashTarget) {
-      for (let i = individualRanks.length - 1; i >= 0; i--) {
-        if (individualRanks[i].amount < minCashTarget) {
-          individualRanks[i].amount = minCashTarget;
-          individualRanks[i].percent = pool > 0 ? (minCashTarget / pool) * 100 : 0;
-        }
-      }
-      // Rebalance top ranks if total allocated exceeds the pool
-      let totalAllocated = individualRanks.reduce((s, r) => s + r.amount, 0);
-      if (totalAllocated > pool) {
-        let excess = totalAllocated - pool;
-        for (let i = 0; i < individualRanks.length - 1 && excess > 0; i++) {
-          const reducible = individualRanks[i].amount - minCashTarget;
-          if (reducible > 0) {
-            const deduct = Math.min(reducible, excess);
-            individualRanks[i].amount -= deduct;
-            individualRanks[i].percent = pool > 0 ? (individualRanks[i].amount / pool) * 100 : 0;
-            excess -= deduct;
-          }
-        }
+  // Balance any small integer dollar/cent rounding discrepancy to 1st place
+  if (pool > 0 && individualRanks.length > 0) {
+    const totalAllocated = individualRanks.reduce((s, r) => s + r.amount, 0);
+    const diff = pool - totalAllocated;
+    if (Math.abs(diff) > 0 && Math.abs(diff) <= Math.max(50, pool * 0.02)) {
+      individualRanks[0].amount += diff;
+      individualRanks[0].percent = (individualRanks[0].amount / pool) * 100;
+      if (individualRanks[0].bracketTotalAmount != null) {
+        individualRanks[0].bracketTotalAmount += diff;
+        individualRanks[0].bracketTotalPercent = (individualRanks[0].bracketTotalAmount / pool) * 100;
       }
     }
   }

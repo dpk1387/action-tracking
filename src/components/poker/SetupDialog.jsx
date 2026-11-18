@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Minus, FolderOpen, Clock, Trash2, Award } from 'lucide-react';
+import { X, Plus, Minus, FolderOpen, Clock, Trash2, Award, Sparkles } from 'lucide-react';
 import BlindScheduleEditor from '@/components/poker/BlindScheduleEditor';
 import ChipDenominationPicker from '@/components/poker/ChipDenominationPicker';
 import HelpHover from '@/components/HelpHover';
 import SavedStructuresDialog from '@/components/poker/SavedStructuresDialog';
-import { defaultScheduleFor, defaultDenomsFor, firstBreakLevelNum } from '@/lib/tournamentStructures';
+import { defaultScheduleFor, defaultDenomsFor, firstBreakLevelNum, generateBlindSchedule } from '@/lib/tournamentStructures';
 import { suggestAnte, parseAmount } from '@/lib/poker';
+import { ROUNDING_OPTIONS, isRoundingOptionDisabled } from '@/lib/goMode';
 
 const CASH_DEFAULT = { smallBlind: 1, bigBlind: 2, anteType: 'none', anteAmount: 0 };
 
@@ -26,6 +27,7 @@ function ToggleRow({ label, checked, onChange, disabled }) {
 }
 
 export default function SetupDialog({ initial, onSave, onClose }) {
+  const [sessionName, setSessionName] = useState(initial?.sessionName || '');
   const [mode, setMode] = useState(initial?.mode || 'tournament');
   const [variant, setVariant] = useState(!initial?.variant || initial.variant === 'holdem' ? 'nlh' : initial.variant);
   const [currency, setCurrency] = useState(initial?.currency || '$');
@@ -97,9 +99,21 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     const lowest = [...denoms].sort((a, b) => a - b)[0];
     return defaultScheduleFor(lowest);
   });
-  const [gameType, setGameType] = useState(initial?.gameType || 'nl');
-  const [gameTypeTouched, setGameTypeTouched] = useState(false);
   const omahaVariants = ['plo', 'plo5', 'plo6', 'plo8'];
+  const degenVariantLabels = {
+    second_best: '2nd Best',
+    three_two_one: '3-2-1',
+    ocean: 'Ocean',
+    showtime: 'Showtime',
+    mandatory_3bet: 'Mandatory 3-Bet',
+    red_river: 'Red River',
+    win_button: 'Win the Button',
+    deuces_wild: 'Deuces Wild',
+  };
+  const [gameType, setGameType] = useState(() => {
+    const initV = !initial?.variant || initial.variant === 'holdem' ? 'nlh' : initial.variant;
+    return omahaVariants.includes(initV) ? 'pl' : (initial?.gameType || 'nl');
+  });
   const handleVariantChange = (v) => {
     setVariant(v);
     if (v === 'short_deck') {
@@ -107,12 +121,13 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         setAnteAmount(isCash ? 1 : 25);
       }
     }
-    if (!gameTypeTouched) setGameType(omahaVariants.includes(v) ? 'pl' : 'nl');
+    setGameType(omahaVariants.includes(v) ? 'pl' : 'nl');
   };
-  const handleGameTypeChange = (gt) => { setGameType(gt); setGameTypeTouched(true); };
   const [smallBet, setSmallBet] = useState(initial?.smallBet ?? 10);
   const [bigBet, setBigBet] = useState(initial?.bigBet ?? 20);
   const [flMaxRaises, setFlMaxRaises] = useState(initial?.flMaxRaises ?? 4);
+  const [isGoMode, setIsGoMode] = useState(initial?.isGoMode || false);
+  const [stackRounding, setStackRounding] = useState(initial?.stackRounding || 100);
   const [error, setError] = useState('');
   const [showStructures, setShowStructures] = useState(false);
 
@@ -123,7 +138,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
 
   // Clock system configuration
   const [clockSystem, setClockSystem] = useState(initial?.clockConfig?.clockSystem || 'call_clock');
-  const [callClockSeconds, setCallClockSeconds] = useState(initial?.clockConfig?.callClockSeconds ?? 60);
+  const [callClockSeconds, setCallClockSeconds] = useState(initial?.clockConfig?.callClockSeconds ?? 30);
   const [timeBankMode, setTimeBankMode] = useState(initial?.clockConfig?.timeBankMode || 'split'); // 'single' | 'split'
   const [singleSeconds, setSingleSeconds] = useState(initial?.clockConfig?.singleSeconds ?? 30);
   const [preflopSeconds, setPreflopSeconds] = useState(initial?.clockConfig?.preflopSeconds ?? 20);
@@ -140,58 +155,89 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   });
   const [levelMethod, setLevelMethod] = useState(initial?.levelConfig?.method || 'minutes');
   const [levelValue, setLevelValue] = useState(initial?.levelConfig?.value ?? 15);
+  const [breakDurationMinutes, setBreakDurationMinutes] = useState(initial?.breakDurationMinutes ?? 10);
+  const [breakEveryLevels, setBreakEveryLevels] = useState(initial?.breakEveryLevels ?? 4);
+  const [desiredDurationMinutes, setDesiredDurationMinutes] = useState(
+    initial?.desiredDurationMinutes != null ? initial.desiredDurationMinutes : 180
+  );
+  const [colorUpBreaksOnly, setColorUpBreaksOnly] = useState(Boolean(initial?.colorUpBreaksOnly));
+  const [generatorSpeed, setGeneratorSpeed] = useState(initial?.generatorSpeed || 'balanced');
   const LEVEL_PRESETS = { minutes: 15, hands: 15, orbits: 2 };
   const handleLevelMethodChange = (m) => {
     setLevelMethod(m);
     setLevelValue(LEVEL_PRESETS[m]);
   };
 
-  const buildStructureData = () => ({
-    mode, variant: isCash ? variant : 'nlh', gameType, currency, stackInBB, seatCount,
-    smallBlind, bigBlind, thirdBlind, fourthBlind, anteType, anteAmount,
-    sbHalfAnteShortHanded, shortHandedThreshold,
-    smallBet, bigBet, flMaxRaises,
-    doubleBoard: false, allowStraddle, allowMultiStraddle, mandatoryStraddle,
-    bombPot, bombAmount,
-    firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
-    levelMethod, levelValue,
-    chipDenoms,
-    tournamentFormat, maxReEntries, lateRegEnabled, lateRegLevel,
-    rebuyPrice, rebuyChips, allowAddOn, addOnPrice, addOnChips,
-    schedule,
-    bountyConfig: {
-      bounty: !isCash && tournamentBounty,
-      bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
-      mysteryBounty: !isCash && mysteryBounty,
-    },
-    sideGames: {
-      ...(initial?.sideGames || {}),
-      bounty: !isCash && tournamentBounty,
-      bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
-      mysteryBounty: !isCash && mysteryBounty,
-    },
-    clockConfig: {
-      clockSystem,
-      callClockSeconds: Number(callClockSeconds) || 60,
-      timeBankMode,
-      singleSeconds: Number(singleSeconds) || 30,
-      preflopSeconds: Number(preflopSeconds) || 20,
-      postflopSplitStreet: !!postflopSplitStreet,
-      postflopSeconds: Number(postflopSeconds) || 40,
-      flopSeconds: Number(flopSeconds) || 40,
-      turnSeconds: Number(turnSeconds) || 40,
-      riverSeconds: Number(riverSeconds) || 40,
-      initialTimeBanks: Math.max(0, Number(initialTimeBanks) || 0),
-      timeBankAddSeconds: Number(timeBankAddSeconds) || 30,
-      addOnRules,
-    },
-  });
+  const buildStructureData = () => {
+    const schedBB = schedule?.[0]?.bigBlind ? (parseAmount(schedule[0].bigBlind) ?? Number(schedule[0].bigBlind)) : 50;
+    const effStartingStack = bulkStack !== '' ? (parseAmount(bulkStack) ?? Number(bulkStack)) : (players[0]?.stack ? (parseAmount(players[0].stack) ?? Number(players[0].stack)) : schedBB * 100);
+
+    return {
+      mode, variant, gameType, currency, stackInBB, seatCount,
+      smallBlind, bigBlind, thirdBlind, fourthBlind, anteType, anteAmount,
+      sbHalfAnteShortHanded, shortHandedThreshold,
+      smallBet, bigBet, flMaxRaises,
+      doubleBoard: false, allowStraddle, allowMultiStraddle, mandatoryStraddle,
+      bombPot, bombAmount,
+      firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
+      levelMethod, levelValue,
+      levelDurationMinutes: levelMethod === 'minutes' ? (Number(levelValue) || 15) : undefined,
+      breakDurationMinutes: Number(breakDurationMinutes) || 10,
+      breakEveryLevels: Number(breakEveryLevels) || 4,
+      desiredDurationMinutes: Number(desiredDurationMinutes) || 0,
+      colorUpBreaksOnly: Boolean(colorUpBreaksOnly),
+      generatorSpeed,
+      chipDenoms,
+      startingStack: effStartingStack,
+      tournamentFormat, maxReEntries, lateRegEnabled, lateRegLevel,
+      rebuyPrice, rebuyChips, allowAddOn, addOnPrice, addOnChips,
+      rebuyRules: {
+        timeLimitEnabled: !!rebuyTimeEnabled,
+        timeCutoffLevel: Number(rebuyCutoffLevel) || 4,
+        stackCapEnabled: !!rebuyStackCapEnabled,
+        stackCapAmount: rebuyStackCapAmount !== '' ? (parseAmount(rebuyStackCapAmount) ?? Number(rebuyStackCapAmount)) : effStartingStack,
+        cappedRebuysEnabled: !!rebuyCappedEnabled,
+        maxRebuys: Number(rebuyMaxRebuys) || 1,
+      },
+      schedule,
+      bountyConfig: {
+        bounty: !isCash && tournamentBounty,
+        bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
+        mysteryBounty: !isCash && mysteryBounty,
+      },
+      sideGames: {
+        ...(initial?.sideGames || {}),
+        bounty: !isCash && tournamentBounty,
+        bountyAmount: !isCash && tournamentBounty ? (Number(bountyAmount) || 0) : 0,
+        mysteryBounty: !isCash && mysteryBounty,
+      },
+      clockConfig: {
+        clockSystem,
+        callClockSeconds: Number(callClockSeconds) || 30,
+        timeBankMode,
+        singleSeconds: Number(singleSeconds) || 30,
+        preflopSeconds: Number(preflopSeconds) || 20,
+        postflopSplitStreet: !!postflopSplitStreet,
+        postflopSeconds: Number(postflopSeconds) || 40,
+        flopSeconds: Number(flopSeconds) || 40,
+        turnSeconds: Number(turnSeconds) || 40,
+        riverSeconds: Number(riverSeconds) || 40,
+        initialTimeBanks: Math.max(0, Number(initialTimeBanks) || 0),
+        timeBankAddSeconds: Number(timeBankAddSeconds) || 30,
+        addOnRules,
+      },
+    };
+  };
 
   const applyStructure = (d) => {
     if (!d) return;
     if (d.mode) setMode(d.mode);
-    if (d.variant) setVariant(d.variant);
-    if (d.gameType) { setGameType(d.gameType); setGameTypeTouched(true); }
+    if (d.variant) {
+      setVariant(d.variant);
+      setGameType(omahaVariants.includes(d.variant) ? 'pl' : (d.gameType || 'nl'));
+    } else if (d.gameType) {
+      setGameType(d.gameType);
+    }
     if (d.currency != null) setCurrency(d.currency);
     if (d.stackInBB != null) setStackInBB(d.stackInBB);
     if (d.seatCount != null) {
@@ -203,6 +249,10 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         arr.length = count;
         return arr.map((p, i) => ({ ...p, seat: i + 1 }));
       });
+    }
+    if (d.startingStack != null) {
+      setBulkStack(String(d.startingStack));
+      setPlayers((prev) => prev.map((p) => ({ ...p, stack: String(d.startingStack) })));
     }
     if (d.smallBlind != null) setSmallBlind(d.smallBlind);
     if (d.bigBlind != null) { setBigBlind(d.bigBlind); setCashBlindsTouched(true); }
@@ -227,7 +277,17 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     if (d.bombAmount != null) setBombAmount(d.bombAmount);
     if (d.levelMethod != null) setLevelMethod(d.levelMethod);
     if (d.levelValue != null) setLevelValue(d.levelValue);
-    if (Array.isArray(d.chipDenoms)) setChipDenoms(d.chipDenoms);
+    if (d.levelDurationMinutes != null) {
+      setLevelMethod('minutes');
+      setLevelValue(d.levelDurationMinutes);
+    }
+    if (d.breakDurationMinutes != null) setBreakDurationMinutes(d.breakDurationMinutes);
+    if (d.breakEveryLevels != null) setBreakEveryLevels(d.breakEveryLevels);
+    if (d.desiredDurationMinutes != null) setDesiredDurationMinutes(d.desiredDurationMinutes);
+    if (d.colorUpBreaksOnly != null) setColorUpBreaksOnly(Boolean(d.colorUpBreaksOnly));
+    if (d.generatorSpeed) setGeneratorSpeed(d.generatorSpeed);
+    if (Array.isArray(d.chipDenominations)) setChipDenoms(d.chipDenominations);
+    else if (Array.isArray(d.chipDenoms)) setChipDenoms(d.chipDenoms);
     if (d.tournamentFormat != null) setTournamentFormat(d.tournamentFormat);
     if (d.maxReEntries != null) setMaxReEntries(d.maxReEntries);
     if (d.lateRegEnabled != null) setLateRegEnabled(d.lateRegEnabled);
@@ -237,6 +297,14 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     if (d.allowAddOn != null) setAllowAddOn(d.allowAddOn);
     if (d.addOnPrice != null) setAddOnPrice(d.addOnPrice);
     if (d.addOnChips != null) setAddOnChips(d.addOnChips);
+    if (d.rebuyRules) {
+      if (d.rebuyRules.timeLimitEnabled != null) setRebuyTimeEnabled(d.rebuyRules.timeLimitEnabled);
+      if (d.rebuyRules.timeCutoffLevel != null) setRebuyCutoffLevel(d.rebuyRules.timeCutoffLevel);
+      if (d.rebuyRules.stackCapEnabled != null) setRebuyStackCapEnabled(d.rebuyRules.stackCapEnabled);
+      if (d.rebuyRules.stackCapAmount != null) setRebuyStackCapAmount(d.rebuyRules.stackCapAmount);
+      if (d.rebuyRules.cappedRebuysEnabled != null) setRebuyCappedEnabled(d.rebuyRules.cappedRebuysEnabled);
+      if (d.rebuyRules.maxRebuys != null) setRebuyMaxRebuys(d.rebuyRules.maxRebuys);
+    }
     if (Array.isArray(d.schedule)) setSchedule(d.schedule);
     if (d.bountyConfig) {
       if (d.bountyConfig.bounty != null) setTournamentBounty(d.bountyConfig.bounty);
@@ -391,11 +459,19 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       const finalPlayers = occupiedPlayers.map((p) => ({ ...p, name: (p.name || '').trim() || `Player ${p.seat}`, stack: toChips(p.stack) }));
       const determinedStartingStack = initial?.startingStack || (finalPlayers.length ? finalPlayers[0].stack : (bulkStack ? toChips(bulkStack) : 100 * bb));
 
+      const finalVariant = isGoMode ? (variant === 'plo' ? 'plo' : 'nlh') : variant;
+      const finalGameType = isGoMode
+        ? (finalVariant === 'plo' ? 'pl' : 'nl')
+        : (omahaVariants.includes(finalVariant) ? 'pl' : gameType);
+
       onSave({
+      sessionName: sessionName.trim() || undefined,
       mode,
-      variant,
+      variant: finalVariant,
+      isGoMode,
+      stackRounding,
       firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
-      gameType,
+      gameType: finalGameType,
       currency: sym,
       stackInBB: !isCash && stackInBB,
       tableSize: isCash ? occupiedPlayers.length : seatCount,
@@ -454,12 +530,19 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         cappedRebuysEnabled: !!rebuyCappedEnabled,
         maxRebuys: Number(rebuyMaxRebuys) || 1,
       },
+      breakDurationMinutes: isCash ? undefined : (Number(breakDurationMinutes) || 10),
+      breakEveryLevels: isCash ? undefined : (Number(breakEveryLevels) || 4),
+      desiredDurationMinutes: isCash ? undefined : (Number(desiredDurationMinutes) || 0),
+      colorUpBreaksOnly: isCash ? undefined : Boolean(colorUpBreaksOnly),
+      generatorSpeed: isCash ? undefined : generatorSpeed,
       blindSchedule: isCash ? [] : schedule.map((l) => {
         if (l.type === 'break') {
+          const hasRace = l.race && (parseAmount(l.race.retired) ?? Number(l.race.retired)) > 0 && (parseAmount(l.race.replacement) ?? Number(l.race.replacement)) > 0;
           return {
             type: 'break',
             minutes: Number(l.minutes) > 0 ? Number(l.minutes) : 10,
-            race: l.race && (parseAmount(l.race.retired) ?? Number(l.race.retired)) > 0 && (parseAmount(l.race.replacement) ?? Number(l.race.replacement)) > 0
+            isColorUp: Boolean(l.isColorUp || hasRace),
+            race: hasRace
               ? { retired: parseAmount(l.race.retired) ?? Number(l.race.retired), replacement: parseAmount(l.race.replacement) ?? Number(l.race.replacement) }
               : null,
           };
@@ -485,7 +568,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       },
       clockConfig: {
         clockSystem,
-        callClockSeconds: Number(callClockSeconds) || 60,
+        callClockSeconds: Number(callClockSeconds) || 30,
         timeBankMode,
         singleSeconds: Number(singleSeconds) || 30,
         preflopSeconds: Number(preflopSeconds) || 20,
@@ -529,26 +612,50 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             <button onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer"><X size={20} /></button>
           )}
         </div>
+        {/* Session Name (Optional) */}
+        <div className="mb-4">
+          <label className="text-xs text-slate-300 font-semibold block mb-1">Session Name (Optional)</label>
+          <input
+            type="text"
+            value={sessionName}
+            onChange={(e) => setSessionName(e.target.value)}
+            placeholder="e.g. Friday Night Game"
+            className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-3.5 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a] placeholder:text-slate-500"
+          />
+        </div>
+
         <div className="flex flex-wrap items-center gap-4 mb-5">
           <div className="flex rounded-lg border border-[#2a2f37] overflow-hidden">
             <button onClick={() => handleModeChange('tournament')} className={`px-4 py-2 text-sm cursor-pointer ${mode === 'tournament' ? 'bg-[#4a5a4a] text-white' : 'bg-[#15181d] text-slate-300'}`}>Tournament</button>
             <button onClick={() => handleModeChange('cash')} className={`px-4 py-2 text-sm cursor-pointer ${mode === 'cash' ? 'bg-[#4a5a4a] text-white' : 'bg-[#15181d] text-slate-300'}`}>Cash</button>
           </div>
-          <select value={gameType} onChange={(e) => handleGameTypeChange(e.target.value)} className="rounded-lg border border-[#2a2f37] bg-[#15181d] px-3 py-2 text-sm text-white">
-            <option value="nl">No Limit</option>
-            <option value="pl">Pot Limit</option>
-          </select>
-          <select value={variant} onChange={(e) => handleVariantChange(e.target.value)} className="rounded-lg border border-[#2a2f37] bg-[#15181d] px-3 py-2 text-sm text-white">
-            <option value="nlh">Hold'em</option>
-            <option value="plo">Omaha</option>
-            <option value="short_deck">Short Deck</option>
-            <option value="pineapple">Pineapple</option>
-            <option value="lazy_pineapple">Lazy Pineapple</option>
-            <option value="crazy_pineapple">Crazy Pineapple</option>
-            <option value="super_holdem">Super Hold'em</option>
-            <option value="plo5">Omaha 5</option>
-            <option value="plo6">Omaha 6</option>
-            <option value="plo8">Omaha Hi/Lo</option>
+          <select
+            value={isGoMode ? (variant === 'plo' ? 'plo' : 'nlh') : variant}
+            onChange={(e) => handleVariantChange(e.target.value)}
+            className="rounded-lg border border-[#2a2f37] bg-[#15181d] px-3 py-2 text-sm text-white cursor-pointer"
+          >
+            {isGoMode ? (
+              <>
+                <option value="nlh">NLH</option>
+                <option value="plo">PLO</option>
+              </>
+            ) : (
+              <>
+                <option value="nlh">NLH</option>
+                <option value="plo">PLO</option>
+                <option value="short_deck">Short Deck</option>
+                <option value="pineapple">Pineapple</option>
+                <option value="crazy_pineapple">Crazy Pineapple</option>
+                <option value="lazy_pineapple">Lazy Pineapple</option>
+                <option value="super_holdem">Super Hold 'Em</option>
+                <option value="plo5">PLO5</option>
+                <option value="plo6">PLO6</option>
+                <option value="plo8">PLO8</option>
+                {degenVariantLabels[variant] && !['nlh', 'plo', 'short_deck', 'pineapple', 'crazy_pineapple', 'lazy_pineapple', 'super_holdem', 'plo5', 'plo6', 'plo8'].includes(variant) && (
+                  <option value={variant}>{degenVariantLabels[variant]}</option>
+                )}
+              </>
+            )}
           </select>
           {isCash && (
             <div className="flex items-center gap-2">
@@ -572,6 +679,30 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             </select>
           </div>
         </div>
+        {/* GO Mode Opponent Stack Rounding Section */}
+        {isGoMode && (
+          <div className="flex flex-wrap items-center justify-between gap-4 p-3 mb-4 rounded-xl border border-amber-500/30 bg-amber-950/20">
+            <span className="text-xs font-bold text-amber-200">
+              Stack Approximation
+            </span>
+            <div className="flex items-center gap-2">
+              <select
+                value={stackRounding || getDefaultStackRounding(smallBlind)}
+                onChange={(e) => setStackRounding(e.target.value)}
+                className="rounded-lg border border-amber-500/40 bg-[#15181d] px-3 py-1.5 text-xs font-bold text-white"
+              >
+                {ROUNDING_OPTIONS.map((opt) => {
+                  const disabled = isRoundingOptionDisabled(opt.value, smallBlind);
+                  return (
+                    <option key={opt.value} value={opt.value} disabled={disabled}>
+                      {opt.label} {disabled ? '(Disabled)' : ''}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-4 mb-4">
           <div className="flex items-center gap-3">
             <span className="text-sm text-slate-400">{isCash ? 'Players' : 'Seats'}</span>
@@ -761,8 +892,9 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                   className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
                 >
                   <option value="none">No ante</option>
-                  <option value="traditional">Traditional ante</option>
+                  {isCash && <option value="traditional">Traditional ante</option>}
                   <option value="bba">Big blind ante (BBA)</option>
+                  <option value="sb_half_ante">Big blind half ante (0.5 BB)</option>
                   <option value="btn_ante">Button ante (BTN 1 BB)</option>
                   {isCash && <option value="three_blinds">3 blinds</option>}
                   {isCash && <option value="four_blinds">4 blinds</option>}
@@ -781,7 +913,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                   />
                   {isBBA && <div className="text-[10px] text-slate-500 mt-1">= 1 BB ({effBB}) for table</div>}
                   {isBtnAnte && <div className="text-[10px] text-emerald-400/80 mt-1">= 1 BB ({effBB}) paid by BTN</div>}
-                  {isSBHalfAnte && <div className="text-[10px] text-amber-400/80 mt-1">= 0.5 BB ({Math.max(1, Math.round(effBB * 0.5))}) paid by SB</div>}
+                  {isSBHalfAnte && <div className="text-[10px] text-amber-400/80 mt-1">= 0.5 BB ({Math.max(1, Math.round(effBB * 0.5))}) paid by BB</div>}
                 </div>
               )}
             </div>
@@ -1062,11 +1194,323 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             </div>
           );
         })()}
-        {!isCash && (
-          <div className="mb-4">
-            <BlindScheduleEditor schedule={schedule} onChange={setSchedule} anteType={anteType} chipDenominations={chipDenoms} />
-          </div>
-        )}
+        {!isCash && (() => {
+          const validDenoms = chipDenoms.map(Number).filter((d) => d > 0);
+          const lowestChip = validDenoms.length ? Math.min(...validDenoms) : 25;
+          const rawStackInput = parseAmount(players.find((p) => p.occupied && p.stack !== '')?.stack)
+            ?? parseAmount(bulkStack);
+          const firstSchedBB = schedule?.[0]?.bigBlind ? (parseAmount(schedule[0].bigBlind) ?? Number(schedule[0].bigBlind)) : (lowestChip * 2);
+          const estStartingStack = rawStackInput && rawStackInput > 0
+            ? (stackInBB ? rawStackInput * (firstSchedBB || lowestChip * 2) : rawStackInput)
+            : (200 * lowestChip);
+          const genLevelDuration = levelMethod === 'minutes' ? (Number(levelValue) || 15) : 15;
+
+          const handleDenomsChange = (newDenoms) => {
+            setChipDenoms(newDenoms);
+            if (newDenoms.length > 0) {
+              const lowest = Math.min(...newDenoms);
+              setSchedule(defaultScheduleFor(lowest));
+            }
+          };
+
+          const handleGenerateBlindStructure = () => {
+            if (levelMethod !== 'minutes') {
+              setLevelMethod('minutes');
+              setLevelValue(genLevelDuration);
+            }
+            const newSched = generateBlindSchedule({
+              lowestChip,
+              startingStack: estStartingStack,
+              levelDurationMinutes: genLevelDuration,
+              breakDurationMinutes: Number(breakDurationMinutes) || 10,
+              breakEveryLevels: Number(breakEveryLevels) || 4,
+              desiredMinutes: Number(desiredDurationMinutes) || 0,
+              colorUpBreaksOnly,
+              chipDenominations: chipDenoms,
+              speed: generatorSpeed,
+              anteType,
+            });
+            setSchedule(newSched);
+          };
+
+          return (
+            <div className="space-y-4 mb-4">
+              <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3">
+                <ChipDenominationPicker selected={chipDenoms} onChange={handleDenomsChange} />
+              </div>
+
+              <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3.5 space-y-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#2a2f37] pb-2.5">
+                  <div>
+                    <div className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                      <Clock size={14} className="text-emerald-400" />
+                      <span>Level Pacing & Blind Structure Generator</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Generate a blind progression sized to your desired tournament length and starting stack.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGenerateBlindStructure}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white flex items-center gap-1.5 cursor-pointer transition-colors shadow self-start sm:self-center shrink-0"
+                  >
+                    <Sparkles size={14} /> Generate Blind Schedule
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Desired Length
+                    </label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="0"
+                          max="24"
+                          value={Math.floor((Number(desiredDurationMinutes) || 0) / 60)}
+                          onChange={(e) => {
+                            const h = Math.max(0, Math.min(24, parseInt(e.target.value, 10) || 0));
+                            const m = (Number(desiredDurationMinutes) || 0) % 60;
+                            setDesiredDurationMinutes(h * 60 + m);
+                          }}
+                          className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 pr-6 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                        />
+                        <span className="absolute right-2 top-1.5 text-slate-400 text-[11px] pointer-events-none">hr</span>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="0"
+                          max="59"
+                          step="5"
+                          value={(Number(desiredDurationMinutes) || 0) % 60}
+                          onChange={(e) => {
+                            const h = Math.floor((Number(desiredDurationMinutes) || 0) / 60);
+                            const m = Math.max(0, Math.min(59, parseInt(e.target.value, 10) || 0));
+                            setDesiredDurationMinutes(h * 60 + m);
+                          }}
+                          className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 pr-6 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                        />
+                        <span className="absolute right-2 top-1.5 text-slate-400 text-[11px] pointer-events-none">m</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Level Duration
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="1"
+                        max="120"
+                        value={levelMethod === 'minutes' ? levelValue : genLevelDuration}
+                        onChange={(e) => {
+                          setLevelMethod('minutes');
+                          setLevelValue(e.target.value);
+                        }}
+                        className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                      />
+                      <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">min</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Break Duration
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="1"
+                        max="60"
+                        value={breakDurationMinutes}
+                        onChange={(e) => setBreakDurationMinutes(e.target.value)}
+                        className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                      />
+                      <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">min</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Break Schedule
+                    </label>
+                    <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#1e2227] p-0.5 border border-[#2a2f37]">
+                      <button
+                        type="button"
+                        onClick={() => setColorUpBreaksOnly(false)}
+                        className={`py-1 text-center rounded text-[11px] font-medium cursor-pointer transition-colors ${
+                          !colorUpBreaksOnly
+                            ? 'bg-[#4a5a4a] text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Interval
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setColorUpBreaksOnly(true)}
+                        className={`py-1 text-center rounded text-[11px] font-medium cursor-pointer transition-colors ${
+                          colorUpBreaksOnly
+                            ? 'bg-[#4a5a4a] text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Color-ups
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Break Every
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="1"
+                        max="12"
+                        disabled={colorUpBreaksOnly}
+                        value={breakEveryLevels}
+                        onChange={(e) => setBreakEveryLevels(e.target.value)}
+                        className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a] disabled:opacity-40 disabled:cursor-not-allowed"
+                      />
+                      <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">lvls</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                      Structure Speed
+                    </label>
+                    <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#1e2227] p-0.5 border border-[#2a2f37]">
+                      <button
+                        type="button"
+                        onClick={() => setGeneratorSpeed('balanced')}
+                        className={`py-1 text-center rounded text-xs font-medium cursor-pointer transition-colors ${
+                          generatorSpeed === 'balanced'
+                            ? 'bg-[#4a5a4a] text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Balanced
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGeneratorSpeed('turbo')}
+                        className={`py-1 text-center rounded text-xs font-medium cursor-pointer transition-colors ${
+                          generatorSpeed === 'turbo'
+                            ? 'bg-[#4a5a4a] text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Turbo
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 bg-[#1e2227] p-2.5 rounded-lg border border-[#2a2f37]">
+                  <span>
+                    Lowest Chip: <span className="font-mono text-emerald-400 font-bold">{lowestChip}</span> · Starting Stack: <span className="font-mono text-white font-bold">{Math.round(estStartingStack).toLocaleString()}</span> ({Math.round(estStartingStack / (2 * lowestChip))} BBs at Level 1)
+                  </span>
+                  <span className="text-slate-400">
+                    {Number(desiredDurationMinutes) > 0
+                      ? `Target: ${Math.floor(desiredDurationMinutes / 60)}h ${String(desiredDurationMinutes % 60).padStart(2, '0')}m · `
+                      : 'Standard full schedule · '}
+                    {colorUpBreaksOnly
+                      ? `Breaks during color-ups only (${breakDurationMinutes}m each)`
+                      : `Breaks every ${breakEveryLevels} levels (${breakDurationMinutes}m each)`}
+                  </span>
+                </div>
+              </div>
+
+              <BlindScheduleEditor schedule={schedule} onChange={setSchedule} anteType={anteType} chipDenominations={chipDenoms} />
+            </div>
+          );
+        })()}
+        {!isCash && (() => {
+          const sched = schedule || [];
+          let playMinutes = 0;
+          let breakMinutes = 0;
+          let levelCount = 0;
+          const defVal = Number(levelValue) > 0 ? Number(levelValue) : 15;
+
+          sched.forEach((item) => {
+            if (item.type === 'break' || item.type === 'color_up') {
+              const isCol = Boolean(item.isColorUp || item.type === 'color_up' || (item.race && (item.race.retired || item.race.replacement)));
+              const bMin = Number(item.minutes) || (isCol ? 2 : 10);
+              breakMinutes += bMin;
+            } else {
+              levelCount++;
+              const itemMin = Number(item.minutes);
+              const lMin = (itemMin != null && itemMin > 0) ? itemMin : defVal;
+              playMinutes += lMin;
+            }
+          });
+
+          const fmtDuration = (totalM) => {
+            const h = Math.floor(totalM / 60);
+            const m = totalM % 60;
+            if (h > 0 && m > 0) return `${h}h ${m}m`;
+            if (h > 0) return `${h}h`;
+            return `${m}m`;
+          };
+
+          const totalMinutes = playMinutes + breakMinutes;
+
+          return (
+            <div className="rounded-xl border border-emerald-500/30 bg-[#141c18] p-3.5 mb-4 shadow-sm">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 mb-2 flex items-center gap-1.5">
+                <Clock size={13} />
+                <span>Structure Schedule Timing Breakdown</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                {levelMethod === 'minutes' ? (
+                  <>
+                    <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
+                      <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">Playing Time</span>
+                      <span className="text-white font-mono font-bold text-sm">{fmtDuration(playMinutes)}</span>
+                      <span className="text-slate-500 text-[10px] block mt-0.5">({levelCount} levels)</span>
+                    </div>
+                    <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
+                      <span className="text-amber-400 text-[10px] uppercase font-bold block mb-0.5">On Break</span>
+                      <span className="text-amber-300 font-mono font-bold text-sm">{fmtDuration(breakMinutes)}</span>
+                      <span className="text-slate-500 text-[10px] block mt-0.5">total break time</span>
+                    </div>
+                    <div className="col-span-2 sm:col-span-1 rounded-lg bg-emerald-950/40 border border-emerald-600/40 p-2.5">
+                      <span className="text-emerald-400 text-[10px] uppercase font-bold block mb-0.5">Total Time</span>
+                      <span className="text-emerald-200 font-mono font-black text-sm">{fmtDuration(totalMinutes)}</span>
+                      <span className="text-emerald-400/60 text-[10px] block mt-0.5">play + breaks</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
+                      <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">
+                        {levelMethod === 'hands' ? 'Total Hands Playing' : 'Total Orbits Playing'}
+                      </span>
+                      <span className="text-white font-mono font-bold text-sm">
+                        {levelCount * defVal} {levelMethod}
+                      </span>
+                      <span className="text-slate-500 text-[10px] block mt-0.5">({levelCount} levels × {defVal} {levelMethod})</span>
+                    </div>
+                    <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
+                      <span className="text-amber-400 text-[10px] uppercase font-bold block mb-0.5">On Break</span>
+                      <span className="text-amber-300 font-mono font-bold text-sm">{fmtDuration(breakMinutes)}</span>
+                      <span className="text-slate-500 text-[10px] block mt-0.5">total break time</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
         {!isCash && (
           <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
             <div className="text-xs text-slate-400 mb-2">Level timing</div>
@@ -1127,11 +1571,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                     onChange={(e) => setCallClockSeconds(e.target.value)}
                     className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
                   />
-                  <span className="text-xs text-slate-400">seconds (default 60s)</span>
+                  <span className="text-xs text-slate-400">seconds (default 30s)</span>
                 </div>
               </div>
               <div className="text-[11px] text-slate-500 max-w-sm mt-1">
-                A "Clock" button appears in the control menu. When pressed, the active player gets {callClockSeconds || 60}s to act before auto fold/check.
+                A "Clock" button appears in the control menu. When pressed, the active player gets {callClockSeconds || 30}s to act before auto fold/check.
               </div>
             </div>
           ) : (

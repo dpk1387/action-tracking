@@ -7,6 +7,7 @@ import {
   getButtonIndex,
   positionForSeat,
 } from '@/lib/poker';
+import { sortGoHoleCards } from '@/lib/goMode';
 
 // Initialize Firebase App
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
@@ -18,7 +19,6 @@ provider.setCustomParameters({ prompt: 'select_account' });
 
 let cachedAccessToken = null;
 
-// Auth state listener to clear cached token on signout
 onAuthStateChanged(auth, (user) => {
   if (!user) {
     cachedAccessToken = null;
@@ -52,9 +52,6 @@ const SUIT_UNICODE = {
   '♣': '♣',
 };
 
-/**
- * Format a single card into rank + suit symbol (e.g. "A♠", "K♦")
- */
 export function formatSingleCard(c) {
   if (!c) return '';
   if (typeof c === 'string') {
@@ -69,9 +66,6 @@ export function formatSingleCard(c) {
   return `${c.rank || ''}${s}`;
 }
 
-/**
- * Format a list of cards to readable string with suit symbols e.g. "A♠ K♦ 7♣"
- */
 export function formatCards(cards) {
   if (!Array.isArray(cards) || cards.length === 0) return '';
   return cards
@@ -80,18 +74,15 @@ export function formatCards(cards) {
     .join(' ');
 }
 
-/**
- * Builds rows for a single hand matching the Hand History Sample format:
- * Row 1: Hand #1   ·   [blinds]   ·   Pot [pot size]
- * Row 2: Board,[board cards with suit symbols]
- * Row 3: ,[P1] · [pos],[P2] · [pos],... (only active players, no empty seats)
- * Row 4: Stack,[P1 stack],[P2 stack],...
- * Row 5: Hand,[P1 hand with suit symbols],[P2 hand with suit symbols],...
- * Row 6+: Preflop / Flop / Turn / River / Win
- *
- * Also returns metadata for row-level borders and bolding the win cell.
- */
-export function buildHandRows(hand) {
+export function buildHandRows(hand, options = {}) {
+  const isBB = options.unit === 'bb' || options.displayUnit === 'bb';
+  const bb = Number(hand.bigBlind) || 1;
+  const fmtVal = (num) => {
+    if (num == null || num === '') return '';
+    const val = Number(num) / bb;
+    return Number.isInteger(val) ? `${val}` : val.toFixed(2).replace(/\.00$/, '').replace(/(\.[0-9])0$/, '$1');
+  };
+
   const isTourney = Boolean(
     hand.mode === 'tournament' ||
     hand.tournament ||
@@ -99,52 +90,49 @@ export function buildHandRows(hand) {
     hand.tournamentId ||
     (Array.isArray(hand.blindSchedule) && hand.blindSchedule.length > 0)
   );
-  const cur = isTourney ? '' : (hand.currency || '$');
+  const cur = (isTourney || isBB) ? '' : (hand.currency || '$');
   const players = hand.players || [];
 
-  // Only include seats that have an actual seated player (no dummy seats 7-10 in 6-max)
   const seatedPlayers = players.filter((p) => p && p.seat != null);
   seatedPlayers.sort((a, b) => a.seat - b.seat);
 
   const bi = getButtonIndex(hand);
   const n = seatedPlayers.length;
 
-  // Row 1: Hand #1   ·   [blinds]   ·   Pot [pot size]
   const blindsText = formatBlinds(hand);
   const potVal = (hand.pots || []).reduce((sum, pt) => sum + (pt.amount || 0), 0)
     || players.reduce((sum, p) => sum + (p.totalBet || 0), 0);
-  const potText = `Pot ${money(potVal, cur)}`;
+  const potText = isBB ? `Pot ${fmtVal(potVal)}` : `Pot ${money(potVal, cur)}`;
   const headerRow = [`Hand #${hand.handNumber}   ·   ${blindsText}   ·   ${potText}`];
 
-  // Row 2: Board
   const bCards = formatCards(hand.communityCards);
   const boardRow = ['Board', bCards];
 
-  // Row 3: Player headers: ,[Player Name] · [pos]...
   const seatHeaderRow = [''];
   seatedPlayers.forEach((p) => {
     const pIdx = players.findIndex((pl) => pl.id === p.id);
-    const pos = p.position || (pIdx >= 0 ? positionForSeat(n, bi, pIdx, hand.variant) : '');
+    let pos = p.position || (pIdx >= 0 ? positionForSeat(n, bi, pIdx, hand.variant) : '');
+    // Positions: In heads up or 3+ players, use D instead of BTN or D/SB
+    if (pos === 'BTN' || pos === 'D/SB') {
+      pos = 'D';
+    }
     const label = pos ? `${p.name} · ${pos}` : p.name;
     seatHeaderRow.push(label);
   });
 
-  // Row 4: Stack
   const stackRow = ['Stack'];
   seatedPlayers.forEach((p) => {
     const st = p.initialStack != null ? p.initialStack : p.stack;
-    stackRow.push(st != null ? money(st, cur) : '');
+    stackRow.push(st != null ? (isBB ? fmtVal(st) : money(st, cur)) : '');
   });
 
-  // Row 5: Hand (hole cards with suit symbols)
   const holeCardsMap = hand.holeCards || hand._holeCards || {};
   const handRow = ['Hand'];
   seatedPlayers.forEach((p) => {
     const hc = holeCardsMap[p.id] ?? holeCardsMap[String(p.id)] ?? [];
-    handRow.push(formatCards(hc));
+    handRow.push(formatCards(sortGoHoleCards(hc)));
   });
 
-  // Process Actions by Street
   const rawHistory = Array.isArray(hand.actions) && hand.actions.length > 0
     ? hand.actions
     : Array.isArray(hand.actionHistory)
@@ -168,7 +156,6 @@ export function buildHandRows(hand) {
     }
   });
 
-  // Helper to place an action in seated player column
   const makeEmptyRow = (label = '') => {
     const row = [label];
     for (let i = 0; i < seatedPlayers.length; i++) row.push('');
@@ -195,13 +182,15 @@ export function buildHandRows(hand) {
     const actName = act.action || act.type || '';
     const hasChips = act.chips != null || act.amount != null || act.callAmount != null;
     const chipsVal = act.chips != null ? act.chips : (act.callAmount != null ? act.callAmount : act.amount);
-    const amtStr = (hasChips && chipsVal > 0) ? ` ${money(chipsVal, cur)}` : '';
+    let amtStr = '';
+    if (hasChips && chipsVal > 0) {
+      amtStr = isBB ? ` ${fmtVal(chipsVal)}` : ` ${money(chipsVal, cur)}`;
+    }
     return `${actName}${amtStr}`.trim();
   };
 
   const actionRows = [];
-  const streetEndRowIndices = []; // row indices relative to actionRows where a street ends
-  const winCellCoords = []; // coordinates relative to actionRows
+  const streetEndRowIndices = [];
 
   streetOrder.forEach((st) => {
     const acts = actionsByStreet[st];
@@ -273,7 +262,7 @@ export function buildHandRows(hand) {
     }
   });
 
-  // Winning / Showdown Row
+  const winCellCoords = [];
   const winners = Array.isArray(hand.winners) ? hand.winners : [];
   if (winners.length > 0) {
     const winRow = makeEmptyRow('');
@@ -284,7 +273,7 @@ export function buildHandRows(hand) {
       const idx = seatedPlayers.findIndex((pl) => pl.id === pid);
       if (idx >= 0) {
         const col = idx + 1;
-        winRow[col] = `Win ${money(amt, cur)}`;
+        winRow[col] = isBB ? `Win ${fmtVal(amt)}` : `Win ${money(amt, cur)}`;
         winCellCoords.push({ rowOffset: winRowOffset, colIndex: col });
       }
     });
@@ -302,11 +291,6 @@ export function buildHandRows(hand) {
     [],             // Blank separator row
   ];
 
-  // Borders needed at bottoms of:
-  // - headerRow (index 0) -> separates info from board
-  // - boardRow (index 1) -> separates board from player+stack+hand
-  // - handRow (index 4) -> separates player+stack+hand from preflop
-  // - each street end row (5 + idx) -> separates streets
   const borderBottomOffsets = [
     0, // below headerRow
     1, // below boardRow
@@ -329,32 +313,66 @@ export function buildHandRows(hand) {
   };
 }
 
-/**
- * Exports session hand history to Google Sheets.
- * Hand 1 at top, subsequent hands below.
- * Applies 'Inter' font and center alignment to all cells.
- * Adds borders across whole rows separating info, board, player+stack+hand, and streets.
- * Bolds win cells.
- */
-export async function exportHandsToGoogleSheet(hands) {
+export function exportHandsToCSV(hands, options = {}) {
+  if (!Array.isArray(hands) || hands.length === 0) {
+    throw new Error('No hands played to export.');
+  }
+
+  const isBB = options.unit === 'bb' || options.displayUnit === 'bb';
+  const sortedHands = [...hands].sort((a, b) => (a.handNumber || 0) - (b.handNumber || 0));
+  const csvLines = [];
+
+  sortedHands.forEach((h) => {
+    const { rows } = buildHandRows(h, options);
+    rows.forEach((row) => {
+      if (!row || row.length === 0) {
+        csvLines.push('');
+      } else {
+        const escaped = row.map((cell) => {
+          if (cell == null) return '';
+          const str = String(cell);
+          if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+            return `"${str.replace(/"/g, '""')}"`;
+          }
+          return str;
+        });
+        csvLines.push(escaped.join(','));
+      }
+    });
+  });
+
+  const csvString = csvLines.join('\n');
+  const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const dateStr = new Date().toISOString().split('T')[0];
+  link.setAttribute('href', url);
+  link.setAttribute('download', `Poker_Hand_History_${isBB ? 'BB_' : ''}${dateStr}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+export async function exportHandsToGoogleSheet(hands, options = {}) {
   if (!Array.isArray(hands) || hands.length === 0) {
     throw new Error('No hands played to export.');
   }
 
   const token = await getGoogleAccessToken();
 
-  // Sort hands ascending (Hand 1 at top, subsequent hands below)
   const sortedHands = [...hands].sort((a, b) => (a.handNumber || 0) - (b.handNumber || 0));
 
-  // Build 2D values grid and metadata for styling
   const allRows = [];
   const allBorderRowIndices = [];
+  const allInfoHeaderRowIndices = [];
   const allWinCells = [];
   let maxColsAcrossHands = 2;
 
   sortedHands.forEach((h) => {
     const startRowIdx = allRows.length;
-    const { rows, borderBottomOffsets, winCells, numCols } = buildHandRows(h);
+    allInfoHeaderRowIndices.push(startRowIdx); // Info row at top of each hand
+    const { rows, borderBottomOffsets, winCells, numCols } = buildHandRows(h, options);
     allRows.push(...rows);
 
     borderBottomOffsets.forEach((offset) => {
@@ -373,7 +391,6 @@ export async function exportHandsToGoogleSheet(hands) {
     }
   });
 
-  // Create new Spreadsheet
   const dateStr = new Date().toISOString().split('T')[0];
   const title = `Poker Session Hand History - ${dateStr}`;
 
@@ -402,7 +419,6 @@ export async function exportHandsToGoogleSheet(hands) {
   const firstSheetId = firstSheet?.properties?.sheetId || 0;
   const firstSheetTitle = firstSheet?.properties?.title || 'Sheet1';
 
-  // Write values into spreadsheet
   const writeRes = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(firstSheetTitle)}!A1?valueInputOption=USER_ENTERED`,
     {
@@ -425,9 +441,10 @@ export async function exportHandsToGoogleSheet(hands) {
   }
 
   // Construct batchUpdate requests:
-  // 1. Inter font & CENTER alignment across all cells
-  // 2. Borders across whole rows separating info, board, player+stack+hand, preflop, flop, turn, river
-  // 3. Bold the win cells
+  // 1. Inter font, CENTER horizontal, MIDDLE vertical alignment across all cells
+  // 2. Info rows (Hand #1...) LEFT aligned
+  // 3. Borders across whole rows separating info, board, player+stack+hand, preflop, flop, turn, river
+  // 4. Bold the win cells
   const requests = [
     {
       repeatCell: {
@@ -444,12 +461,35 @@ export async function exportHandsToGoogleSheet(hands) {
               fontFamily: 'Inter',
             },
             horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
           },
         },
-        fields: 'userEnteredFormat.textFormat.fontFamily,userEnteredFormat.horizontalAlignment',
+        fields: 'userEnteredFormat.textFormat.fontFamily,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
       },
     },
   ];
+
+  // Info header rows: LEFT aligned
+  allInfoHeaderRowIndices.forEach((rowIdx) => {
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId: firstSheetId,
+          startRowIndex: rowIdx,
+          endRowIndex: rowIdx + 1,
+          startColumnIndex: 0,
+          endColumnIndex: maxColsAcrossHands,
+        },
+        cell: {
+          userEnteredFormat: {
+            horizontalAlignment: 'LEFT',
+            verticalAlignment: 'MIDDLE',
+          },
+        },
+        fields: 'userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment',
+      },
+    });
+  });
 
   // Add borders across rows
   allBorderRowIndices.forEach((rowIdx) => {
@@ -489,9 +529,10 @@ export async function exportHandsToGoogleSheet(hands) {
               bold: true,
             },
             horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
           },
         },
-        fields: 'userEnteredFormat.textFormat.bold',
+        fields: 'userEnteredFormat.textFormat.bold,userEnteredFormat.verticalAlignment',
       },
     });
   });
@@ -507,9 +548,7 @@ export async function exportHandsToGoogleSheet(hands) {
         requests,
       }),
     });
-  } catch (_) {
-    // If styling batchUpdate fails non-fatally, the values are still exported
-  }
+  } catch (_) {}
 
   return {
     spreadsheetId,
