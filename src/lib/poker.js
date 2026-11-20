@@ -280,6 +280,18 @@ export function formatPlayerTagAmount(val, currency = '', hand = null, isSpectat
   const sym = isTourney ? '' : (currency || '');
   const activeUnit = displayUnit || hand?.displayUnit || 'chips';
 
+  // 'both' is used at an all-in when players picked different stack units.
+  if (activeUnit === 'both') {
+    const chipsStr = formatPlayerTagAmount(val, currency, hand, isSpectatorCash, 'chips');
+    const bbVal = Number(hand?.bigBlind) || 0;
+    if (bbVal > 0) {
+      const bbs = absN / bbVal;
+      const rounded = absN > 0 && bbs < 1 ? '<1' : String(Math.round(bbs));
+      return `${chipsStr} (${rounded} BB)`;
+    }
+    return chipsStr;
+  }
+
   // In Big Blinds mode: round to 1 BB without a terminating zero, show <1 BB if stack < 1 BB
   if (activeUnit === 'bb') {
     const bbVal = Number(hand?.bigBlind) || 0;
@@ -2393,13 +2405,15 @@ export function formatPotAmount(n, currency = '', hand = null, displayUnit = 'ch
   const sym = isTourney ? '' : (currency || '');
   const activeUnit = displayUnit || hand?.displayUnit || 'chips';
 
-  if (activeUnit === 'bb') {
+  if (activeUnit === 'bb' || activeUnit === 'both') {
     const bbVal = Number(hand?.bigBlind) || 0;
     if (bbVal > 0) {
       const bbs = absN / bbVal;
       const rounded = Math.round(bbs * 10) / 10;
       const str = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-      return `${sign}${str} BB`;
+      if (activeUnit === 'bb') return `${sign}${str} BB`;
+      // 'both' is used at an all-in when players picked different stack units.
+      return `${formatPotAmount(n, currency, hand, 'chips')} (${str} BB)`;
     }
   }
 

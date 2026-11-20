@@ -40,7 +40,7 @@ import {
   discardSavedSession, getSaveStatus, subscribeSaveStatus,
 } from '@/lib/liveSync';
 import { saveCompletedSession } from '@/lib/completedSessionsStore';
-import { saveHandHistory, findHandHistoryByCode } from '@/lib/handHistoriesStore';
+import { saveHandHistory, findHandHistoryByCode, deleteHandHistory } from '@/lib/handHistoriesStore';
 import {
   startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots, nextHand,
   positionForSeat, getButtonIndex, money, formatPotAmount, formatPotOutcome, formatSessionName, getMultipleBoardWinPercentages, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone, calcAnteForType,
@@ -101,11 +101,32 @@ export default function PokerTracker() {
   const [actionDisplayMode, setActionDisplayMode] = useState('all');
   const [isGoMode, setIsGoMode] = useState(() => config?.isGoMode || hand?.isGoMode || false);
   const [stackRounding, setStackRounding] = useState(() => config?.stackRounding || hand?.stackRounding || getDefaultStackRounding(config?.smallBlind || hand?.smallBlind || 25));
-  const [goSecurityMode, setGoSecurityMode] = useState(() => config?.goSecurityMode || hand?.goSecurityMode || 'modal');
+  // Per-player GO-mode display prefs (chips/BB, deck colours, optional 3-digit hole-card PIN)
+  const [goPlayerPrefs, setGoPlayerPrefs] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(`poker_go_player_prefs_${getShareCode() || 'local'}`) || '{}');
+    } catch {
+      return {};
+    }
+  });
+  const updateGoPlayerPrefs = (playerId, patch) => {
+    if (playerId == null) return;
+    setGoPlayerPrefs((prev) => {
+      const merged = { ...(prev[playerId] || {}), ...patch };
+      if (!merged.pin) delete merged.pin;
+      const next = { ...prev, [playerId]: merged };
+      try {
+        localStorage.setItem(`poker_go_player_prefs_${getShareCode() || 'local'}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
   const [goHoleCards, setGoHoleCards] = useState({});
   const [goDiscards, setGoDiscards] = useState({});
   const [bustRecovery, setBustRecovery] = useState(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  // Which player's GO settings the modal edits: the player whose turn it is (the one holding the phone)
+  const goSettingsPlayer = isGoMode && hand?.players ? hand.players[hand.currentPlayer] : null;
   const [discards, setDiscards] = useState({});
   const [actionError, setActionError] = useState('');
   const [showShare, setShowShare] = useState(false);
@@ -480,7 +501,6 @@ export default function PokerTracker() {
       isMidGame: true,
       isGoMode,
       stackRounding,
-      goSecurityMode,
       variant: hand.variant || config?.variant,
       gameType: hand.gameType || config?.gameType,
       smallBlind: hand.smallBlind ?? config?.smallBlind,
@@ -497,7 +517,7 @@ export default function PokerTracker() {
         occupied: p.status !== 'eliminated' && p.status !== 'out',
       })),
     };
-  }, [hand, config, isGoMode, stackRounding, goSecurityMode]);
+  }, [hand, config, isGoMode, stackRounding]);
 
   const positions = (h) => {
     if (!h) return [];
@@ -512,7 +532,6 @@ export default function PokerTracker() {
   const handleSave = (cfg) => {
     setConfig(cfg);
     if (cfg.stackRounding !== undefined) setStackRounding(cfg.stackRounding);
-    if (cfg.goSecurityMode !== undefined) setGoSecurityMode(cfg.goSecurityMode);
     if (hand) {
       const newSchedule = cfg.blindSchedule || [];
       const updatedPlayers = cfg.players.map((cp, idx) => {
@@ -548,7 +567,6 @@ export default function PokerTracker() {
           ...prev,
           players: updatedPlayers,
           stackRounding: cfg.stackRounding !== undefined ? cfg.stackRounding : prev.stackRounding,
-          goSecurityMode: cfg.goSecurityMode !== undefined ? cfg.goSecurityMode : prev.goSecurityMode,
           blindSchedule: newSchedule,
           levelConfig: cfg.levelConfig || prev.levelConfig,
           chipDenominations: cfg.chipDenominations || prev.chipDenominations,
@@ -620,7 +638,9 @@ export default function PokerTracker() {
     }
     if (cfg.isGoMode !== undefined) setIsGoMode(cfg.isGoMode);
     if (cfg.stackRounding !== undefined) setStackRounding(cfg.stackRounding);
-    if (cfg.goSecurityMode !== undefined) setGoSecurityMode(cfg.goSecurityMode);
+    // A fresh game starts everyone on the defaults: chips, 2-colour deck, PIN off.
+    setGoPlayerPrefs({});
+    try { localStorage.removeItem(`poker_go_player_prefs_${getShareCode() || 'local'}`); } catch {}
     const newHand = initLevelTimer(startHand(cfg, btn, 1), cfg.levelConfig);
     setHand(newHand);
     if (cfg.isGoMode) {
@@ -1098,6 +1118,12 @@ export default function PokerTracker() {
     });
   };
 
+  // A completed session lives in the Complete tab only, so its hand-history entry is removed.
+  const dropArchivedHandHistory = (code) => {
+    if (!code) return;
+    try { deleteHandHistory(code); } catch {}
+  };
+
   // Ends the tournament: records the completed session and shows the winner screen.
   const endTournament = (winner, currentHand) => {
     setGameOver(winner);
@@ -1122,7 +1148,7 @@ export default function PokerTracker() {
           isCompleted: true,
         };
         saveCompletedSession(compSession);
-        saveHandHistory(compSession);
+        dropArchivedHandHistory(compSession.shareCode);
         discardSavedSession().catch(() => {});
       }
   };
@@ -2092,7 +2118,7 @@ export default function PokerTracker() {
           isCompleted: true,
         };
         saveCompletedSession(compSession);
-        saveHandHistory(compSession);
+        dropArchivedHandHistory(compSession.shareCode);
         await discardSavedSession();
       } else {
         if (hands.length > 0) {
@@ -2140,6 +2166,7 @@ export default function PokerTracker() {
     setShowSetup(false);
     setFrozenStacks({});
     setFreezeStacks(true);
+    setGoPlayerPrefs({});
     navigate('/');
   };
 
@@ -2275,7 +2302,8 @@ export default function PokerTracker() {
           goDiscards={goDiscards}
           onGoDiscardPick={handleGoDiscardPick}
           stackRounding={stackRounding}
-          goSecurityMode={goSecurityMode}
+          goPlayerPrefs={goPlayerPrefs}
+          onUpdatePlayerPrefs={updateGoPlayerPrefs}
           suitColors={suitColors}
           displayUnit={displayUnit}
           onNextHand={proceedToNextHand}
@@ -3073,6 +3101,13 @@ export default function PokerTracker() {
         isOpen={showSettingsModal}
         onClose={() => setShowSettingsModal(false)}
         isGoMode={isGoMode}
+        goPlayerName={goSettingsPlayer?.name || ''}
+        goPlayerPrefs={goSettingsPlayer ? (goPlayerPrefs[goSettingsPlayer.id] || {}) : {}}
+        takenPins={(hand?.players || [])
+          .filter((p) => p.id !== goSettingsPlayer?.id)
+          .map((p) => goPlayerPrefs[p.id]?.pin)
+          .filter((pin) => pin && pin !== 'SET')}
+        onUpdateGoPlayerPrefs={(patch) => updateGoPlayerPrefs(goSettingsPlayer?.id, patch)}
         settings={{
           sessionName: hand?.sessionName || config?.sessionName || '',
           hideAmounts,
@@ -3082,7 +3117,6 @@ export default function PokerTracker() {
           actionDisplayMode,
           isGoMode,
           stackRounding,
-          goSecurityMode,
         }}
         onUpdateSettings={(newVals) => {
           if (newVals.sessionName !== undefined) {
@@ -3100,11 +3134,6 @@ export default function PokerTracker() {
             setStackRounding(newVals.stackRounding);
             setConfig((prev) => (prev ? { ...prev, stackRounding: newVals.stackRounding } : prev));
             setHand((prev) => (prev ? { ...prev, stackRounding: newVals.stackRounding } : prev));
-          }
-          if (newVals.goSecurityMode !== undefined) {
-            setGoSecurityMode(newVals.goSecurityMode);
-            setConfig((prev) => (prev ? { ...prev, goSecurityMode: newVals.goSecurityMode } : prev));
-            setHand((prev) => (prev ? { ...prev, goSecurityMode: newVals.goSecurityMode } : prev));
           }
         }}
       />

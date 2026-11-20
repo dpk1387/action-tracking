@@ -146,7 +146,6 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [flMaxRaises, setFlMaxRaises] = useState(initial?.flMaxRaises ?? 4);
   const [isGoMode, setIsGoMode] = useState(initial?.isGoMode || false);
   const [stackRounding, setStackRounding] = useState(initial?.stackRounding || 100);
-  const [goSecurityMode, setGoSecurityMode] = useState(initial?.goSecurityMode || 'modal');
   const [error, setError] = useState('');
   const [showStructures, setShowStructures] = useState(false);
 
@@ -489,7 +488,6 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       variant: finalVariant,
       isGoMode,
       stackRounding,
-      goSecurityMode,
       firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
       gameType: finalGameType,
       currency: sym,
@@ -727,21 +725,9 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                 </select>
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-amber-500/20 pt-2.5">
-              <div>
-                <div className="text-xs font-bold text-amber-200">Game Security</div>
-                <div className="text-[11px] text-slate-400">Lock the betting screen between turns</div>
-              </div>
-              <select
-                value={goSecurityMode}
-                onChange={(e) => setGoSecurityMode(e.target.value)}
-                className="rounded-lg border border-amber-500/40 bg-[#15181d] px-3 py-1.5 text-xs font-bold text-white"
-              >
-                <option value="modal">Verification Modal</option>
-                <option value="hold">Hold to Confirm</option>
-                <option value="passkey">Passkey System (2-digit)</option>
-                <option value="pin">PIN System (6-digit, lockout)</option>
-              </select>
+            <div className="border-t border-amber-500/20 pt-2.5 text-[11px] text-slate-400 leading-relaxed">
+              Every turn opens behind a hold-to-open handoff screen. Each player can add a 3-digit hole-card PIN from
+              <span className="text-amber-200 font-bold"> Settings</span> during the game (off by default).
             </div>
           </div>
         )}
