@@ -8,9 +8,15 @@ import {
   Smartphone,
   ShieldCheck,
   Settings,
+  SlidersHorizontal,
   History,
   LogOut,
   RefreshCw,
+  Pause,
+  Play,
+  Rewind,
+  FastForward,
+  KeyRound,
 } from 'lucide-react';
 import {
   money,
@@ -68,25 +74,56 @@ export function formatFullBetAmount(val, currency = '', hand = null, displayUnit
   return `${sign}${sym}${numStr}`;
 }
 
+function getPlayerPasskeyId(p) {
+  if (!p) return '';
+  const name = String(p.name || '').trim();
+  return name ? `name:${name}` : `seat:${p.seat ?? p.id}`;
+}
+
+function formatActionTypeTitle(rawAction = '', raiseLevel = 0) {
+  const s = String(rawAction || '').toLowerCase();
+  const isAllIn = s.includes('all-in') || s.includes('allin') || s.startsWith('all-in');
+  if (s.includes('5-bet') || raiseLevel === 5) return isAllIn ? '5-Bet All In' : '5-Bet';
+  if (s.includes('4-bet') || raiseLevel === 4) return isAllIn ? '4-Bet All In' : '4-Bet';
+  if (s.includes('3-bet') || raiseLevel === 3) return isAllIn ? '3-Bet All In' : '3-Bet';
+  if (s.includes('raise') || raiseLevel === 2) return isAllIn ? 'Raise All In' : 'Raise';
+  if (s.includes('bet') || raiseLevel === 1) return isAllIn ? 'Bet All In' : 'Bet';
+  if (s.includes('straddle')) return isAllIn ? 'Straddle All In' : 'Straddle';
+  if (raiseLevel > 5) return isAllIn ? `${raiseLevel}-Bet All In` : `${raiseLevel}-Bet`;
+  return isAllIn ? 'All In' : (raiseLevel >= 3 ? `${raiseLevel}-Bet` : raiseLevel === 2 ? 'Raise' : 'Bet');
+}
+
 export default function GoModeView({
   hand,
   onAction,
   goHoleCards = {},
   stackRounding = 'exact',
+  goSecurityMode = 'modal',
   suitColors = 2,
   displayUnit = 'chips',
   onNextHand,
   onEndHand,
   onDealNextStreet,
   onOpenSettings,
+  onOpenStructureSetup,
   onEndSession,
   onToggleGoMode,
   showPosition = true,
+  timerPaused = false,
+  timerCanNudge = false,
+  onPauseTimer,
+  onResumeTimer,
+  onNudgeTimer,
 }) {
   const [peekCards, setPeekCards] = useState(false);
   const [showHandHistoryModal, setShowHandHistoryModal] = useState(false);
   const [raiseInput, setRaiseInput] = useState('');
-  const [ackPlayerId, setAckPlayerId] = useState(null);
+  const [turnVerified, setTurnVerified] = useState(false);
+  const [playerPasskeys, setPlayerPasskeys] = useState({});
+  const [revealedPasskeys, setRevealedPasskeys] = useState({});
+  const [passkeyEntry, setPasskeyEntry] = useState('');
+  const [passkeyError, setPasskeyError] = useState('');
+  const [justAssignedKey, setJustAssignedKey] = useState(false);
   const [showConfirmMuckModal, setShowConfirmMuckModal] = useState(false);
   const [showOpponentStacksModal, setShowOpponentStacksModal] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -105,19 +142,45 @@ export default function GoModeView({
   const players = hand?.players || [];
   const cpIndex = hand?.currentPlayer >= 0 ? hand.currentPlayer : -1;
   const cp = cpIndex >= 0 ? players[cpIndex] : null;
+  const cpPasskeyId = cp ? getPlayerPasskeyId(cp) : '';
+  const cpPasskey = cpPasskeyId ? playerPasskeys[cpPasskeyId] : '';
+  const cpPasskeyRevealed = cpPasskeyId ? Boolean(revealedPasskeys[cpPasskeyId]) : false;
 
-  // Auto-hide card peek whenever current player turn changes
+  // Ensure every player has a distinct random 2-digit passkey between 00 and 99
+  useEffect(() => {
+    if (!players.length) return;
+    setPlayerPasskeys((prev) => {
+      const missing = players.filter((p) => {
+        const key = getPlayerPasskeyId(p);
+        return key && !prev[key];
+      });
+      if (missing.length === 0) return prev;
+      const next = { ...prev };
+      const used = new Set(Object.values(next));
+      missing.forEach((p) => {
+        const key = getPlayerPasskeyId(p);
+        let code = '';
+        let guard = 0;
+        do {
+          code = String(Math.floor(Math.random() * 100)).padStart(2, '0');
+          guard++;
+        } while (used.has(code) && guard < 500);
+        used.add(code);
+        next[key] = code;
+      });
+      return next;
+    });
+  }, [players]);
+
+  // Require security verification after EVERY action (never skip consecutive turns)
   useEffect(() => {
     setPeekCards(false);
     setRaiseInput('');
-  }, [hand?.currentPlayer, hand?.handNumber, hand?.street]);
-
-  // Set default acknowledgement for first player
-  useEffect(() => {
-    if (cp && ackPlayerId === null) {
-      setAckPlayerId(cp.id);
-    }
-  }, [cp?.id]);
+    setTurnVerified(false);
+    setPasskeyEntry('');
+    setPasskeyError('');
+    setJustAssignedKey(false);
+  }, [hand?.handNumber, hand?.street, hand?.currentPlayer, hand?.actionHistory?.length]);
 
   // Reset wasAllInHand on new hand
   useEffect(() => {
@@ -287,6 +350,51 @@ export default function GoModeView({
     dealButtonText = 'Deal Ocean';
   }
 
+  // Wrap action submission so turnVerified always resets immediately on every action
+  const submitGoAction = (type, amount) => {
+    setPeekCards(false);
+    setTurnVerified(false);
+    setPasskeyEntry('');
+    setPasskeyError('');
+    setJustAssignedKey(false);
+    onAction(type, amount);
+  };
+
+  // Last aggressive bet/raise info on the current street (shown next to Current Pot)
+  const lastRaiseInfo = useMemo(() => {
+    const hist = hand?.actionHistory || [];
+    const curStreet = hand?.street || 'preflop';
+    for (let i = hist.length - 1; i >= 0; i--) {
+      const entry = hist[i];
+      if (!entry || entry.street !== curStreet) continue;
+      const actStr = String(entry.action || '').toLowerCase();
+      const looksAggressive = entry.isAggressive ?? (
+        actStr.startsWith('bet') ||
+        actStr.startsWith('raise') ||
+        actStr.startsWith('3-bet') ||
+        actStr.startsWith('4-bet') ||
+        actStr.startsWith('5-bet') ||
+        actStr.startsWith('straddle') ||
+        actStr.startsWith('kill') ||
+        actStr.startsWith('half-kill') ||
+        actStr.startsWith('all-in raise') ||
+        actStr.startsWith('all-in 3-bet') ||
+        actStr.startsWith('all-in 4-bet') ||
+        actStr.startsWith('all-in 5-bet') ||
+        actStr.startsWith('all-in bet')
+      );
+      if (looksAggressive) {
+        const size = entry.betTo != null && entry.betTo > 0 ? entry.betTo : entry.chips;
+        return {
+          type: formatActionTypeTitle(entry.action, entry.raiseLevel),
+          size,
+          player: entry.player,
+        };
+      }
+    }
+    return null;
+  }, [hand?.actionHistory, hand?.street]);
+
   const handleStepBet = (dir) => {
     if (!cp) return;
     const currentVal = raiseInput !== '' ? raiseInput : minRaise;
@@ -298,7 +406,7 @@ export default function GoModeView({
     if (!cp) return;
     const parsed = parseBetShorthand(raiseInput);
     if (parsed >= minRaise && (!isPL || parsed <= effectiveMaxRaise)) {
-      onAction('raise', Math.min(effectiveMaxRaise, parsed));
+      submitGoAction('raise', Math.min(effectiveMaxRaise, parsed));
       setRaiseInput('');
     }
   };
@@ -308,14 +416,60 @@ export default function GoModeView({
     if (canCheck) {
       setShowConfirmMuckModal(true);
     } else {
-      onAction('fold');
+      submitGoAction('fold');
+    }
+  };
+
+  const needsTurnAck = Boolean(cp && !turnVerified && !isAllInSituation);
+
+  const handlePasskeyDigit = (digit) => {
+    if (!cpPasskey || passkeyEntry.length >= 2) return;
+    const next = passkeyEntry + digit;
+    setPasskeyEntry(next);
+    setPasskeyError('');
+    if (next.length === 2) {
+      if (next === cpPasskey) {
+        setTurnVerified(true);
+        setPasskeyEntry('');
+        setPasskeyError('');
+      } else {
+        setPasskeyError('Incorrect passkey — try again');
+        setTimeout(() => setPasskeyEntry(''), 350);
+      }
     }
   };
 
   // Keyboard shortcuts listener:
-  // f = fold, x = check, c = call, r = bet/raise, m = min, shift+a = all in / pot
+  // s = show/hide cards, f = fold, x/c = check, c = call, r = bet/raise, m = min, shift+a = all in / pot
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (needsTurnAck) {
+        if (goSecurityMode === 'passkey' && cpPasskeyRevealed) {
+          if (/^[0-9]$/.test(e.key)) {
+            e.preventDefault();
+            handlePasskeyDigit(e.key);
+          } else if (e.key === 'Backspace') {
+            e.preventDefault();
+            setPasskeyEntry((prev) => prev.slice(0, -1));
+            setPasskeyError('');
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setPasskeyEntry('');
+            setPasskeyError('');
+          }
+        } else if (goSecurityMode !== 'passkey' || !cpPasskeyRevealed) {
+          if (e.key === 'Enter' && cp) {
+            e.preventDefault();
+            if (goSecurityMode === 'passkey' && cpPasskeyId) {
+              setRevealedPasskeys((prev) => ({ ...prev, [cpPasskeyId]: true }));
+              setJustAssignedKey(true);
+            }
+            setTurnVerified(true);
+          }
+        }
+        return;
+      }
+
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') {
         if (e.key === 'Enter' && e.target === raiseInputRef.current) {
@@ -329,7 +483,7 @@ export default function GoModeView({
       if (e.shiftKey && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
         if (cp && effectiveMaxRaise > 0) {
-          onAction('raise', effectiveMaxRaise);
+          submitGoAction('raise', effectiveMaxRaise);
         }
         return;
       }
@@ -337,7 +491,12 @@ export default function GoModeView({
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const key = e.key.toLowerCase();
 
-      if (key === 'f') {
+      if (key === 's') {
+        if (cp && !isAllInSituation) {
+          e.preventDefault();
+          setPeekCards((v) => !v);
+        }
+      } else if (key === 'f') {
         if (!canCheck) {
           e.preventDefault();
           handleFoldClick();
@@ -345,14 +504,14 @@ export default function GoModeView({
       } else if (key === 'x') {
         if (canCheck) {
           e.preventDefault();
-          onAction('check');
+          submitGoAction('check');
         }
       } else if (key === 'c') {
         e.preventDefault();
         if (canCheck) {
-          onAction('check');
+          submitGoAction('check');
         } else if (!disableCall && toCall > 0) {
-          onAction('call');
+          submitGoAction('call');
         }
       } else if (key === 'r') {
         e.preventDefault();
@@ -367,10 +526,7 @@ export default function GoModeView({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cp, canCheck, disableCall, toCall, minRaise, effectiveMaxRaise, isPL, raiseInput]);
-
-  // Determine if turn transition interstitial overlay should show
-  const needsTurnAck = cp && ackPlayerId !== cp.id;
+  }, [cp, canCheck, disableCall, toCall, minRaise, effectiveMaxRaise, isPL, raiseInput, needsTurnAck, goSecurityMode, cpPasskeyRevealed, cpPasskey, cpPasskeyId, passkeyEntry, isAllInSituation]);
 
   const isShowdownComplete = Boolean(
     isAllInSituation && (commCards.length >= targetBoardLen || hand?.phase === 'awarded' || hand?.phase === 'ended')
@@ -380,7 +536,7 @@ export default function GoModeView({
 
   return (
     <div className="min-h-screen bg-[#0b0e14] text-white flex flex-col justify-between p-3 sm:p-5 select-none max-w-2xl mx-auto border-x border-slate-800/80 shadow-2xl relative">
-      {/* TOP HEADER: Row 1 (Explicit GO Mode Badge, Level #, Blinds, Clock, History, Switch Mode, End Session & Settings), Row 2 (Show Cards) */}
+      {/* TOP HEADER: Row 1 (Explicit GO Mode Badge, Level #, Blinds, Clock + Controls, History, Switch Mode, End Session, Structure & Settings), Row 2 (Show Cards) */}
       <div className="space-y-2">
         {/* Row 1: Top Control Bar */}
         <div className="flex items-center justify-between px-3.5 py-2 bg-[#121620] rounded-xl border border-slate-800 text-xs shadow-sm flex-wrap gap-2">
@@ -394,11 +550,49 @@ export default function GoModeView({
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
             {hand?.blindSchedule?.length > 0 && (
-              <div className="flex items-center gap-1 text-amber-300 font-mono font-bold mr-1">
-                <Clock size={13} className="text-amber-400" />
+              <div className="flex items-center gap-1 bg-slate-900/80 border border-slate-700/70 rounded-lg px-2 py-0.5 text-amber-300 font-mono font-bold">
+                <Clock size={12} className="text-amber-400" />
                 <span>{formatTimer(levelTimerState(hand, now))}</span>
+                {hand?.mode === 'tournament' && (
+                  <div className="flex items-center gap-0.5 ml-1 pl-1 border-l border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => onNudgeTimer?.(60000)}
+                      disabled={!timerCanNudge}
+                      title="Rewind 1 minute"
+                      className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-[10px] text-slate-200 font-sans font-bold flex items-center gap-0.5 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      <Rewind size={10} />
+                      <span>1m</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => (timerPaused ? onResumeTimer?.() : onPauseTimer?.())}
+                      disabled={!timerCanNudge && !timerPaused}
+                      title={timerPaused ? 'Resume timer' : 'Pause timer'}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-bold flex items-center gap-0.5 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
+                        timerPaused
+                          ? 'bg-emerald-700 hover:bg-emerald-600 text-white'
+                          : 'bg-slate-800 hover:bg-slate-700 text-amber-300'
+                      }`}
+                    >
+                      {timerPaused ? <Play size={10} /> : <Pause size={10} />}
+                      <span className="hidden sm:inline">{timerPaused ? 'Resume' : 'Pause'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onNudgeTimer?.(-60000)}
+                      disabled={!timerCanNudge}
+                      title="Forward 1 minute"
+                      className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-[10px] text-slate-200 font-sans font-bold flex items-center gap-0.5 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      <span>1m</span>
+                      <FastForward size={10} />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
             {/* Mode Switch Button */}
@@ -443,6 +637,19 @@ export default function GoModeView({
               </button>
             )}
 
+            {/* Structure Setup Button (next to Settings) */}
+            {onOpenStructureSetup && (
+              <button
+                type="button"
+                onClick={onOpenStructureSetup}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer font-bold text-xs"
+                title="Structure Setup"
+              >
+                <SlidersHorizontal size={13} />
+                <span className="hidden sm:inline">Structure</span>
+              </button>
+            )}
+
             {onOpenSettings && (
               <button
                 type="button"
@@ -481,8 +688,24 @@ export default function GoModeView({
           >
             {peekCards ? <EyeOff size={15} /> : <Eye size={15} />}
             <span>{peekCards ? 'Hide Cards' : 'Show Cards'}</span>
+            <span className={`kbd-shortcut-hint hidden md:inline text-[10px] font-mono font-normal ${peekCards ? 'text-black/70' : 'text-amber-200/70'}`}>(S)</span>
           </button>
         </div>
+
+        {/* Newly assigned passkey banner on player's first turn */}
+        {goSecurityMode === 'passkey' && justAssignedKey && turnVerified && cp && cpPasskey && (
+          <div className="p-2.5 bg-indigo-950/90 border border-indigo-400/70 rounded-xl flex items-center justify-between gap-2 text-xs shadow-lg animate-fade-in">
+            <div className="flex items-center gap-2 text-indigo-200">
+              <KeyRound size={15} className="text-indigo-300 shrink-0" />
+              <span>
+                <strong className="text-white">{cp.name}</strong>, remember your 2-digit passkey for future turns:
+              </span>
+            </div>
+            <span className="px-3 py-1 rounded-lg bg-indigo-500 text-white font-mono font-black text-base tracking-widest shadow">
+              {cpPasskey}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* REVEALED HOLE CARDS BANNER (When Show Cards is Active) */}
@@ -692,14 +915,42 @@ export default function GoModeView({
               </div>
             </div>
 
-            {/* CENTER-RIGHT: Pot Size & Community Board */}
+            {/* CENTER-RIGHT: Pot Size + Last Raise Info & Community Board */}
             <div className="space-y-3 text-center md:text-right md:pl-2">
-              <div>
-                <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                  Current Pot
+              <div className="flex flex-wrap items-start justify-center md:justify-end gap-4">
+                <div>
+                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Current Pot
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
+                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
+                  </div>
                 </div>
-                <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
-                  {formatPotAmount(potTotal, cur, hand, activeUnit)}
+
+                {/* Last Raise / Bet Info next to Current Pot */}
+                <div className="bg-[#181e2c] border border-slate-700/80 rounded-2xl px-3 py-2 text-left min-w-[130px]">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
+                    Last Raise
+                  </div>
+                  {lastRaiseInfo ? (
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-amber-300 text-[10px] font-black uppercase">
+                          {lastRaiseInfo.type}
+                        </span>
+                        <span className="text-sm font-black text-white font-mono">
+                          {formatFullBetAmount(lastRaiseInfo.size, cur, hand, activeUnit)}
+                        </span>
+                      </div>
+                      {lastRaiseInfo.player && (
+                        <div className="text-[11px] text-slate-400 truncate max-w-[150px]">
+                          from <span className="text-slate-200 font-semibold">{lastRaiseInfo.player}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs font-semibold text-slate-500">None</div>
+                  )}
                 </div>
               </div>
 
@@ -740,7 +991,7 @@ export default function GoModeView({
             </div>
           </div>
         ) : (
-          /* Standard Non-All-In Hand Concluded Screen ([name] wins [amount]) */
+          /* Standard Non-All-In Hand Concluded Screen ([name] wins [amount] + showdown hole cards) */
           <div className="p-6 bg-[#131722] rounded-3xl border border-slate-800 text-center space-y-4">
             <h2 className="text-2xl font-black text-amber-300">Hand Concluded</h2>
             {aggregatedWinners.length > 0 && (
@@ -756,6 +1007,63 @@ export default function GoModeView({
             <div className="text-base text-slate-300 font-bold">
               Total Pot: <span className="font-mono text-amber-300">{formatPotAmount(potTotal, cur, hand, activeUnit)}</span>
             </div>
+
+            {/* Showdown Hole Cards even when NOT an all-in */}
+            {nonFolded.length >= 2 && (
+              <div className="pt-1">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  Showdown Hands
+                </div>
+                <div className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap">
+                  {nonFolded.map((p) => {
+                    const sorted = sortGoHoleCards(goHoleCards[p.id] || []);
+                    const isWinner = isWinnerPlayer(p.id);
+                    return (
+                      <div
+                        key={p.id}
+                        className={`px-3 py-2 rounded-2xl border flex flex-col items-center gap-1.5 shadow-lg ${
+                          isWinner
+                            ? 'bg-amber-950/40 border-amber-400 ring-2 ring-amber-400/50'
+                            : 'bg-[#171d29] border-slate-700/80'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1 text-xs font-bold text-white">
+                          <span className="truncate max-w-[110px]">{p.name}</span>
+                          {isWinner && <span className="text-[10px] text-amber-300 font-black">🏆</span>}
+                        </div>
+                        <div className="flex items-center justify-center gap-1 flex-wrap">
+                          {sorted.length > 0 ? sorted.map((c, ci) => {
+                            const sc = suitColorClass(c.suit, suitColors);
+                            const isWinCard = isWinningCard(c);
+                            return (
+                              <div
+                                key={ci}
+                                className={`px-2 py-1 rounded-lg border flex items-center gap-0.5 shadow font-black text-sm ${sc} ${
+                                  isWinCard
+                                    ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-400 scale-105 shadow-[0_0_12px_rgba(245,158,11,0.7)]'
+                                    : 'bg-white border-slate-300'
+                                }`}
+                              >
+                                <strong className="font-bold">{rankDisplay(c.rank)}</strong>
+                                <span className="text-xs">{SUIT_SYMBOL[c.suit] || c.suit}</span>
+                              </div>
+                            );
+                          }) : (
+                            <span className="text-[11px] text-slate-500 font-mono">No cards</span>
+                          )}
+                        </div>
+                        {isWinner && (
+                          <div className="text-[11px] font-mono font-bold leading-none text-emerald-400">
+                            Winner
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Show board cards */}
             {(hand?.communityCards || []).length > 0 && (
               <div className="pt-1">
@@ -766,10 +1074,15 @@ export default function GoModeView({
                   {hand.communityCards.map((c, idx) => {
                     if (!c || c.hidden) return null;
                     const suitColor = suitColorClass(c.suit, suitColors);
+                    const isWinCard = isWinningCard(c);
                     return (
                       <div
                         key={idx}
-                        className={`w-10 h-14 rounded-lg bg-white border border-slate-300 flex flex-col items-center justify-center shadow-md ${suitColor}`}
+                        className={`w-10 h-14 rounded-lg border flex flex-col items-center justify-center shadow-md ${suitColor} ${
+                          isWinCard
+                            ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-400 scale-105 shadow-[0_0_14px_rgba(245,158,11,0.7)]'
+                            : 'bg-white border-slate-300'
+                        }`}
                       >
                         <strong className="font-bold text-sm leading-none">{rankDisplay(c.rank)}</strong>
                         <span className="text-xs font-bold leading-none">{SUIT_SYMBOL[c.suit] || c.suit}</span>
@@ -826,7 +1139,7 @@ export default function GoModeView({
                 className="py-3 rounded-xl bg-slate-900 hover:bg-rose-950 border border-slate-700 hover:border-rose-600 text-slate-300 hover:text-rose-300 font-extrabold text-sm cursor-pointer transition-colors shadow"
                 title="Shortcut: F"
               >
-                Fold <span className="text-[10px] text-slate-500 font-mono font-normal">(F)</span>
+                Fold <span className="kbd-shortcut-hint hidden md:inline text-[10px] text-slate-500 font-mono font-normal">(F)</span>
               </button>
             )}
 
@@ -834,29 +1147,29 @@ export default function GoModeView({
             {canCheck ? (
               <button
                 type="button"
-                onClick={() => onAction('check')}
+                onClick={() => submitGoAction('check')}
                 className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-sm cursor-pointer transition-colors shadow-lg"
-                title="Shortcut: X or C"
+                title="Shortcut: C"
               >
-                Check <span className="text-[10px] text-emerald-200 font-mono font-normal">(X)</span>
+                Check <span className="kbd-shortcut-hint hidden md:inline text-[10px] text-emerald-200 font-mono font-normal">(C)</span>
               </button>
             ) : (
               <button
                 type="button"
                 disabled={disableCall}
-                onClick={() => onAction('call')}
+                onClick={() => submitGoAction('call')}
                 title={isMandatory3BetPreflop ? 'Mandatory 3-Bet: Cannot call or limp preflop until a 3-bet occurs.' : 'Shortcut: C'}
                 className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-white font-extrabold text-sm cursor-pointer transition-colors shadow-lg"
               >
                 Call {formatFullBetAmount(toCall, cur, hand, activeUnit)}{' '}
-                <span className="text-[10px] text-emerald-200 font-mono font-normal">(C)</span>
+                <span className="kbd-shortcut-hint hidden md:inline text-[10px] text-emerald-200 font-mono font-normal">(C)</span>
               </button>
             )}
 
             {/* All In / Pot Limit Max Button */}
             <button
               type="button"
-              onClick={() => onAction('raise', effectiveMaxRaise)}
+              onClick={() => submitGoAction('raise', effectiveMaxRaise)}
               className="py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-sm cursor-pointer transition-all shadow-lg"
               title="Shortcut: Shift + A"
             >
@@ -923,23 +1236,23 @@ export default function GoModeView({
               className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs cursor-pointer border border-slate-700"
               title="Shortcut: M"
             >
-              Min (M)
+              Min <span className="kbd-shortcut-hint hidden md:inline">(M)</span>
             </button>
           </div>
         </div>
       ) : null}
 
-      {/* PASS PHONE INTERSTITIAL OVERLAY (Moved UP to items-start pt-10 to prevent overlapping action buttons at bottom) */}
+      {/* GAME SECURITY OVERLAY (Always shown after every action: Modal or Passkey System) */}
       {needsTurnAck && cp && !isAllInSituation && (
         <div className="fixed inset-0 z-50 bg-[#0d1017]/95 backdrop-blur-md flex items-start pt-10 sm:pt-14 justify-center p-5 animate-fade-in select-none">
           <div className="bg-[#181d26] border-2 border-amber-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-5 shadow-2xl">
             <div className="w-16 h-16 rounded-full bg-amber-500/20 border-2 border-amber-500 text-amber-400 flex items-center justify-center mx-auto shadow-inner">
-              <Smartphone size={32} />
+              {goSecurityMode === 'passkey' && cpPasskeyRevealed ? <KeyRound size={30} /> : <Smartphone size={32} />}
             </div>
 
             <div className="space-y-2">
               <div className="text-xs font-extrabold text-amber-400 uppercase tracking-widest">
-                Turn Transition
+                {goSecurityMode === 'passkey' ? 'Passkey Security' : 'Turn Transition'}
               </div>
               <h3 className="text-2xl font-black text-white">
                 Pass phone to <span className="text-amber-300">{cp.name}</span>
@@ -951,18 +1264,105 @@ export default function GoModeView({
               )}
             </div>
 
-            <div className="p-3 bg-[#11141b] rounded-2xl border border-slate-800 text-xs text-slate-400">
-              Pass the phone to <span className="text-white font-bold">{cp.name}</span>. When ready, click below to view your action and cards.
-            </div>
+            {goSecurityMode === 'passkey' && cpPasskeyRevealed ? (
+              <div className="space-y-4">
+                <div className="p-3 bg-[#11141b] rounded-2xl border border-slate-800 text-xs text-slate-300">
+                  Enter <span className="text-white font-bold">{cp.name}</span>&apos;s 2-digit passkey to unlock your action and cards.
+                </div>
 
-            <button
-              type="button"
-              onClick={() => setAckPlayerId(cp.id)}
-              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer transition-transform active:scale-95"
-            >
-              <ShieldCheck size={18} />
-              <span>I am {cp.name}</span>
-            </button>
+                {/* 2-digit PIN boxes */}
+                <div className="flex items-center justify-center gap-3">
+                  {[0, 1].map((slotIdx) => {
+                    const char = passkeyEntry[slotIdx];
+                    const isActive = passkeyEntry.length === slotIdx;
+                    return (
+                      <div
+                        key={slotIdx}
+                        className={`w-14 h-14 rounded-2xl border-2 flex items-center justify-center font-mono text-2xl font-black transition-all ${
+                          passkeyError
+                            ? 'border-rose-500 bg-rose-950/50 text-rose-300'
+                            : char != null
+                            ? 'border-amber-400 bg-amber-500/15 text-amber-300'
+                            : isActive
+                            ? 'border-amber-500/70 bg-[#11141b] text-slate-500'
+                            : 'border-slate-700 bg-[#11141b] text-slate-600'
+                        }`}
+                      >
+                        {char != null ? '•' : ''}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {passkeyError && (
+                  <div className="text-xs font-bold text-rose-400">{passkeyError}</div>
+                )}
+
+                {/* Numeric Keypad 00-99 */}
+                <div className="grid grid-cols-3 gap-2">
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => handlePasskeyDigit(d)}
+                      className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-black text-lg border border-slate-700 cursor-pointer transition-all"
+                    >
+                      {d}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => { setPasskeyEntry(''); setPasskeyError(''); }}
+                    className="py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 font-bold text-xs border border-slate-800 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePasskeyDigit('0')}
+                    className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-black text-lg border border-slate-700 cursor-pointer transition-all"
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setPasskeyEntry((prev) => prev.slice(0, -1)); setPasskeyError(''); }}
+                    className="py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-rose-300 font-bold text-sm border border-slate-800 cursor-pointer"
+                  >
+                    ⌫
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="p-3 bg-[#11141b] rounded-2xl border border-slate-800 text-xs text-slate-400">
+                  {goSecurityMode === 'passkey' ? (
+                    <>
+                      Pass the phone to <span className="text-white font-bold">{cp.name}</span>. Click below to reveal your personal 2-digit passkey and open your turn.
+                    </>
+                  ) : (
+                    <>
+                      Pass the phone to <span className="text-white font-bold">{cp.name}</span>. When ready, click below to view your action and cards.
+                    </>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (goSecurityMode === 'passkey' && cpPasskeyId) {
+                      setRevealedPasskeys((prev) => ({ ...prev, [cpPasskeyId]: true }));
+                      setJustAssignedKey(true);
+                    }
+                    setTurnVerified(true);
+                  }}
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer transition-transform active:scale-95"
+                >
+                  <ShieldCheck size={18} />
+                  <span>{goSecurityMode === 'passkey' ? `Reveal Key & Start — ${cp.name}` : `I am ${cp.name}`}</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -980,7 +1380,7 @@ export default function GoModeView({
                 type="button"
                 onClick={() => {
                   setShowConfirmMuckModal(false);
-                  onAction('check');
+                  submitGoAction('check');
                 }}
                 className="flex-1 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm cursor-pointer shadow"
               >
@@ -990,7 +1390,7 @@ export default function GoModeView({
                 type="button"
                 onClick={() => {
                   setShowConfirmMuckModal(false);
-                  onAction('fold');
+                  submitGoAction('fold');
                 }}
                 className="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-rose-950 text-rose-300 border border-rose-500/40 font-bold text-sm cursor-pointer shadow"
               >
@@ -1015,14 +1415,25 @@ export default function GoModeView({
               {players.map((p, idx) => {
                 if (cp && p.id === cp.id) return null;
                 const roundedVal = roundStack(p.stack, stackRounding);
+                const useExactDigits = activeUnit !== 'bb' && (stackRounding === 'exact' || roundedVal % 100 !== 0);
+                const formattedStack = useExactDigits
+                  ? formatFullBetAmount(roundedVal, cur, hand, activeUnit)
+                  : formatPlayerTagAmount(roundedVal, cur, hand, false, activeUnit);
                 const pos = positions[idx] || '';
                 return (
                   <div key={p.id} className="bg-[#11141c] px-3 py-2 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-bold">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       {pos && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] uppercase font-mono">{pos}</span>}
-                      <span className="text-slate-200">{p.name}</span>
+                      <span className="text-slate-200 truncate">{p.name}</span>
                     </div>
-                    <span className="text-amber-300 font-mono font-extrabold text-sm">{formatPlayerTagAmount(roundedVal, cur, hand, activeUnit)}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {p.currentBet > 0 && (
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          (+{formatFullBetAmount(p.currentBet, cur, hand, activeUnit)})
+                        </span>
+                      )}
+                      <span className="text-amber-300 font-mono font-extrabold text-sm">{formattedStack}</span>
+                    </div>
                   </div>
                 );
               })}

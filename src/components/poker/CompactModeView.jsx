@@ -30,7 +30,7 @@ import {
 
 function KeyBadge({ label }) {
   return (
-    <kbd className="inline-block px-1.5 py-0.5 ml-1.5 text-[10px] font-black rounded bg-black/50 text-amber-300 border border-amber-500/30 uppercase tracking-wider select-none leading-none">
+    <kbd className="kbd-shortcut-hint hidden md:inline-block px-1.5 py-0.5 ml-1.5 text-[10px] font-black rounded bg-black/50 text-amber-300 border border-amber-500/30 uppercase tracking-wider select-none leading-none">
       {label}
     </kbd>
   );

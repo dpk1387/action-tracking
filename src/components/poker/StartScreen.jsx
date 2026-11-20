@@ -44,7 +44,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
     { key: 'second_best', title: '2nd Best', desc: '2nd best hand AT SHOWDOWN wins the pot.' },
     { key: 'three_two_one', title: '3-2-1', desc: '3 flop cards, 2 turn cards, 1 river card.' },
     { key: 'ocean', title: 'Ocean', desc: 'After river betting, 6th street (Ocean) is dealt with one more betting round.' },
-    { key: 'showtime', title: 'Showtime', desc: 'All folded cards are shown face up and factored into equity.' },
+    { key: 'showtime', title: "Naked Hold 'Em", desc: 'All folded cards are shown face up and factored into equity.' },
     { key: 'mandatory_3bet', title: 'Mandatory 3-Bet', desc: 'Preflop flat calling/limping is prohibited until a 3-bet occurs.' },
     { key: 'red_river', title: 'Red River', desc: 'If river card is red (♦/♥), deal another river card after betting until a black card (♠/♣) lands.' },
     { key: 'win_button', title: 'Win the Button', desc: 'The winner of each hand takes the Button position for the next hand.' },
@@ -711,7 +711,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                         </span>
                       </div>
                       <p className="text-xs text-amber-200/70 mt-1 leading-relaxed">
-                        Play wild NLH variants: 2nd Best, 3-2-1, Ocean, Showtime, Mandatory 3-Bet, Red River, Win the Button, or Deuces Wild!
+                        Play wild NLH variants: 2nd Best, 3-2-1, Ocean, Naked Hold 'Em, Mandatory 3-Bet, Red River, Win the Button, or Deuces Wild!
                       </p>
                     </div>
                   </div>

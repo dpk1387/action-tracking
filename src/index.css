@@ -189,3 +189,9 @@
   }
 }
 
+@media (max-width: 767px), (hover: none), (pointer: coarse) {
+  .kbd-shortcut-hint {
+    display: none !important;
+  }
+}
+

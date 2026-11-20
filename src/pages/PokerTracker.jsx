@@ -83,6 +83,7 @@ export default function PokerTracker() {
   const [actionDisplayMode, setActionDisplayMode] = useState('all');
   const [isGoMode, setIsGoMode] = useState(() => config?.isGoMode || hand?.isGoMode || false);
   const [stackRounding, setStackRounding] = useState(() => config?.stackRounding || hand?.stackRounding || getDefaultStackRounding(config?.smallBlind || hand?.smallBlind || 25));
+  const [goSecurityMode, setGoSecurityMode] = useState(() => config?.goSecurityMode || hand?.goSecurityMode || 'modal');
   const [goHoleCards, setGoHoleCards] = useState({});
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [discards, setDiscards] = useState({});
@@ -135,14 +136,15 @@ export default function PokerTracker() {
     }
   }, [isGoMode, hand?.handNumber, hand?.street]);
 
-  // Auto-adjust GO Mode stack approximation on level changes / color ups
+  // Auto-adjust GO Mode stack approximation on level changes / color ups (never override manual 'exact')
   useEffect(() => {
     if (!hand || !isGoMode) return;
     const lowest = getLowestDenomination(hand);
     const def = getDefaultStackRounding(lowest);
     setStackRounding((prev) => {
-      const curVal = prev === 'exact' ? 0 : Number(prev);
-      if (curVal < def) {
+      if (prev === 'exact') return prev;
+      const curVal = Number(prev);
+      if (!curVal || curVal < def) {
         return def;
       }
       return prev;
@@ -434,6 +436,9 @@ export default function PokerTracker() {
       ...config,
       ...hand,
       isMidGame: true,
+      isGoMode,
+      stackRounding,
+      goSecurityMode,
       variant: hand.variant || config?.variant,
       gameType: hand.gameType || config?.gameType,
       smallBlind: hand.smallBlind ?? config?.smallBlind,
@@ -450,7 +455,7 @@ export default function PokerTracker() {
         occupied: p.status !== 'eliminated' && p.status !== 'out',
       })),
     };
-  }, [hand, config]);
+  }, [hand, config, isGoMode, stackRounding, goSecurityMode]);
 
   const positions = (h) => {
     if (!h) return [];
@@ -464,19 +469,28 @@ export default function PokerTracker() {
 
   const handleSave = (cfg) => {
     setConfig(cfg);
+    if (cfg.stackRounding !== undefined) setStackRounding(cfg.stackRounding);
+    if (cfg.goSecurityMode !== undefined) setGoSecurityMode(cfg.goSecurityMode);
     if (hand) {
       const newSchedule = cfg.blindSchedule || [];
       const updatedPlayers = cfg.players.map((cp, idx) => {
         const existing = hand.players.find((p) => p.seat === cp.seat) || hand.players[idx];
+        const prevStack = existing?.stack ?? cp.stack;
+        const delta = cp.stack - prevStack;
+        const nextInitialStack = existing?.initialStack != null
+          ? Math.max(0, existing.initialStack + delta)
+          : cp.stack;
         return {
-          id: idx,
+          ...(existing || {}),
+          id: existing?.id ?? idx,
           name: cp.name || (existing ? existing.name : `Player ${cp.seat}`),
           seat: cp.seat,
-          initialStack: existing?.initialStack != null ? existing.initialStack : cp.stack,
+          initialStack: nextInitialStack,
           stack: cp.stack,
           currentBet: existing?.currentBet || 0,
           totalBet: existing?.totalBet || 0,
-          status: cp.stack > 0 ? (existing?.status === 'folded' ? 'folded' : 'active') : 'busted',
+          antePaid: existing?.antePaid || 0,
+          status: cp.stack > 0 ? (existing?.status === 'folded' ? 'folded' : 'active') : (existing?.currentBet > 0 || existing?.totalBet > 0 ? 'allin' : 'busted'),
           lastAction: existing?.lastAction || null,
           timeBanks: existing?.timeBanks != null ? existing.timeBanks : (cfg.clockConfig?.initialTimeBanks ?? 3),
           usedBanks: existing?.usedBanks || 0,
@@ -491,6 +505,8 @@ export default function PokerTracker() {
         let updated = {
           ...prev,
           players: updatedPlayers,
+          stackRounding: cfg.stackRounding !== undefined ? cfg.stackRounding : prev.stackRounding,
+          goSecurityMode: cfg.goSecurityMode !== undefined ? cfg.goSecurityMode : prev.goSecurityMode,
           blindSchedule: newSchedule,
           levelConfig: cfg.levelConfig || prev.levelConfig,
           chipDenominations: cfg.chipDenominations || prev.chipDenominations,
@@ -562,6 +578,7 @@ export default function PokerTracker() {
     }
     if (cfg.isGoMode !== undefined) setIsGoMode(cfg.isGoMode);
     if (cfg.stackRounding !== undefined) setStackRounding(cfg.stackRounding);
+    if (cfg.goSecurityMode !== undefined) setGoSecurityMode(cfg.goSecurityMode);
     const newHand = initLevelTimer(startHand(cfg, btn, 1), cfg.levelConfig);
     setHand(newHand);
     if (cfg.isGoMode) {
@@ -2135,6 +2152,7 @@ export default function PokerTracker() {
           canUndo={history.length > 0}
           goHoleCards={goHoleCards}
           stackRounding={stackRounding}
+          goSecurityMode={goSecurityMode}
           suitColors={suitColors}
           displayUnit={displayUnit}
           onNextHand={proceedToNextHand}
@@ -2144,9 +2162,15 @@ export default function PokerTracker() {
           onFillBoard={handleFillBoard}
           onDealNextStreet={handleDealNextGoStreet}
           onOpenSettings={() => setShowSettingsModal(true)}
+          onOpenStructureSetup={() => setShowSetup(true)}
           onEndSession={() => setShowEndSession(true)}
           showPosition={showPosition}
           onToggleGoMode={() => setShowSwitchModeConfirm('action')}
+          timerPaused={timerPaused}
+          timerCanNudge={timerCanNudge}
+          onPauseTimer={handlePauseTimer}
+          onResumeTimer={handleResumeTimer}
+          onNudgeTimer={handleNudgeTimer}
         />
       ) : isCompactMode ? (
         <div className="max-w-2xl mx-auto p-2 sm:p-4">
@@ -2911,10 +2935,11 @@ export default function PokerTracker() {
           actionDisplayMode,
           isGoMode,
           stackRounding,
+          goSecurityMode,
         }}
         onUpdateSettings={(newVals) => {
           if (newVals.sessionName !== undefined) {
-            const val = newVals.sessionName.trim() || undefined;
+            const val = newVals.sessionName === '' ? undefined : newVals.sessionName;
             setConfig((prev) => (prev ? { ...prev, sessionName: val } : prev));
             setHand((prev) => (prev ? { ...prev, sessionName: val } : prev));
           }
@@ -2924,7 +2949,16 @@ export default function PokerTracker() {
           if (newVals.suitColors !== undefined) setSuitColors(newVals.suitColors);
           if (newVals.actionDisplayMode !== undefined) setActionDisplayMode(newVals.actionDisplayMode);
           if (newVals.isGoMode !== undefined) setIsGoMode(newVals.isGoMode);
-          if (newVals.stackRounding !== undefined) setStackRounding(newVals.stackRounding);
+          if (newVals.stackRounding !== undefined) {
+            setStackRounding(newVals.stackRounding);
+            setConfig((prev) => (prev ? { ...prev, stackRounding: newVals.stackRounding } : prev));
+            setHand((prev) => (prev ? { ...prev, stackRounding: newVals.stackRounding } : prev));
+          }
+          if (newVals.goSecurityMode !== undefined) {
+            setGoSecurityMode(newVals.goSecurityMode);
+            setConfig((prev) => (prev ? { ...prev, goSecurityMode: newVals.goSecurityMode } : prev));
+            setHand((prev) => (prev ? { ...prev, goSecurityMode: newVals.goSecurityMode } : prev));
+          }
         }}
       />
       {/* Mode Switch Confirmation Modal */}

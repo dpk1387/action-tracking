@@ -61,26 +61,43 @@ export default function SettingsModal({ isOpen, onClose, settings, onUpdateSetti
           )}
 
           {isGoMode && (
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-bold text-white">Stack Approximation</div>
-                <div className="text-[11px] text-slate-400">Approximate opponent stacks to nearest denomination</div>
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-white">Stack Approximation</div>
+                  <div className="text-[11px] text-slate-400">Approximate opponent stacks to nearest denomination</div>
+                </div>
+                <select
+                  value={settings.stackRounding ?? 100}
+                  onChange={(e) => {
+                    const val = e.target.value === 'exact' ? 'exact' : Number(e.target.value);
+                    onUpdateSettings({ stackRounding: val });
+                  }}
+                  className="bg-[#12161c] border border-slate-700 rounded-lg px-2.5 py-1 text-white text-xs font-bold"
+                >
+                  {ROUNDING_OPTIONS.map((opt) => (
+                    <option key={String(opt.value)} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <select
-                value={settings.stackRounding ?? 100}
-                onChange={(e) => {
-                  const val = e.target.value === 'exact' ? 'exact' : Number(e.target.value);
-                  onUpdateSettings({ stackRounding: val });
-                }}
-                className="bg-[#12161c] border border-slate-700 rounded-lg px-2.5 py-1 text-white text-xs font-bold"
-              >
-                {ROUNDING_OPTIONS.map((opt) => (
-                  <option key={String(opt.value)} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+
+              <div className="flex items-center justify-between border-t border-slate-800/80 pt-3">
+                <div>
+                  <div className="font-bold text-white">Game Security</div>
+                  <div className="text-[11px] text-slate-400">Turn lock between every player action</div>
+                </div>
+                <select
+                  value={settings.goSecurityMode || 'modal'}
+                  onChange={(e) => onUpdateSettings({ goSecurityMode: e.target.value })}
+                  className="bg-[#12161c] border border-slate-700 rounded-lg px-2.5 py-1 text-white text-xs font-bold"
+                >
+                  <option value="modal">Verification Modal</option>
+                  <option value="passkey">Passkey System (00–99)</option>
+                </select>
+              </div>
+            </>
           )}
 
           {/* Hide / Show Position */}

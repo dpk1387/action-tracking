@@ -39,7 +39,7 @@ export const VARIANTS = {
   second_best: { label: '2nd Best', group: 'degen', holeSize: 2, deck: 'full' },
   three_two_one: { label: '3-2-1', group: 'degen', holeSize: 2, deck: 'full' },
   ocean: { label: 'Ocean', group: 'degen', holeSize: 2, deck: 'full' },
-  showtime: { label: 'Showtime', group: 'degen', holeSize: 2, deck: 'full' },
+  showtime: { label: "Naked Hold 'Em", group: 'degen', holeSize: 2, deck: 'full' },
   mandatory_3bet: { label: 'Mandatory 3-Bet', group: 'degen', holeSize: 2, deck: 'full' },
   red_river: { label: 'Red River', group: 'degen', holeSize: 2, deck: 'full' },
   win_button: { label: 'Win the Button', group: 'degen', holeSize: 2, deck: 'full' },
@@ -534,7 +534,7 @@ export function bettingFrozen(h) {
   if (activeWithChips.length === 1) {
     const p = activeWithChips[0];
     if (h.currentBet > 0) {
-      return (p.currentBet || 0) >= h.currentBet && p.hasActed;
+      return (p.currentBet || 0) >= h.currentBet;
     }
     return true;
   }
@@ -617,6 +617,7 @@ export function startHand(config, buttonSeat, handNumber) {
     stack: p.stack,
     currentBet: 0,
     totalBet: 0,
+    antePaid: 0,
     status: 'active',
     lastAction: null,
     hasActed: false,
@@ -802,6 +803,7 @@ export function startHand(config, buttonSeat, handNumber) {
       const a = Math.min(ante, p.stack);
       p.stack -= a;
       p.totalBet += a;
+      p.antePaid = (p.antePaid || 0) + a;
       p.currentBet = 0;
       p.lastAction = { type: 'ante', amount: a };
     });
@@ -837,6 +839,7 @@ export function startHand(config, buttonSeat, handNumber) {
       const a = Math.min(ante, p.stack);
       p.stack -= a;
       p.totalBet += a;
+      p.antePaid = (p.antePaid || 0) + a;
     });
   }
 
@@ -879,16 +882,19 @@ export function startHand(config, buttonSeat, handNumber) {
     const a = Math.min(ante, players[bbIndex].stack);
     players[bbIndex].stack -= a;
     players[bbIndex].totalBet += a;
+    players[bbIndex].antePaid = (players[bbIndex].antePaid || 0) + a;
   }
   if (isBtnAnte && ante > 0) {
     const a = Math.min(ante, players[buttonIndex].stack);
     players[buttonIndex].stack -= a;
     players[buttonIndex].totalBet += a;
+    players[buttonIndex].antePaid = (players[buttonIndex].antePaid || 0) + a;
   }
   if (isSBHalfAnte && ante > 0) {
     const a = Math.min(ante, players[bbIndex].stack);
     players[bbIndex].stack -= a;
     players[bbIndex].totalBet += a;
+    players[bbIndex].antePaid = (players[bbIndex].antePaid || 0) + a;
   }
 
   players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
@@ -1164,11 +1170,11 @@ export function applyAction(hand, playerId, type, amount) {
       }
     }
     if (wentAllin) {
-      p.lastAction = { type: 'allin', amount: p.currentBet, raiseLevel: level };
+      p.lastAction = { type: 'allin', amount: p.currentBet, raiseLevel: level, didIncrease: increased };
       p.status = 'allin';
     } else {
       const actionType = isRaise ? 'raise' : 'bet';
-      p.lastAction = { type: actionType, amount: p.currentBet, raiseLevel: level };
+      p.lastAction = { type: actionType, amount: p.currentBet, raiseLevel: level, didIncrease: increased };
     }
     p.hasActed = true;
   } else if (type === 'allin') {
@@ -1204,7 +1210,7 @@ export function applyAction(hand, playerId, type, amount) {
         });
       }
     }
-    p.lastAction = { type: 'allin', amount: newBet, raiseLevel: level };
+    p.lastAction = { type: 'allin', amount: newBet, raiseLevel: level, didIncrease: increased && !isCoveredCall };
     p.hasActed = true;
     p.status = 'allin';
   } else if (type === 'straddle') {
@@ -1225,12 +1231,13 @@ export function applyAction(hand, playerId, type, amount) {
     h.straddleLevel = newLevel;
     h.raiseLevel = 1;
     h.lastRaiseAmount = Math.max(p.currentBet - h.currentBet, h.bigBlind);
+    const didIncrease = p.currentBet > h.currentBet;
     h.currentBet = p.currentBet;
     if (p.stack === 0) {
       p.status = 'allin';
-      p.lastAction = { type: 'allin', amount: p.currentBet, raiseLevel: 1 };
+      p.lastAction = { type: 'allin', amount: p.currentBet, raiseLevel: 1, didIncrease };
     } else {
-      p.lastAction = { type: 'straddle', amount: p.currentBet, raiseLevel: 1 };
+      p.lastAction = { type: 'straddle', amount: p.currentBet, raiseLevel: 1, didIncrease };
     }
     h.players.forEach((o) => {
       if (o.id !== p.id && o.status === 'active') o.hasActed = false;
@@ -1241,12 +1248,21 @@ export function applyAction(hand, playerId, type, amount) {
   const chips = p.lastAction && (p.lastAction.type === 'fold' || p.lastAction.type === 'check')
     ? 0
     : (p.lastAction && (p.lastAction.callAmount != null ? p.lastAction.callAmount : p.lastAction.amount)) || 0;
+  const isAggressive = Boolean(
+    p.lastAction && (
+      p.lastAction.didIncrease ||
+      p.lastAction.type === 'kill'
+    )
+  );
 
   h.actionHistory.push({
     street: h.street,
     player: p.name,
     action: actionLabel(p.lastAction),
     chips,
+    betTo: p.currentBet || 0,
+    raiseLevel: p.lastAction?.raiseLevel ?? h.raiseLevel ?? 0,
+    isAggressive,
     pot: potAfter,
   });
 
@@ -1531,6 +1547,7 @@ export function postBlinds(hand) {
       const a = Math.min(ante, p.stack);
       p.stack -= a;
       p.totalBet += a;
+      p.antePaid = (p.antePaid || 0) + a;
     });
   }
 
@@ -1573,16 +1590,19 @@ export function postBlinds(hand) {
     const a = Math.min(ante, h.players[bbIndex].stack);
     h.players[bbIndex].stack -= a;
     h.players[bbIndex].totalBet += a;
+    h.players[bbIndex].antePaid = (h.players[bbIndex].antePaid || 0) + a;
   }
   if (isBtnAnte && ante > 0) {
     const a = Math.min(ante, h.players[buttonIndex].stack);
     h.players[buttonIndex].stack -= a;
     h.players[buttonIndex].totalBet += a;
+    h.players[buttonIndex].antePaid = (h.players[buttonIndex].antePaid || 0) + a;
   }
   if (isSBHalfAnte && ante > 0) {
     const a = Math.min(ante, h.players[bbIndex].stack);
     h.players[bbIndex].stack -= a;
     h.players[bbIndex].totalBet += a;
+    h.players[bbIndex].antePaid = (h.players[bbIndex].antePaid || 0) + a;
   }
 
   h.players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
@@ -1657,6 +1677,7 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
     p.stack = p.initialStack;
     p.currentBet = 0;
     p.totalBet = 0;
+    p.antePaid = 0;
     p.lastAction = null;
     p.hasActed = false;
     p.status = 'active';
@@ -1668,6 +1689,7 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
       const a = Math.min(ante, p.stack);
       p.stack -= a;
       p.totalBet += a;
+      p.antePaid = (p.antePaid || 0) + a;
     });
   }
 
@@ -1710,16 +1732,19 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
     const a = Math.min(ante, h.players[bbIndex].stack);
     h.players[bbIndex].stack -= a;
     h.players[bbIndex].totalBet += a;
+    h.players[bbIndex].antePaid = (h.players[bbIndex].antePaid || 0) + a;
   }
   if (isBtnAnte && ante > 0) {
     const a = Math.min(ante, h.players[buttonIndex].stack);
     h.players[buttonIndex].stack -= a;
     h.players[buttonIndex].totalBet += a;
+    h.players[buttonIndex].antePaid = (h.players[buttonIndex].antePaid || 0) + a;
   }
   if (isSBHalfAnte && ante > 0) {
     const a = Math.min(ante, h.players[bbIndex].stack);
     h.players[bbIndex].stack -= a;
     h.players[bbIndex].totalBet += a;
+    h.players[bbIndex].antePaid = (h.players[bbIndex].antePaid || 0) + a;
   }
 
   h.players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
@@ -1766,41 +1791,69 @@ export function bbaPotOpts(hand) {
     const bbaAmount = isBBAEarlyHalf
       ? Math.round((Number(hand.bigBlind) || 0) * 0.5 * 100) / 100
       : (Number(hand.bigBlind) || 0);
-    return { bbaAmount, bbIndex };
+    return { bbaAmount, bbIndex, bigBlind: Number(hand.bigBlind) || 0 };
   }
   if (effectiveAnte === 'btn_ante') {
-    return { bbaAmount: Number(hand.bigBlind) || 0, bbIndex: buttonIndex };
+    return { bbaAmount: Number(hand.bigBlind) || 0, bbIndex: buttonIndex, bigBlind: Number(hand.bigBlind) || 0 };
   }
   if (effectiveAnte === 'sb_half_ante') {
     const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
-    return { bbaAmount: Math.round((Number(hand.bigBlind) || 0) * 0.5 * 100) / 100, bbIndex };
+    return { bbaAmount: Math.round((Number(hand.bigBlind) || 0) * 0.5 * 100) / 100, bbIndex, bigBlind: Number(hand.bigBlind) || 0 };
   }
   return {};
 }
 
+function getDeadAnte(p, idx, opts = {}) {
+  const contrib = Math.max(0, (p.initialStack ?? p.stack ?? 0) - (p.stack ?? 0));
+  if (p.antePaid != null) return Math.min(contrib, Math.max(0, Number(p.antePaid) || 0));
+  if (opts?.bbaAmount > 0 && idx === opts.bbIndex) {
+    const bbCap = Number(opts.bigBlind) || 0;
+    return Math.min(opts.bbaAmount, Math.max(0, contrib - bbCap));
+  }
+  return 0;
+}
+
 export function computePots(players, opts = {}) {
-  const contribs = players.map((p) => {
-    const contrib = p.initialStack - p.stack;
-    return { id: p.id, name: p.name, contrib, status: p.status };
+  let deadAnteTotal = 0;
+  const contribs = players.map((p, idx) => {
+    const contrib = Math.max(0, (p.initialStack ?? p.stack ?? 0) - (p.stack ?? 0));
+    const deadAnte = getDeadAnte(p, idx, opts);
+    deadAnteTotal += deadAnte;
+    const liveContrib = Math.max(0, contrib - deadAnte);
+    return { id: p.id, name: p.name, contrib, liveContrib, deadAnte, status: p.status };
   });
-  const totalPot = players.reduce((s, p) => s + (p.initialStack - p.stack), 0);
+  const totalPot = contribs.reduce((s, c) => s + c.contrib, 0);
   const hasAllIn = contribs.some((c) => c.status === 'allin' && c.contrib > 0);
   if (!hasAllIn) {
     const eligible = contribs.filter((c) => c.contrib > 0 && c.status !== 'folded').map((c) => c.id);
     return [{ amount: totalPot, eligible }];
   }
-  const levels = [...new Set(contribs.filter((c) => c.contrib > 0).map((c) => c.contrib))].sort((a, b) => a - b);
+  const levels = [...new Set(contribs.filter((c) => c.liveContrib > 0).map((c) => c.liveContrib))].sort((a, b) => a - b);
   const pots = [];
   let prev = 0;
   for (const level of levels) {
     const amount = level - prev;
-    const contributors = contribs.filter((c) => c.contrib >= level);
+    const contributors = contribs.filter((c) => c.liveContrib >= level);
     const potAmount = amount * contributors.length;
     const eligible = contribs
-      .filter((c) => c.contrib >= level && c.status !== 'folded')
+      .filter((c) => c.liveContrib >= level && c.status !== 'folded')
       .map((c) => c.id);
     pots.push({ amount: potAmount, eligible });
     prev = level;
+  }
+  if (deadAnteTotal > 0) {
+    if (pots.length === 0) {
+      const eligible = contribs.filter((c) => c.contrib > 0 && c.status !== 'folded').map((c) => c.id);
+      pots.push({ amount: deadAnteTotal, eligible });
+    } else {
+      pots[0].amount += deadAnteTotal;
+      const anteOnlyEligible = contribs
+        .filter((c) => c.deadAnte > 0 && c.liveContrib === 0 && c.status !== 'folded' && !pots[0].eligible.includes(c.id))
+        .map((c) => c.id);
+      if (anteOnlyEligible.length > 0) {
+        pots[0].eligible = [...pots[0].eligible, ...anteOnlyEligible];
+      }
+    }
   }
   const merged = [];
   for (const pot of pots) {
@@ -1817,7 +1870,8 @@ export function computePots(players, opts = {}) {
 export function refundUncontestedPots(hand) {
   const h = clone(hand);
   if (h._refundsApplied) return h;
-  const pots = computePots(h.players, bbaPotOpts(h));
+  const opts = bbaPotOpts(h);
+  const pots = computePots(h.players, opts);
   const soleWinners = new Set();
   pots.forEach((pot) => {
     if (pot.eligible.length === 1) soleWinners.add(pot.eligible[0]);
@@ -1826,17 +1880,19 @@ export function refundUncontestedPots(hand) {
     h._refundsApplied = true;
     return h;
   }
-  const contribs = {};
-  h.players.forEach((p) => {
-    contribs[p.id] = p.initialStack - p.stack;
+  const liveContribs = {};
+  h.players.forEach((p, idx) => {
+    const contrib = Math.max(0, (p.initialStack ?? p.stack ?? 0) - (p.stack ?? 0));
+    const deadAnte = getDeadAnte(p, idx, opts);
+    liveContribs[p.id] = Math.max(0, contrib - deadAnte);
   });
   h.refunds = [];
   for (const pid of soleWinners) {
     const p = h.players.find((pl) => pl.id === pid);
     if (!p) continue;
-    const myContrib = contribs[pid];
-    const maxOther = Math.max(0, ...h.players.filter((pl) => pl.id !== pid).map((pl) => contribs[pl.id]));
-    const excess = Math.max(0, myContrib - maxOther);
+    const myLive = liveContribs[pid];
+    const maxOtherLive = Math.max(0, ...h.players.filter((pl) => pl.id !== pid).map((pl) => liveContribs[pl.id]));
+    const excess = Math.max(0, myLive - maxOtherLive);
     if (excess > 0) {
       p.stack += excess;
       p.totalBet -= excess;

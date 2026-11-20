@@ -3,7 +3,7 @@ import { money, parseAmount, bettingFrozen } from '@/lib/poker';
 
 function KeyBadge({ label }) {
   return (
-    <kbd className="inline-block px-1.5 py-0.5 ml-1.5 text-[10px] font-black rounded bg-black/50 text-amber-300 border border-amber-500/30 uppercase tracking-wider select-none leading-none">
+    <kbd className="kbd-shortcut-hint hidden md:inline-block px-1.5 py-0.5 ml-1.5 text-[10px] font-black rounded bg-black/50 text-amber-300 border border-amber-500/30 uppercase tracking-wider select-none leading-none">
       {label}
     </kbd>
   );
@@ -12,7 +12,20 @@ function KeyBadge({ label }) {
 export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false, onSelectRedRiverColor }) {
   const [amount, setAmount] = useState('');
   const [muckArmed, setMuckArmed] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return true;
+    return window.matchMedia('(min-width: 768px) and (hover: hover) and (pointer: fine)').matches;
+  });
   const raiseInputRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(min-width: 768px) and (hover: hover) and (pointer: fine)');
+    const onChange = (e) => setIsDesktop(e.matches);
+    setIsDesktop(mq.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
 
   const cp = hand.currentPlayer >= 0 ? hand.players[hand.currentPlayer] : null;
   const cur = hand.currency;
@@ -345,7 +358,7 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
                       e.target.blur();
                     }
                   }}
-                  placeholder="Chips (R)"
+                  placeholder={isDesktop ? 'Chips (R)' : 'Chips'}
                   disabled={!canRaise || mustAllinToCall || ootPassiveBound}
                   className="w-28 rounded-lg bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-30"
                 />

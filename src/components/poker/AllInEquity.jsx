@@ -181,7 +181,7 @@ export default function AllInEquity({ hand, nonFolded, holeCards = {}, onHoleCha
                     <span className="truncate">{p.name}</span>
                     {p.status === 'folded' && (
                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-950/90 text-purple-300 border border-purple-500/60 font-semibold shrink-0">
-                        {isShowtime ? 'Showtime Fold' : 'Folded'}
+                        {isShowtime ? "Naked Hold 'Em Fold" : 'Folded'}
                       </span>
                     )}
                   </div>

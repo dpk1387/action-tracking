@@ -6,7 +6,7 @@ import HelpHover from '@/components/HelpHover';
 import SavedStructuresDialog from '@/components/poker/SavedStructuresDialog';
 import { defaultScheduleFor, defaultDenomsFor, firstBreakLevelNum, generateBlindSchedule } from '@/lib/tournamentStructures';
 import { suggestAnte, parseAmount } from '@/lib/poker';
-import { ROUNDING_OPTIONS, isRoundingOptionDisabled } from '@/lib/goMode';
+import { ROUNDING_OPTIONS, isRoundingOptionDisabled, getDefaultStackRounding } from '@/lib/goMode';
 
 const CASH_DEFAULT = { smallBlind: 1, bigBlind: 2, anteType: 'none', anteAmount: 0 };
 
@@ -34,12 +34,16 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [seatCount, setSeatCount] = useState(initial?.tableSize || initial?.players?.length || 6);
   const [players, setPlayers] = useState(() => {
     const size = initial?.tableSize || initial?.players?.length || 6;
-    const arr = Array.from({ length: size }, (_, i) => ({ name: '', seat: i + 1, stack: '', occupied: true }));
+    const arr = Array.from({ length: size }, (_, i) => ({ name: '', seat: i + 1, stack: '', occupied: false }));
     if (initial?.players?.length) {
       initial.players.forEach((p) => {
         const idx = arr.findIndex((a) => a.seat === p.seat);
-        if (idx >= 0) arr[idx] = { ...p, occupied: true };
+        if (idx >= 0) arr[idx] = { ...p, occupied: p.occupied !== false };
       });
+    } else {
+      for (let i = 0; i < Math.min(size, 6); i++) {
+        if (arr[i]) arr[i].occupied = true;
+      }
     }
     return arr;
   });
@@ -104,7 +108,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     second_best: '2nd Best',
     three_two_one: '3-2-1',
     ocean: 'Ocean',
-    showtime: 'Showtime',
+    showtime: "Naked Hold 'Em",
     mandatory_3bet: 'Mandatory 3-Bet',
     red_river: 'Red River',
     win_button: 'Win the Button',
@@ -128,6 +132,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [flMaxRaises, setFlMaxRaises] = useState(initial?.flMaxRaises ?? 4);
   const [isGoMode, setIsGoMode] = useState(initial?.isGoMode || false);
   const [stackRounding, setStackRounding] = useState(initial?.stackRounding || 100);
+  const [goSecurityMode, setGoSecurityMode] = useState(initial?.goSecurityMode || 'modal');
   const [error, setError] = useState('');
   const [showStructures, setShowStructures] = useState(false);
 
@@ -470,6 +475,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       variant: finalVariant,
       isGoMode,
       stackRounding,
+      goSecurityMode,
       firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
       gameType: finalGameType,
       currency: sym,
@@ -679,26 +685,42 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             </select>
           </div>
         </div>
-        {/* GO Mode Opponent Stack Rounding Section */}
+        {/* GO Mode Opponent Stack Rounding & Security Section */}
         {isGoMode && (
-          <div className="flex flex-wrap items-center justify-between gap-4 p-3 mb-4 rounded-xl border border-amber-500/30 bg-amber-950/20">
-            <span className="text-xs font-bold text-amber-200">
-              Stack Approximation
-            </span>
-            <div className="flex items-center gap-2">
+          <div className="space-y-3 p-3 mb-4 rounded-xl border border-amber-500/30 bg-amber-950/20">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <span className="text-xs font-bold text-amber-200">
+                Stack Approximation
+              </span>
+              <div className="flex items-center gap-2">
+                <select
+                  value={stackRounding || getDefaultStackRounding(smallBlind)}
+                  onChange={(e) => setStackRounding(e.target.value === 'exact' ? 'exact' : Number(e.target.value))}
+                  className="rounded-lg border border-amber-500/40 bg-[#15181d] px-3 py-1.5 text-xs font-bold text-white"
+                >
+                  {ROUNDING_OPTIONS.map((opt) => {
+                    const disabled = isRoundingOptionDisabled(opt.value, smallBlind);
+                    return (
+                      <option key={opt.value} value={opt.value} disabled={disabled}>
+                        {opt.label} {disabled ? '(Disabled)' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-amber-500/20 pt-2.5">
+              <div>
+                <div className="text-xs font-bold text-amber-200">Game Security</div>
+                <div className="text-[11px] text-slate-400">Require verification modal or unique 2-digit passkey per turn</div>
+              </div>
               <select
-                value={stackRounding || getDefaultStackRounding(smallBlind)}
-                onChange={(e) => setStackRounding(e.target.value)}
+                value={goSecurityMode}
+                onChange={(e) => setGoSecurityMode(e.target.value)}
                 className="rounded-lg border border-amber-500/40 bg-[#15181d] px-3 py-1.5 text-xs font-bold text-white"
               >
-                {ROUNDING_OPTIONS.map((opt) => {
-                  const disabled = isRoundingOptionDisabled(opt.value, smallBlind);
-                  return (
-                    <option key={opt.value} value={opt.value} disabled={disabled}>
-                      {opt.label} {disabled ? '(Disabled)' : ''}
-                    </option>
-                  );
-                })}
+                <option value="modal">Verification Modal</option>
+                <option value="passkey">Passkey System (00–99)</option>
               </select>
             </div>
           </div>

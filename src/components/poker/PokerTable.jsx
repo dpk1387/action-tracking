@@ -435,7 +435,7 @@ export default function PokerTable({
                   </div>
                 ) : null}
 
-                {/* Showtime: Face-up Folded Cards Display on player tag */}
+                {/* Naked Hold 'Em: Face-up Folded Cards Display on player tag */}
                 {folded && hand.variant === 'showtime' && (
                   <div className="mt-1 flex items-center justify-center gap-1">
                     {holeCards[p.id] && holeCards[p.id].length > 0 ? (
@@ -450,7 +450,7 @@ export default function PokerTable({
                       </div>
                     ) : (
                       <span className="text-[9px] text-purple-300 bg-purple-950/70 border border-purple-500/40 px-1 py-0.5 rounded">
-                        Showtime Fold
+                        Naked Hold 'Em Fold
                       </span>
                     )}
                   </div>
