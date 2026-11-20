@@ -94,7 +94,9 @@ export default function SettingsModal({ isOpen, onClose, settings, onUpdateSetti
                   className="bg-[#12161c] border border-slate-700 rounded-lg px-2.5 py-1 text-white text-xs font-bold"
                 >
                   <option value="modal">Verification Modal</option>
-                  <option value="passkey">Passkey System (00–99)</option>
+                  <option value="hold">Hold to Confirm</option>
+                  <option value="passkey">Passkey System (2-digit)</option>
+                  <option value="pin">PIN System (6-digit, lockout)</option>
                 </select>
               </div>
             </>

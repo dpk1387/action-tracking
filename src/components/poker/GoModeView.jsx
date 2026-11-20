@@ -17,6 +17,8 @@ import {
   Rewind,
   FastForward,
   KeyRound,
+  RotateCcw,
+  UserPlus,
 } from 'lucide-react';
 import {
   money,
@@ -31,6 +33,7 @@ import {
   bettingFrozen,
   winningHandCards,
   effectiveHoleSize,
+  isPotLimitVariant,
 } from '@/lib/poker';
 import {
   roundStack,
@@ -96,6 +99,8 @@ function formatActionTypeTitle(rawAction = '', raiseLevel = 0) {
 export default function GoModeView({
   hand,
   onAction,
+  goDiscards = {},
+  onGoDiscardPick,
   goHoleCards = {},
   stackRounding = 'exact',
   goSecurityMode = 'modal',
@@ -106,6 +111,8 @@ export default function GoModeView({
   onDealNextStreet,
   onOpenSettings,
   onOpenStructureSetup,
+  onOpenRebuy,
+  onOpenReentry,
   onEndSession,
   onToggleGoMode,
   showPosition = true,
@@ -123,6 +130,10 @@ export default function GoModeView({
   const [revealedPasskeys, setRevealedPasskeys] = useState({});
   const [passkeyEntry, setPasskeyEntry] = useState('');
   const [passkeyError, setPasskeyError] = useState('');
+  const [passkeyAttempts, setPasskeyAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState(0);
+  const [digitOrder, setDigitOrder] = useState(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+  const [holdProgress, setHoldProgress] = useState(0);
   const [justAssignedKey, setJustAssignedKey] = useState(false);
   const [showConfirmMuckModal, setShowConfirmMuckModal] = useState(false);
   const [showOpponentStacksModal, setShowOpponentStacksModal] = useState(false);
@@ -145,32 +156,40 @@ export default function GoModeView({
   const cpPasskeyId = cp ? getPlayerPasskeyId(cp) : '';
   const cpPasskey = cpPasskeyId ? playerPasskeys[cpPasskeyId] : '';
   const cpPasskeyRevealed = cpPasskeyId ? Boolean(revealedPasskeys[cpPasskeyId]) : false;
+  // 'passkey' = 2-digit code, 'pin' = 6-digit code, 'hold' = press-and-hold confirm, 'modal' = tap confirm
+  const pinLen = goSecurityMode === 'pin' ? 6 : 2;
+  const requiresCode = goSecurityMode === 'passkey' || goSecurityMode === 'pin';
+  const lockoutLeft = Math.max(0, Math.ceil((lockoutUntil - now) / 1000));
 
-  // Ensure every player has a distinct random 2-digit passkey between 00 and 99
+  // Ensure every player has a unique random code: 2 digits for passkey, 6 for PIN
   useEffect(() => {
     if (!players.length) return;
     setPlayerPasskeys((prev) => {
       const missing = players.filter((p) => {
         const key = getPlayerPasskeyId(p);
-        return key && !prev[key];
+        return key && (!prev[key] || prev[key].length !== pinLen);
       });
       if (missing.length === 0) return prev;
       const next = { ...prev };
-      const used = new Set(Object.values(next));
+      const used = new Set(Object.values(next).filter((v) => v.length === pinLen));
+      Object.keys(next).forEach((k) => {
+        if (next[k].length !== pinLen) delete next[k];
+      });
       missing.forEach((p) => {
         const key = getPlayerPasskeyId(p);
         let code = '';
         let guard = 0;
         do {
-          code = String(Math.floor(Math.random() * 100)).padStart(2, '0');
+          code = '';
+          for (let i = 0; i < pinLen; i++) code += Math.floor(Math.random() * 10);
           guard++;
-        } while (used.has(code) && guard < 500);
+        } while (used.has(code) && guard < 2000);
         used.add(code);
         next[key] = code;
       });
       return next;
     });
-  }, [players]);
+  }, [players, pinLen]);
 
   // Require security verification after EVERY action (never skip consecutive turns)
   useEffect(() => {
@@ -179,6 +198,8 @@ export default function GoModeView({
     setTurnVerified(false);
     setPasskeyEntry('');
     setPasskeyError('');
+    setPasskeyAttempts(0);
+    setHoldProgress(0);
     setJustAssignedKey(false);
   }, [hand?.handNumber, hand?.street, hand?.currentPlayer, hand?.actionHistory?.length]);
 
@@ -213,7 +234,7 @@ export default function GoModeView({
   const potTotal = players.reduce((s, p) => s + (p.totalBet || 0), 0);
 
   // Pot Limit enforcement for PLO
-  const isPL = hand?.gameType === 'pl' || hand?.gameType === 'pot_limit' || hand?.variant === 'plo';
+  const isPL = hand?.gameType === 'pl' || hand?.gameType === 'pot_limit' || isPotLimitVariant(hand?.variant);
   const facingBet = hand?.currentBet || 0;
   const rawPotRaiseTo = cp
     ? (facingBet === 0 ? Math.max(hand?.bigBlind || 1, potTotal) : potTotal + 2 * facingBet - (cp.currentBet || 0))
@@ -423,20 +444,74 @@ export default function GoModeView({
   const needsTurnAck = Boolean(cp && !turnVerified && !isAllInSituation);
 
   const handlePasskeyDigit = (digit) => {
-    if (!cpPasskey || passkeyEntry.length >= 2) return;
+    if (!cpPasskey || lockoutLeft > 0 || passkeyEntry.length >= pinLen) return;
     const next = passkeyEntry + digit;
     setPasskeyEntry(next);
     setPasskeyError('');
-    if (next.length === 2) {
+    if (next.length === pinLen) {
       if (next === cpPasskey) {
         setTurnVerified(true);
         setPasskeyEntry('');
         setPasskeyError('');
+        setPasskeyAttempts(0);
       } else {
-        setPasskeyError('Incorrect passkey — try again');
-        setTimeout(() => setPasskeyEntry(''), 350);
+        const attempts = passkeyAttempts + 1;
+        setTimeout(() => setPasskeyEntry(''), 300);
+        if (attempts >= 3) {
+          setPasskeyAttempts(0);
+          setLockoutUntil(Date.now() + 15000);
+          setPasskeyError('Too many attempts — locked for 15 seconds');
+        } else {
+          setPasskeyAttempts(attempts);
+          setPasskeyError(`Incorrect — ${3 - attempts} attempt${3 - attempts === 1 ? '' : 's'} left`);
+        }
       }
     }
+  };
+
+  const shuffleKeypad = () => {
+    setDigitOrder((prev) => {
+      const arr = [...prev];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    });
+  };
+
+  const completeTurnAck = () => {
+    if (requiresCode && cpPasskeyId) {
+      setRevealedPasskeys((prev) => ({ ...prev, [cpPasskeyId]: true }));
+      setJustAssignedKey(true);
+    }
+    setTurnVerified(true);
+  };
+
+  // Hold-to-confirm: the button must be pressed for ~1.2s before the turn unlocks.
+  const holdTimerRef = useRef(null);
+  const holdStartRef = useRef(0);
+  const cancelHold = () => {
+    if (holdTimerRef.current) {
+      clearInterval(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    setHoldProgress(0);
+  };
+  useEffect(() => () => {
+    if (holdTimerRef.current) clearInterval(holdTimerRef.current);
+  }, []);
+  const startHold = () => {
+    if (holdTimerRef.current) return;
+    holdStartRef.current = Date.now();
+    holdTimerRef.current = setInterval(() => {
+      const pct = Math.min(100, ((Date.now() - holdStartRef.current) / 1200) * 100);
+      setHoldProgress(pct);
+      if (pct >= 100) {
+        cancelHold();
+        completeTurnAck();
+      }
+    }, 40);
   };
 
   // Keyboard shortcuts listener:
@@ -444,7 +519,7 @@ export default function GoModeView({
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (needsTurnAck) {
-        if (goSecurityMode === 'passkey' && cpPasskeyRevealed) {
+        if (requiresCode && cpPasskeyRevealed) {
           if (/^[0-9]$/.test(e.key)) {
             e.preventDefault();
             handlePasskeyDigit(e.key);
@@ -457,13 +532,9 @@ export default function GoModeView({
             setPasskeyEntry('');
             setPasskeyError('');
           }
-        } else if (goSecurityMode !== 'passkey' || !cpPasskeyRevealed) {
+        } else if (!requiresCode && goSecurityMode !== 'hold') {
           if (e.key === 'Enter' && cp) {
             e.preventDefault();
-            if (goSecurityMode === 'passkey' && cpPasskeyId) {
-              setRevealedPasskeys((prev) => ({ ...prev, [cpPasskeyId]: true }));
-              setJustAssignedKey(true);
-            }
             setTurnVerified(true);
           }
         }
@@ -526,13 +597,18 @@ export default function GoModeView({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cp, canCheck, disableCall, toCall, minRaise, effectiveMaxRaise, isPL, raiseInput, needsTurnAck, goSecurityMode, cpPasskeyRevealed, cpPasskey, cpPasskeyId, passkeyEntry, isAllInSituation]);
+  }, [cp, canCheck, disableCall, toCall, minRaise, effectiveMaxRaise, isPL, raiseInput, needsTurnAck, goSecurityMode, requiresCode, cpPasskeyRevealed, cpPasskey, cpPasskeyId, passkeyEntry, isAllInSituation, lockoutLeft, passkeyAttempts, pinLen]);
 
   const isShowdownComplete = Boolean(
     isAllInSituation && (commCards.length >= targetBoardLen || hand?.phase === 'awarded' || hand?.phase === 'ended')
   );
 
   const levelNum = hand?.levelIndex != null ? hand.levelIndex + 1 : (hand?.levelNumber || 1);
+  const variantBadge = ({
+    nlh: 'NLH', plo: 'PLO4', plo5: 'PLO5', plo6: 'PLO6', plo8: 'PLO8',
+    short_deck: 'SHORT DECK', pineapple: 'PINEAPPLE', crazy_pineapple: 'CRAZY PINEAPPLE',
+    lazy_pineapple: 'LAZY PINEAPPLE', super_holdem: "SUPER HOLD'EM",
+  })[hand?.variant] || String(hand?.variant || 'NLH').replace(/_/g, ' ').toUpperCase();
 
   return (
     <div className="min-h-screen bg-[#0b0e14] text-white flex flex-col justify-between p-3 sm:p-5 select-none max-w-2xl mx-auto border-x border-slate-800/80 shadow-2xl relative">
@@ -542,7 +618,7 @@ export default function GoModeView({
         <div className="flex items-center justify-between px-3.5 py-2 bg-[#121620] rounded-xl border border-slate-800 text-xs shadow-sm flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-1 rounded-lg bg-amber-500/25 border border-amber-500/60 text-amber-300 font-black uppercase text-xs tracking-wider shadow">
-              GO Mode · {hand?.variant === 'plo' ? 'PLO' : 'NLH'}
+              GO Mode · {variantBadge}
             </span>
             <span className="text-slate-600">•</span>
             <span className="font-mono text-emerald-400 font-extrabold text-xs">
@@ -637,6 +713,30 @@ export default function GoModeView({
               </button>
             )}
 
+            {onOpenRebuy && (
+              <button
+                type="button"
+                onClick={onOpenRebuy}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
+                title="Tournament rebuy / add-on"
+              >
+                <RotateCcw size={13} />
+                <span className="hidden sm:inline">Rebuy</span>
+              </button>
+            )}
+
+            {onOpenReentry && (
+              <button
+                type="button"
+                onClick={onOpenReentry}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
+                title="Re-enter a busted player"
+              >
+                <UserPlus size={13} />
+                <span className="hidden sm:inline">Re-entry</span>
+              </button>
+            )}
+
             {/* Structure Setup Button (next to Settings) */}
             {onOpenStructureSetup && (
               <button
@@ -693,12 +793,12 @@ export default function GoModeView({
         </div>
 
         {/* Newly assigned passkey banner on player's first turn */}
-        {goSecurityMode === 'passkey' && justAssignedKey && turnVerified && cp && cpPasskey && (
+        {requiresCode && justAssignedKey && turnVerified && cp && cpPasskey && (
           <div className="p-2.5 bg-indigo-950/90 border border-indigo-400/70 rounded-xl flex items-center justify-between gap-2 text-xs shadow-lg animate-fade-in">
             <div className="flex items-center gap-2 text-indigo-200">
               <KeyRound size={15} className="text-indigo-300 shrink-0" />
               <span>
-                <strong className="text-white">{cp.name}</strong>, remember your 2-digit passkey for future turns:
+                <strong className="text-white">{cp.name}</strong>, remember your {cpPasskey.length}-digit {goSecurityMode === 'pin' ? 'PIN' : 'passkey'} for future turns:
               </span>
             </div>
             <span className="px-3 py-1 rounded-lg bg-indigo-500 text-white font-mono font-black text-base tracking-widest shadow">
@@ -918,16 +1018,7 @@ export default function GoModeView({
             {/* CENTER-RIGHT: Pot Size + Last Raise Info & Community Board */}
             <div className="space-y-3 text-center md:text-right md:pl-2">
               <div className="flex flex-wrap items-start justify-center md:justify-end gap-4">
-                <div>
-                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Current Pot
-                  </div>
-                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
-                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
-                  </div>
-                </div>
-
-                {/* Last Raise / Bet Info next to Current Pot */}
+                {/* Last Raise / Bet Info (left of Current Pot) */}
                 <div className="bg-[#181e2c] border border-slate-700/80 rounded-2xl px-3 py-2 text-left min-w-[130px]">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
                     Last Raise
@@ -952,6 +1043,16 @@ export default function GoModeView({
                     <div className="text-xs font-semibold text-slate-500">None</div>
                   )}
                 </div>
+
+                <div>
+                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Current Pot
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
+                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
+                  </div>
+                </div>
+
               </div>
 
               {/* Community Cards */}
@@ -1247,12 +1348,12 @@ export default function GoModeView({
         <div className="fixed inset-0 z-50 bg-[#0d1017]/95 backdrop-blur-md flex items-start pt-10 sm:pt-14 justify-center p-5 animate-fade-in select-none">
           <div className="bg-[#181d26] border-2 border-amber-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-5 shadow-2xl">
             <div className="w-16 h-16 rounded-full bg-amber-500/20 border-2 border-amber-500 text-amber-400 flex items-center justify-center mx-auto shadow-inner">
-              {goSecurityMode === 'passkey' && cpPasskeyRevealed ? <KeyRound size={30} /> : <Smartphone size={32} />}
+              {requiresCode && cpPasskeyRevealed ? <KeyRound size={30} /> : <Smartphone size={32} />}
             </div>
 
             <div className="space-y-2">
               <div className="text-xs font-extrabold text-amber-400 uppercase tracking-widest">
-                {goSecurityMode === 'passkey' ? 'Passkey Security' : 'Turn Transition'}
+                {goSecurityMode === 'passkey' ? 'Passkey Security' : goSecurityMode === 'pin' ? 'PIN Security' : goSecurityMode === 'hold' ? 'Hold to Confirm' : 'Turn Transition'}
               </div>
               <h3 className="text-2xl font-black text-white">
                 Pass phone to <span className="text-amber-300">{cp.name}</span>
@@ -1264,21 +1365,21 @@ export default function GoModeView({
               )}
             </div>
 
-            {goSecurityMode === 'passkey' && cpPasskeyRevealed ? (
+            {requiresCode && cpPasskeyRevealed ? (
               <div className="space-y-4">
                 <div className="p-3 bg-[#11141b] rounded-2xl border border-slate-800 text-xs text-slate-300">
-                  Enter <span className="text-white font-bold">{cp.name}</span>&apos;s 2-digit passkey to unlock your action and cards.
+                  Enter <span className="text-white font-bold">{cp.name}</span>&apos;s {pinLen}-digit {goSecurityMode === 'pin' ? 'PIN' : 'passkey'} to unlock your action and cards.
                 </div>
 
-                {/* 2-digit PIN boxes */}
-                <div className="flex items-center justify-center gap-3">
-                  {[0, 1].map((slotIdx) => {
+                {/* PIN boxes */}
+                <div className="flex items-center justify-center gap-2">
+                  {Array.from({ length: pinLen }, (_, slotIdx) => {
                     const char = passkeyEntry[slotIdx];
                     const isActive = passkeyEntry.length === slotIdx;
                     return (
                       <div
                         key={slotIdx}
-                        className={`w-14 h-14 rounded-2xl border-2 flex items-center justify-center font-mono text-2xl font-black transition-all ${
+                        className={`${pinLen === 6 ? 'w-11 h-14 text-xl' : 'w-14 h-14 text-2xl'} rounded-2xl border-2 flex items-center justify-center font-mono font-black transition-all ${
                           passkeyError
                             ? 'border-rose-500 bg-rose-950/50 text-rose-300'
                             : char != null
@@ -1297,15 +1398,32 @@ export default function GoModeView({
                 {passkeyError && (
                   <div className="text-xs font-bold text-rose-400">{passkeyError}</div>
                 )}
+                {lockoutLeft > 0 && (
+                  <div className="text-xs font-bold text-amber-300">
+                    Keypad locked — try again in {lockoutLeft}s
+                  </div>
+                )}
 
-                {/* Numeric Keypad 00-99 */}
+                <div className="flex items-center justify-between text-[10px] text-slate-500">
+                  <span>{3 - passkeyAttempts} attempt{3 - passkeyAttempts === 1 ? '' : 's'} left before lockout</span>
+                  <button
+                    type="button"
+                    onClick={shuffleKeypad}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold cursor-pointer"
+                  >
+                    Shuffle
+                  </button>
+                </div>
+
+                {/* Numeric Keypad (order can be shuffled to defeat shoulder-surfing) */}
                 <div className="grid grid-cols-3 gap-2">
-                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
+                  {digitOrder.map((d) => (
                     <button
                       key={d}
                       type="button"
+                      disabled={lockoutLeft > 0}
                       onClick={() => handlePasskeyDigit(d)}
-                      className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-black text-lg border border-slate-700 cursor-pointer transition-all"
+                      className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-lg border border-slate-700 cursor-pointer transition-all"
                     >
                       {d}
                     </button>
@@ -1319,8 +1437,9 @@ export default function GoModeView({
                   </button>
                   <button
                     type="button"
+                    disabled={lockoutLeft > 0}
                     onClick={() => handlePasskeyDigit('0')}
-                    className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-black text-lg border border-slate-700 cursor-pointer transition-all"
+                    className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-lg border border-slate-700 cursor-pointer transition-all"
                   >
                     0
                   </button>
@@ -1338,29 +1457,52 @@ export default function GoModeView({
                 <div className="p-3 bg-[#11141b] rounded-2xl border border-slate-800 text-xs text-slate-400">
                   {goSecurityMode === 'passkey' ? (
                     <>
-                      Pass the phone to <span className="text-white font-bold">{cp.name}</span>. Click below to reveal your personal 2-digit passkey and open your turn.
+                      Pass the phone to <span className="text-white font-bold">{cp.name}</span>. Tap below to reveal your personal 2-digit passkey and open your turn.
+                    </>
+                  ) : goSecurityMode === 'pin' ? (
+                    <>
+                      Pass the phone to <span className="text-white font-bold">{cp.name}</span>. Tap below to reveal your personal 6-digit PIN and open your turn.
+                    </>
+                  ) : goSecurityMode === 'hold' ? (
+                    <>
+                      Pass the phone to <span className="text-white font-bold">{cp.name}</span>. Press and hold the button below until it fills to unlock your cards and actions.
                     </>
                   ) : (
                     <>
-                      Pass the phone to <span className="text-white font-bold">{cp.name}</span>. When ready, click below to view your action and cards.
+                      Pass the phone to <span className="text-white font-bold">{cp.name}</span>. When ready, tap below to view your action and cards.
                     </>
                   )}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (goSecurityMode === 'passkey' && cpPasskeyId) {
-                      setRevealedPasskeys((prev) => ({ ...prev, [cpPasskeyId]: true }));
-                      setJustAssignedKey(true);
-                    }
-                    setTurnVerified(true);
-                  }}
-                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer transition-transform active:scale-95"
-                >
-                  <ShieldCheck size={18} />
-                  <span>{goSecurityMode === 'passkey' ? `Reveal Key & Start — ${cp.name}` : `I am ${cp.name}`}</span>
-                </button>
+                {goSecurityMode === 'hold' ? (
+                  <button
+                    type="button"
+                    onPointerDown={startHold}
+                    onPointerUp={cancelHold}
+                    onPointerLeave={cancelHold}
+                    onPointerCancel={cancelHold}
+                    onContextMenu={(e) => e.preventDefault()}
+                    className="relative w-full overflow-hidden py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer select-none touch-none"
+                  >
+                    <span
+                      className="absolute inset-y-0 left-0 bg-emerald-400/70 pointer-events-none"
+                      style={{ width: `${holdProgress}%` }}
+                    />
+                    <ShieldCheck size={18} className="relative" />
+                    <span className="relative">
+                      {holdProgress > 0 ? 'Keep holding…' : `Hold to confirm — ${cp.name}`}
+                    </span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={completeTurnAck}
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer transition-transform active:scale-95"
+                  >
+                    <ShieldCheck size={18} />
+                    <span>{requiresCode ? `Reveal Key & Start — ${cp.name}` : `I am ${cp.name}`}</span>
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -1445,6 +1587,54 @@ export default function GoModeView({
             >
               Close
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* PINEAPPLE DISCARD STEP */}
+      {hand?.cpNeedsDiscard && !hand?.cpDiscarded && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 overflow-y-auto">
+          <div className="w-full max-w-md rounded-2xl border border-amber-500/50 bg-[#12161f] p-4 space-y-3 my-auto shadow-2xl">
+            <div className="text-center">
+              <div className="text-amber-300 font-black text-lg uppercase tracking-wide">Discard One Card</div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {hand.variant === 'pineapple' && 'Pineapple: discard before the flop is dealt.'}
+                {hand.variant === 'crazy_pineapple' && 'Crazy Pineapple: discard now that the flop is out.'}
+                {hand.variant === 'lazy_pineapple' && 'Lazy Pineapple: discard on the river.'}
+              </p>
+            </div>
+            {(hand.players || []).filter((p) => p.status !== 'folded').map((p) => {
+              const cards = goHoleCards[p.id] || [];
+              const picked = goDiscards[p.id];
+              return (
+                <div key={p.id} className="rounded-xl bg-slate-900/70 border border-slate-700 p-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-slate-200 truncate">{p.name}</span>
+                    <span className={`text-[10px] font-black uppercase ${picked != null ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {picked != null ? 'Ready' : 'Tap a card'}
+                    </span>
+                  </div>
+                  <div className="flex gap-2 justify-center">
+                    {cards.map((c, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => onGoDiscardPick && onGoDiscardPick(p.id, i)}
+                        className={`w-12 h-16 rounded-lg bg-white border-2 flex flex-col items-center justify-center shadow-md cursor-pointer transition-all ${
+                          picked === i ? 'border-rose-500 opacity-40 scale-95' : 'border-slate-300 hover:border-amber-400'
+                        }`}
+                      >
+                        <span className="text-base font-black leading-none text-slate-900">{rankDisplay(c.rank)}</span>
+                        <span className={`text-lg leading-none ${suitColorClass(c.suit, suitColors)}`}>{SUIT_SYMBOL[c.suit]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            <p className="text-[10px] text-center text-slate-500">
+              Applied automatically once every player has chosen.
+            </p>
           </div>
         </div>
       )}

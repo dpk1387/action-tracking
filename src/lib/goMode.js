@@ -1,4 +1,4 @@
-import { RANKS, SUITS } from '@/lib/poker';
+import { RANKS, SUITS, variantMeta, variantRanks } from '@/lib/poker';
 
 export const ROUNDING_OPTIONS = [
   { label: 'Exact', value: 'exact' },
@@ -140,10 +140,11 @@ export function stepBetAmount(currentValStr, direction, stepSize, minBet = 0, ma
   return Math.max(boundedMin, Math.min(boundedMax, next));
 }
 
-export function generateGoDeck() {
+export function generateGoDeck(variant = 'nlh') {
+  const ranks = variant === 'short_deck' ? variantRanks(variant) : RANKS;
   const deck = [];
   SUITS.forEach((s) => {
-    RANKS.forEach((r) => {
+    ranks.forEach((r) => {
       deck.push({ rank: r, suit: s });
     });
   });
@@ -155,8 +156,16 @@ export function generateGoDeck() {
   return deck;
 }
 
-export function dealGoHoleCards(players, holeSize = 2, existingCommunity = []) {
-  const deck = generateGoDeck();
+// Hole cards dealt in GO mode: pineapple games are dealt three and discard one later.
+export function goHoleSize(hand) {
+  const variant = (typeof hand === 'string' ? hand : hand?.variant) || 'nlh';
+  if (variant === 'pineapple' || variant === 'crazy_pineapple') return 3;
+  if (variant === 'lazy_pineapple') return (typeof hand === 'string' ? 'preflop' : hand?.street) === 'river' ? 2 : 3;
+  return variantMeta(variant).holeSize;
+}
+
+export function dealGoHoleCards(players, holeSize = 2, existingCommunity = [], variant = 'nlh') {
+  const deck = generateGoDeck(variant);
   const used = new Set();
 
   existingCommunity.forEach((c) => {
@@ -209,7 +218,7 @@ export function fillGoCommunityCards(hand, goHoleCards = {}) {
   if (!hand || !hand.communityCards || !hand.communityCards.some((c) => c && c.hidden)) {
     return hand;
   }
-  const deck = generateGoDeck();
+  const deck = generateGoDeck(hand?.variant);
   const used = new Set();
 
   Object.values(goHoleCards).forEach((cards) => {
@@ -248,7 +257,7 @@ export function runOutGoBoardIfFrozen(hand, goHoleCards = {}) {
   const nonFolded = (hand.players || []).filter((p) => p.status !== 'folded');
   if (nonFolded.length <= 1) return hand;
 
-  const deck = generateGoDeck();
+  const deck = generateGoDeck(hand?.variant);
   const used = new Set();
 
   Object.values(goHoleCards).forEach((cards) => {
@@ -300,7 +309,7 @@ export function runOutGoBoardIfFrozen(hand, goHoleCards = {}) {
  */
 export function dealNextGoStreet(hand, goHoleCards = {}) {
   if (!hand) return hand;
-  const deck = generateGoDeck();
+  const deck = generateGoDeck(hand?.variant);
   const used = new Set();
 
   Object.values(goHoleCards).forEach((cards) => {

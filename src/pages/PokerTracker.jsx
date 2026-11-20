@@ -16,6 +16,7 @@ import RebuyCashoutDialog from '@/components/poker/RebuyCashoutDialog';
 import LateEntryDialog from '@/components/poker/LateEntryDialog';
 import ReentryDialog from '@/components/poker/ReentryDialog';
 import RebuyDialog from '@/components/poker/RebuyDialog';
+import BustRecoveryDialog from '@/components/poker/BustRecoveryDialog';
 import ShareDialog from '@/components/poker/ShareDialog';
 import SettingsModal from '@/components/poker/SettingsModal';
 import StartScreen from '@/components/poker/StartScreen';
@@ -28,7 +29,7 @@ import CompactModeView from '@/components/poker/CompactModeView';
 import GoModeView from '@/components/poker/GoModeView';
 import TemporaryGameModal from '@/components/poker/TemporaryGameModal';
 import { findPlanForHand } from '@/lib/tempGameScheduler';
-import { dealGoHoleCards, fillGoCommunityCards, runOutGoBoardIfFrozen, dealNextGoStreet, getDefaultStackRounding, getLowestDenomination } from '@/lib/goMode';
+import { dealGoHoleCards, goHoleSize, fillGoCommunityCards, runOutGoBoardIfFrozen, dealNextGoStreet, getDefaultStackRounding, getLowestDenomination } from '@/lib/goMode';
 import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, Clock, UserPlus, Minimize2, Maximize2, Zap, Settings } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { sessionStore } from '@/lib/sessionStore';
@@ -41,13 +42,29 @@ import {
 import { saveCompletedSession } from '@/lib/completedSessionsStore';
 import { saveHandHistory, findHandHistoryByCode } from '@/lib/handHistoriesStore';
 import {
-  startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots,
+  startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots, nextHand,
   positionForSeat, getButtonIndex, money, formatPotAmount, formatPotOutcome, formatSessionName, getMultipleBoardWinPercentages, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone, calcAnteForType,
+  goDiscardStage, rebuyBlocker, isPotLimitVariant,
 } from '@/lib/poker';
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
 import { suggestNextBlinds } from '@/lib/tournamentStructures';
 import { advanceToNextHand, initLevelTimer, advanceTimerSegment, pauseLevelTimer, resumeLevelTimer, levelTimerState, formatTimer, formatTimerLabel, nudgeLevelTimer, scheduledLevelNumber } from '@/lib/levelTimer';
+
+// GO Mode pineapple games: flag the hand once the discard step is due. For Pineapple the
+// flop stays face down until the discards are in; Crazy/Lazy Pineapple have a visible board.
+function applyGoDiscardGate(h, holeCards) {
+  const stage = goDiscardStage(h);
+  if (!stage) return h;
+  const due = stage === 'preflop'
+    ? h.street === 'flop'
+    : stage === 'flop'
+      ? h.street === 'flop'
+      : (h.street === 'river' || h.street === 'ocean');
+  if (!due) return h;
+  const withBoard = stage === 'preflop' ? h : fillGoCommunityCards(h, holeCards);
+  return { ...withBoard, cpNeedsDiscard: true };
+}
 
 export default function PokerTracker() {
   const [config, setConfig] = useState(() => sessionStore.get().config);
@@ -64,6 +81,7 @@ export default function PokerTracker() {
   const [hideAmounts, setHideAmounts] = useState(false);
   const [showRebuy, setShowRebuy] = useState(false);
   const [showReentry, setShowReentry] = useState(false);
+  const [ruleNotice, setRuleNotice] = useState(null);
   const [showLateEntry, setShowLateEntry] = useState(false);
   const [showBombPotModal, setShowBombPotModal] = useState(false);
   const [showTempGameModal, setShowTempGameModal] = useState(false);
@@ -85,6 +103,8 @@ export default function PokerTracker() {
   const [stackRounding, setStackRounding] = useState(() => config?.stackRounding || hand?.stackRounding || getDefaultStackRounding(config?.smallBlind || hand?.smallBlind || 25));
   const [goSecurityMode, setGoSecurityMode] = useState(() => config?.goSecurityMode || hand?.goSecurityMode || 'modal');
   const [goHoleCards, setGoHoleCards] = useState({});
+  const [goDiscards, setGoDiscards] = useState({});
+  const [bustRecovery, setBustRecovery] = useState(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [discards, setDiscards] = useState({});
   const [actionError, setActionError] = useState('');
@@ -129,12 +149,34 @@ export default function PokerTracker() {
       setGoHoleCards((prev) => {
         const keys = Object.keys(prev || {});
         if (keys.length === 0 || (hand?.street === 'preflop' && (!hand?.actionHistory || hand.actionHistory.length === 0))) {
-          return dealGoHoleCards(hand.players, effectiveHoleSize(hand), hand.communityCards);
+          return dealGoHoleCards(hand.players, goHoleSize(hand), hand.communityCards, hand.variant);
         }
         return prev;
       });
     }
   }, [isGoMode, hand?.handNumber, hand?.street]);
+
+  // GO Mode pineapple discard step: apply every pick once all live players have chosen.
+  useEffect(() => {
+    if (!isGoMode || !hand || !hand.cpNeedsDiscard || hand.cpDiscarded) return;
+    const live = (hand.players || []).filter((p) => p.status !== 'folded');
+    if (!live.length || !live.every((p) => goDiscards[p.id] != null)) return;
+    const nextHole = {};
+    Object.entries(goHoleCards).forEach(([pid, cards]) => {
+      const di = goDiscards[pid];
+      nextHole[pid] = Array.isArray(cards) && di != null ? cards.filter((_, i) => i !== di) : cards;
+    });
+    const cleared = fillGoCommunityCards({ ...hand, cpDiscarded: true, cpNeedsDiscard: false }, nextHole);
+    setGoHoleCards(nextHole);
+    setHand(cleared);
+    setGoDiscards({});
+  }, [goDiscards, goHoleCards, isGoMode, hand?.cpNeedsDiscard, hand?.cpDiscarded, hand?.handNumber]);
+
+  useEffect(() => { setGoDiscards({}); }, [hand?.handNumber]);
+
+  const handleGoDiscardPick = (playerId, cardIndex) => {
+    setGoDiscards((prev) => ({ ...prev, [playerId]: cardIndex }));
+  };
 
   // Auto-adjust GO Mode stack approximation on level changes / color ups (never override manual 'exact')
   useEffect(() => {
@@ -631,7 +673,8 @@ export default function PokerTracker() {
         // Keep cards as they are, let user manually press Deal Flop / Deal Turn / Deal River!
         next.currentPlayer = -1;
       } else {
-        next = fillGoCommunityCards(next, goHoleCards);
+        next = applyGoDiscardGate(next, goHoleCards);
+        if (!next.cpNeedsDiscard) next = fillGoCommunityCards(next, goHoleCards);
       }
     }
     setActionError('');
@@ -669,7 +712,12 @@ export default function PokerTracker() {
 
   const handleDealNextGoStreet = () => {
     if (!hand || !isGoMode) return;
-    const next = dealNextGoStreet(hand, goHoleCards);
+    const dealing = dealNextGoStreet(hand, goHoleCards);
+    const next = applyGoDiscardGate(dealing, goHoleCards);
+    if (next.cpNeedsDiscard) {
+      setHand(next);
+      return;
+    }
     const activeHoleCards = goHoleCards;
     const targetLen = (next.variant === 'three_two_one' || next.variant === 'ocean') ? 6 : 5;
     const finalStreet = next.variant === 'ocean' ? 'ocean' : 'river';
@@ -1050,6 +1098,73 @@ export default function PokerTracker() {
     });
   };
 
+  // Ends the tournament: records the completed session and shows the winner screen.
+  const endTournament = (winner, currentHand) => {
+    setGameOver(winner);
+    setHand(null);
+      const hands = sessionStore.get().history || [];
+      if (hands.length > 0 || currentHand) {
+        const compSession = {
+          id: 'completed_' + Date.now(),
+          shareCode: getShareCode() || ('code_' + Date.now()),
+          sessionName: formatSessionName(currentHand || { handNumber: hands.length || 1, variant: config?.variant }),
+          mode: (currentHand?.mode || config?.mode || 'tournament') === 'tournament' ? 'tournament' : 'cash',
+          variant: currentHand?.variant || config?.variant || 'nlh',
+          handCount: hands.length,
+          currency: currentHand?.currency || config?.currency || '$',
+          smallBlind: currentHand?.smallBlind || config?.smallBlind || 25,
+          bigBlind: currentHand?.bigBlind || config?.bigBlind || 50,
+          playerNames: (currentHand?.players || config?.players || []).map((p) => p.name || `Player ${p.seat}`),
+          winnerName: winner?.name,
+          hands: hands,
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          isCompleted: true,
+        };
+        saveCompletedSession(compSession);
+        saveHandHistory(compSession);
+        discardSavedSession().catch(() => {});
+      }
+  };
+
+  // Restarts play after a bust when the structure still allows a re-entry or rebuy.
+  const handleBustRecovery = (elim, kind) => {
+    const rec = bustRecovery;
+    if (!rec?.appliedHand) return;
+    const base = rec.baseHand || {};
+    const isRebuy = kind === 'rebuy';
+    const stack = Number(isRebuy ? base.rebuyChips : base.startingStack) || 0;
+    const pending = {
+      name: elim.name,
+      seat: elim.seat,
+      stack: stack > 0 ? stack : (Number(base.bigBlind) || 1) * 100,
+      reentries: isRebuy ? (Number(elim.reentries) || 0) : (Number(elim.reentries) || 0) + 1,
+      rebuys: isRebuy ? (Number(elim.rebuys) || 0) + 1 : (Number(elim.rebuys) || 0),
+    };
+    const res = nextHand({ ...rec.appliedHand, pendingAdjust: {}, pendingPlayers: [pending] });
+    if (!res?.hand) return;
+    setBustRecovery(null);
+    setHistory([]);
+    const snap = {};
+    res.hand.players.forEach((p) => {
+      snap[p.seat] = p.initialStack != null ? p.initialStack : p.stack;
+    });
+    setFrozenStacks(snap);
+    setHand(res.hand);
+    resetHoleCards();
+    setBonusApplied(false);
+    setSevenTwoFoldWinner(null);
+    setRunTimesApplied(1);
+    setShowEnd(false);
+  };
+
+  const handleBustEnd = () => {
+    const rec = bustRecovery;
+    if (!rec) return;
+    setBustRecovery(null);
+    endTournament(rec.winner, rec.baseHand);
+  };
+
   const proceedToNextHand = () => {
     if (hand && hand.phase === 'awarded') {
       updateFrozenStacks(hand);
@@ -1130,30 +1245,18 @@ export default function PokerTracker() {
     setHistory([]);
     if (res.gameOver) {
       const winner = res.remaining[0];
-      setGameOver(winner);
-      setHand(null);
-      const hands = sessionStore.get().history || [];
-      if (hands.length > 0 || currentHand) {
-        const compSession = {
-          id: 'completed_' + Date.now(),
-          shareCode: getShareCode() || ('code_' + Date.now()),
-          sessionName: formatSessionName(currentHand || { handNumber: hands.length || 1, variant: config?.variant }),
-          mode: (currentHand?.mode || config?.mode || 'tournament') === 'tournament' ? 'tournament' : 'cash',
-          variant: currentHand?.variant || config?.variant || 'nlh',
-          handCount: hands.length,
-          currency: currentHand?.currency || config?.currency || '$',
-          smallBlind: currentHand?.smallBlind || config?.smallBlind || 25,
-          bigBlind: currentHand?.bigBlind || config?.bigBlind || 50,
-          playerNames: (currentHand?.players || config?.players || []).map((p) => p.name || `Player ${p.seat}`),
-          winnerName: winner?.name,
-          hands: hands,
-          completedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          isCompleted: true,
-        };
-        saveCompletedSession(compSession);
-        saveHandHistory(compSession);
-        discardSavedSession().catch(() => {});
+      const busted = (res.eliminatedPlayers || []).filter(Boolean);
+      const format = currentHand?.mode === 'tournament' ? currentHand?.tournamentFormat : null;
+      const maxRe = Number(currentHand?.maxReEntries) || 0;
+      const canContinue = currentHand?.mode === 'tournament' && busted.length > 0 && (
+        (format === 'reentry' && busted.some((e) => maxRe === 0 || (Number(e.reentries) || 0) < maxRe))
+        || (format === 'rebuy' && Number(currentHand?.rebuyChips) > 0)
+      );
+      if (canContinue) {
+        // Busted players may still buy back in; keep the session alive behind the prompt.
+        setBustRecovery({ winner, busted, baseHand: currentHand, appliedHand: res.appliedHand });
+      } else {
+        endTournament(winner, currentHand);
       }
     } else {
       const snap = {};
@@ -1750,6 +1853,18 @@ export default function PokerTracker() {
   };
 
   const handleRebuy = (pid, amt, isAddOn = false) => {
+    const target = (hand?.players || []).find((p) => p.id === pid);
+    if (!isCash && hand?.mode === 'tournament' && !isAddOn) {
+      const blocked = rebuyBlocker(hand, target, hand?.levelIndex ?? hand?.blindLevel);
+      if (blocked) {
+        setRuleNotice(`Rebuy blocked: ${blocked}`);
+        return;
+      }
+    }
+    if (isAddOn && (Number(target?.addOns) || 0) >= 1) {
+      setRuleNotice('Add-on already taken');
+      return;
+    }
     setHand((prev) => {
       const updatedPlayers = (prev.players || []).map((p) => {
         if (p.id === pid) {
@@ -1792,6 +1907,12 @@ export default function PokerTracker() {
   };
 
   const handleReentry = (name, seat) => {
+    const maxRe = Number(hand?.maxReEntries) || 0;
+    const elim = (hand?.eliminatedPlayers || []).find((e) => e.name === name);
+    if (maxRe > 0 && (Number(elim?.reentries) || 0) >= maxRe) {
+      setRuleNotice(`Re-entry blocked: max ${maxRe} re-entries used`);
+      return;
+    }
     setHand((prev) => {
       const stk = prev.startingStack || 100 * prev.bigBlind;
       const elim = (prev.eliminatedPlayers || []).find((e) => e.name === name);
@@ -2151,6 +2272,8 @@ export default function PokerTracker() {
           onUndo={handleUndo}
           canUndo={history.length > 0}
           goHoleCards={goHoleCards}
+          goDiscards={goDiscards}
+          onGoDiscardPick={handleGoDiscardPick}
           stackRounding={stackRounding}
           goSecurityMode={goSecurityMode}
           suitColors={suitColors}
@@ -2163,6 +2286,8 @@ export default function PokerTracker() {
           onDealNextStreet={handleDealNextGoStreet}
           onOpenSettings={() => setShowSettingsModal(true)}
           onOpenStructureSetup={() => setShowSetup(true)}
+          onOpenRebuy={!isCash && hand?.tournamentFormat === 'rebuy' ? () => setShowRebuy(true) : null}
+          onOpenReentry={!isCash && hand?.tournamentFormat === 'reentry' ? () => setShowReentry(true) : null}
           onEndSession={() => setShowEndSession(true)}
           showPosition={showPosition}
           onToggleGoMode={() => setShowSwitchModeConfirm('action')}
@@ -2781,6 +2906,14 @@ export default function PokerTracker() {
           onClose={() => setShowEnd(false)}
         />
       )}
+      {bustRecovery && (
+        <BustRecoveryDialog
+          recovery={bustRecovery}
+          onReenter={(elim) => handleBustRecovery(elim, 'reentry')}
+          onRebuy={(elim) => handleBustRecovery(elim, 'rebuy')}
+          onEnd={handleBustEnd}
+        />
+      )}
       {showRebuy && isCash && (
         <RebuyCashoutDialog hand={hand} onApply={handleRebuy} onClose={() => setShowRebuy(false)} />
       )}
@@ -2800,6 +2933,20 @@ export default function PokerTracker() {
           onAddOn={handleRebuy}
           onClose={() => setShowRebuy(false)}
         />
+      )}
+      {ruleNotice && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] max-w-sm w-[calc(100%-2rem)]">
+          <div className="rounded-xl border border-rose-500/50 bg-[#1a1013] px-4 py-3 shadow-2xl flex items-start gap-3">
+            <span className="text-rose-300 text-xs font-bold flex-1">{ruleNotice}</span>
+            <button
+              type="button"
+              onClick={() => setRuleNotice(null)}
+              className="text-slate-400 hover:text-white text-xs font-black"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
       )}
       {showReentry && (
         <ReentryDialog

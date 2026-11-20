@@ -278,5 +278,10 @@ export function advanceToNextHand(hand) {
     base = advanceTimerSegment(base);
   }
   const applied = applyNextLevel(base);
-  return nextHand(applied);
+  // `appliedHand` lets the caller start the next hand later (e.g. after an optional re-entry)
+  // without advancing the level timer a second time.
+  return {
+    ...nextHand(applied),
+    appliedHand: { ...applied, pendingAdjust: {}, pendingPlayers: [] },
+  };
 }
