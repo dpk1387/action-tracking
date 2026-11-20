@@ -9,7 +9,6 @@ import { mttStore } from '@/lib/mttStore';
 import {
   getCompletedSessions,
   deleteCompletedSession,
-  clearAllCompletedSessions,
   subscribeCompletedSessions,
 } from '@/lib/completedSessionsStore';
 import {
@@ -39,6 +38,8 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   const [viewingCompleted, setViewingCompleted] = useState(null);
   const [handHistoriesList, setHandHistoriesList] = useState(() => getHandHistories());
   const [viewingHandHistory, setViewingHandHistory] = useState(null);
+  // One shared in-app confirmation for destructive actions (window.confirm is blocked in some shells)
+  const [pendingConfirm, setPendingConfirm] = useState(null);
 
   const degenVariants = [
     { key: 'second_best', title: '2nd Best', desc: '2nd best hand AT SHOWDOWN wins the pot.' },
@@ -104,13 +105,13 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
 
   const handleDeleteCompleted = (id, e) => {
     if (e) e.stopPropagation();
-    deleteCompletedSession(id);
-  };
-
-  const handleClearAllCompleted = () => {
-    if (window.confirm('Are you sure you want to clear all completed sessions?')) {
-      clearAllCompletedSessions();
-    }
+    const target = completedList.find((cs) => cs.id === id);
+    setPendingConfirm({
+      title: 'Delete completed session?',
+      message: `"${target?.sessionName || 'This session'}" and its hand history will be permanently deleted.`,
+      confirmLabel: 'Delete session',
+      onConfirm: () => deleteCompletedSession(id),
+    });
   };
 
   const handleDeleteHandHistory = (id, e) => {
@@ -119,21 +120,31 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   };
 
   const handleClearAllHandHistories = () => {
-    if (window.confirm('Are you sure you want to clear all saved hand histories?')) {
-      clearAllHandHistories();
-    }
+    setPendingConfirm({
+      title: 'Clear all hand histories?',
+      message: `All ${handHistoriesList.length} saved hand histor${handHistoriesList.length === 1 ? 'y' : 'ies'} will be permanently deleted.`,
+      confirmLabel: 'Clear all',
+      onConfirm: () => clearAllHandHistories(),
+    });
   };
 
-  const handleClearAllActive = async () => {
-    setLoadingSessions(true);
-    try {
-      await discardAllSavedSessions();
-      setSessions([]);
-    } catch {
-      setListError('Could not clear active sessions.');
-    } finally {
-      setLoadingSessions(false);
-    }
+  const handleClearAllActive = () => {
+    setPendingConfirm({
+      title: 'Clear all in-progress sessions?',
+      message: `All ${sessions.length} in-progress saved session${sessions.length === 1 ? '' : 's'} will be deleted. Completed sessions and hand histories are untouched.`,
+      confirmLabel: 'Clear all',
+      onConfirm: async () => {
+        setLoadingSessions(true);
+        try {
+          await discardAllSavedSessions();
+          setSessions([]);
+        } catch {
+          setListError('Could not clear active sessions.');
+        } finally {
+          setLoadingSessions(false);
+        }
+      },
+    });
   };
 
   const login = () => { db.auth.redirectToLogin(window.location.href); };
@@ -276,23 +287,12 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
               </button>
             </div>
 
-            {sessionTab === 'in_progress' && isAuthenticated && sessions.length > 0 && (
+            {sessionTab === 'in_progress' && sessions.length > 0 && (
               <button
                 type="button"
                 onClick={handleClearAllActive}
                 className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
                 title="Delete all in-progress saved sessions"
-              >
-                <Trash2 size={12} /> Clear all
-              </button>
-            )}
-
-            {sessionTab === 'completed' && completedList.length > 0 && (
-              <button
-                type="button"
-                onClick={handleClearAllCompleted}
-                className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
-                title="Clear all completed sessions"
               >
                 <Trash2 size={12} /> Clear all
               </button>
@@ -776,7 +776,12 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
           session={viewingCompleted}
           onClose={() => setViewingCompleted(null)}
           onDelete={(id) => {
-            deleteCompletedSession(id);
+            setPendingConfirm({
+              title: 'Delete completed session?',
+              message: `"${viewingCompleted?.sessionName || 'This session'}" and its hand history will be permanently deleted.`,
+              confirmLabel: 'Delete session',
+              onConfirm: () => deleteCompletedSession(id),
+            });
             setViewingCompleted(null);
           }}
         />
@@ -792,6 +797,39 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
             setViewingHandHistory(null);
           }}
         />
+      )}
+
+      {/* Shared confirmation for destructive actions */}
+      {pendingConfirm && (
+        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#1a1d22] border border-[#2a2f37] rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Trash2 size={16} className="text-rose-400" />
+              {pendingConfirm.title}
+            </h3>
+            <p className="text-xs text-slate-300 leading-relaxed">{pendingConfirm.message}</p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingConfirm(null)}
+                className="px-3 py-1.5 rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-slate-200 text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const action = pendingConfirm.onConfirm;
+                  setPendingConfirm(null);
+                  action?.();
+                }}
+                className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer"
+              >
+                {pendingConfirm.confirmLabel || 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

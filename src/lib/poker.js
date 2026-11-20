@@ -53,6 +53,45 @@ export function variantMeta(v) {
   return VARIANTS[v] || VARIANTS.nlh;
 }
 
+// Omaha-family games are always played pot limit.
+export function isPotLimitVariant(v) {
+  return variantMeta(v).group === 'omaha' || variantMeta(v).group === 'dramaha';
+}
+
+// Pineapple games are dealt three cards and discard one at some point:
+// Pineapple before the flop, Crazy Pineapple after the flop, Lazy Pineapple on the river.
+export function goDiscardStage(hand) {
+  if (!hand || hand.cpDiscarded) return null;
+  if (hand.variant === 'pineapple') return 'preflop';
+  if (hand.variant === 'crazy_pineapple') return 'flop';
+  if (hand.variant === 'lazy_pineapple') return 'river';
+  return null;
+}
+
+// Rebuy eligibility for a single player; null means allowed, a string is the reason it is blocked.
+export function rebuyBlocker(hand, player, level) {
+  const rules = hand?.rebuyRules || {};
+  const rebuyChips = Number(hand?.rebuyChips) || 0;
+  const activeLevel = (Number(level ?? hand?.blindLevel) || 0) + 1;
+
+  const timeLimit = rules.timeLimitEnabled ?? rules.timeCapEnabled;
+  const cutoffLevel = Number(rules.timeCutoffLevel ?? rules.timeCapLevel) || 4;
+  if (timeLimit && activeLevel > cutoffLevel) {
+    return `Cutoff passed (lvl ${cutoffLevel})`;
+  }
+  if (!player) return 'No player';
+  if (rules.stackCapEnabled) {
+    const cap = Number(rules.stackCapAmount) || rebuyChips;
+    if (cap > 0 && (Number(player.stack) || 0) > cap) return `Stack above ${cap}`;
+  }
+  // The live game and the MTT director use different keys for the same cap.
+  if (rules.maxRebuysEnabled ?? rules.cappedRebuysEnabled) {
+    const max = Number(rules.maxRebuys) || 0;
+    if (max > 0 && (Number(player.rebuys) || 0) >= max) return `Max ${max} rebuys used`;
+  }
+  return null;
+}
+
 export { minChipInPlay, isMakeableBet } from './chipMath';
 
 export function suggestAnte(bb) {
@@ -240,6 +279,18 @@ export function formatPlayerTagAmount(val, currency = '', hand = null, isSpectat
   const isTourney = hand?.mode === 'tournament';
   const sym = isTourney ? '' : (currency || '');
   const activeUnit = displayUnit || hand?.displayUnit || 'chips';
+
+  // 'both' is used at an all-in when players picked different stack units.
+  if (activeUnit === 'both') {
+    const chipsStr = formatPlayerTagAmount(val, currency, hand, isSpectatorCash, 'chips');
+    const bbVal = Number(hand?.bigBlind) || 0;
+    if (bbVal > 0) {
+      const bbs = absN / bbVal;
+      const rounded = absN > 0 && bbs < 1 ? '<1' : String(Math.round(bbs));
+      return `${chipsStr} (${rounded} BB)`;
+    }
+    return chipsStr;
+  }
 
   // In Big Blinds mode: round to 1 BB without a terminating zero, show <1 BB if stack < 1 BB
   if (activeUnit === 'bb') {
@@ -622,6 +673,7 @@ export function startHand(config, buttonSeat, handNumber) {
     lastAction: null,
     hasActed: false,
     reentries: p.reentries || 0,
+    rebuys: p.rebuys || 0,
     timeBanks: p.timeBanks != null ? p.timeBanks : (config.clockConfig?.initialTimeBanks ?? 3),
     usedBanks: p.usedBanks || 0,
   }));
@@ -733,6 +785,7 @@ export function startHand(config, buttonSeat, handNumber) {
     startingStack: config.startingStack || (players.length ? players[0].initialStack : 0),
     rebuyPrice: config.rebuyPrice,
     rebuyChips: config.rebuyChips,
+    rebuyRules: config.rebuyRules || null,
     allowAddOn: config.allowAddOn,
     addOnPrice: config.addOnPrice,
     addOnChips: config.addOnChips,
@@ -2195,6 +2248,7 @@ export function nextHand(hand) {
       seat: p.seat,
       stack: Math.max(0, p.stack + (adj[p.id] || 0)),
       reentries: p.reentries || 0,
+      rebuys: p.rebuys || 0,
       timeBanks: p.timeBanks != null ? p.timeBanks : (hand.clockConfig?.initialTimeBanks ?? 3),
       usedBanks: 0,
     }))
@@ -2206,7 +2260,7 @@ export function nextHand(hand) {
     .filter((p) => p.stack + (adj[p.id] || 0) <= 0)
     .map((p) => ({ name: p.name, seat: p.seat, reentries: p.reentries || 0 }));
   const stillEliminated = (hand.eliminatedPlayers || []).filter((e) => !remainingNames.has(e.name));
-  const eliminatedPlayers = [...stillEliminated, ...newlyBusted];
+  const eliminatedPlayers = [...stillEliminated, ...newlyBusted].filter((e) => !remainingNames.has(e.name));
 
   if (remaining.length <= 1) {
     return { gameOver: true, remaining, eliminatedPlayers };
@@ -2299,6 +2353,7 @@ export function nextHand(hand) {
     startingStack: hand.startingStack,
     rebuyPrice: hand.rebuyPrice,
     rebuyChips: hand.rebuyChips,
+    rebuyRules: hand.rebuyRules || null,
     allowAddOn: hand.allowAddOn,
     addOnPrice: hand.addOnPrice,
     addOnChips: hand.addOnChips,
@@ -2350,13 +2405,15 @@ export function formatPotAmount(n, currency = '', hand = null, displayUnit = 'ch
   const sym = isTourney ? '' : (currency || '');
   const activeUnit = displayUnit || hand?.displayUnit || 'chips';
 
-  if (activeUnit === 'bb') {
+  if (activeUnit === 'bb' || activeUnit === 'both') {
     const bbVal = Number(hand?.bigBlind) || 0;
     if (bbVal > 0) {
       const bbs = absN / bbVal;
       const rounded = Math.round(bbs * 10) / 10;
       const str = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-      return `${sign}${str} BB`;
+      if (activeUnit === 'bb') return `${sign}${str} BB`;
+      // 'both' is used at an all-in when players picked different stack units.
+      return `${formatPotAmount(n, currency, hand, 'chips')} (${str} BB)`;
     }
   }
 

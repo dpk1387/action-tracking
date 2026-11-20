@@ -10,6 +10,20 @@ import { ROUNDING_OPTIONS, isRoundingOptionDisabled, getDefaultStackRounding } f
 
 const CASH_DEFAULT = { smallBlind: 1, bigBlind: 2, anteType: 'none', anteAmount: 0 };
 
+// Variants with full GO Mode support (dealing, board size, pot-limit rules).
+export const GO_MODE_VARIANTS = [
+  { id: 'nlh', label: 'NLH' },
+  { id: 'plo', label: 'PLO4' },
+  { id: 'plo5', label: 'PLO5' },
+  { id: 'plo6', label: 'PLO6' },
+  { id: 'plo8', label: 'PLO8 (Hi/Lo)' },
+  { id: 'short_deck', label: 'Short Deck (6+)' },
+  { id: 'pineapple', label: 'Pineapple' },
+  { id: 'crazy_pineapple', label: 'Crazy Pineapple' },
+  { id: 'lazy_pineapple', label: 'Lazy Pineapple' },
+  { id: 'super_holdem', label: "Super Hold'em" },
+];
+
 function ToggleRow({ label, checked, onChange, disabled }) {
   return (
     <button
@@ -132,7 +146,6 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [flMaxRaises, setFlMaxRaises] = useState(initial?.flMaxRaises ?? 4);
   const [isGoMode, setIsGoMode] = useState(initial?.isGoMode || false);
   const [stackRounding, setStackRounding] = useState(initial?.stackRounding || 100);
-  const [goSecurityMode, setGoSecurityMode] = useState(initial?.goSecurityMode || 'modal');
   const [error, setError] = useState('');
   const [showStructures, setShowStructures] = useState(false);
 
@@ -464,10 +477,10 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       const finalPlayers = occupiedPlayers.map((p) => ({ ...p, name: (p.name || '').trim() || `Player ${p.seat}`, stack: toChips(p.stack) }));
       const determinedStartingStack = initial?.startingStack || (finalPlayers.length ? finalPlayers[0].stack : (bulkStack ? toChips(bulkStack) : 100 * bb));
 
-      const finalVariant = isGoMode ? (variant === 'plo' ? 'plo' : 'nlh') : variant;
-      const finalGameType = isGoMode
-        ? (finalVariant === 'plo' ? 'pl' : 'nl')
-        : (omahaVariants.includes(finalVariant) ? 'pl' : gameType);
+      const finalVariant = variant;
+      const finalGameType = omahaVariants.includes(finalVariant)
+        ? 'pl'
+        : (isGoMode ? (gameType === 'fl' ? 'nl' : gameType) : gameType);
 
       onSave({
       sessionName: sessionName.trim() || undefined,
@@ -475,7 +488,6 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       variant: finalVariant,
       isGoMode,
       stackRounding,
-      goSecurityMode,
       firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
       gameType: finalGameType,
       currency: sym,
@@ -636,14 +648,18 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             <button onClick={() => handleModeChange('cash')} className={`px-4 py-2 text-sm cursor-pointer ${mode === 'cash' ? 'bg-[#4a5a4a] text-white' : 'bg-[#15181d] text-slate-300'}`}>Cash</button>
           </div>
           <select
-            value={isGoMode ? (variant === 'plo' ? 'plo' : 'nlh') : variant}
+            value={variant}
             onChange={(e) => handleVariantChange(e.target.value)}
             className="rounded-lg border border-[#2a2f37] bg-[#15181d] px-3 py-2 text-sm text-white cursor-pointer"
           >
             {isGoMode ? (
               <>
-                <option value="nlh">NLH</option>
-                <option value="plo">PLO</option>
+                {GO_MODE_VARIANTS.map((v) => (
+                  <option key={v.id} value={v.id}>{v.label}</option>
+                ))}
+                {!GO_MODE_VARIANTS.some((v) => v.id === variant) && (
+                  <option value={variant}>{degenVariantLabels[variant] || variant}</option>
+                )}
               </>
             ) : (
               <>
@@ -709,19 +725,9 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                 </select>
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-amber-500/20 pt-2.5">
-              <div>
-                <div className="text-xs font-bold text-amber-200">Game Security</div>
-                <div className="text-[11px] text-slate-400">Require verification modal or unique 2-digit passkey per turn</div>
-              </div>
-              <select
-                value={goSecurityMode}
-                onChange={(e) => setGoSecurityMode(e.target.value)}
-                className="rounded-lg border border-amber-500/40 bg-[#15181d] px-3 py-1.5 text-xs font-bold text-white"
-              >
-                <option value="modal">Verification Modal</option>
-                <option value="passkey">Passkey System (00–99)</option>
-              </select>
+            <div className="border-t border-amber-500/20 pt-2.5 text-[11px] text-slate-400 leading-relaxed">
+              Every turn opens behind a hold-to-open handoff screen. Each player can add a 3-digit hole-card PIN from
+              <span className="text-amber-200 font-bold"> Settings</span> during the game (off by default).
             </div>
           </div>
         )}
