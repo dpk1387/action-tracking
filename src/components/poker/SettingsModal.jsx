@@ -43,7 +43,7 @@ function ModalFrame({ title, onClose, children }) {
 
 /**
  * GO-mode settings are per player: the acting player picks how their own screen looks.
- * Defaults when a game starts: chips, 2-colour deck, PIN off.
+ * Defaults when a game starts: chips, 2-color deck, PIN off.
  */
 function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins = [], onUpdateGoPlayerPrefs }) {
   const unit = goPlayerPrefs.displayUnit || 'chips';

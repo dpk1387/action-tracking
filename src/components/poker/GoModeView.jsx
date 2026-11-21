@@ -259,7 +259,7 @@ export default function GoModeView({
   );
 
   // Display prefs: the acting player's own settings drive the screen. An all-in is watched by
-  // everyone, so mixed stack units show chips AND big blinds, and one 4-colour choice shows 4 colours.
+  // everyone, so mixed stack units show chips AND big blinds, and one 4-color choice shows 4 colors.
   const sessionUnit = displayUnit || hand?.displayUnit || 'chips';
   // Folded players are not watching the runout, so only the players still in the hand count.
   const sureUnits = nonFolded.map((p) => prefFor(p).displayUnit || sessionUnit);
@@ -611,11 +611,11 @@ export default function GoModeView({
   })[hand?.variant] || String(hand?.variant || 'NLH').replace(/_/g, ' ').toUpperCase();
 
   return (
-    <div className="min-h-screen bg-[#0b0e14] text-white flex flex-col justify-between p-3 sm:p-5 select-none max-w-2xl mx-auto border-x border-slate-800/80 shadow-2xl relative">
+    <div className="min-h-screen bg-[#121417] text-white flex flex-col justify-between p-2 sm:p-4 select-none max-w-2xl mx-auto border-x border-slate-800/80 shadow-2xl relative">
       {/* TOP HEADER: Row 1 (Explicit GO Mode Badge, Level #, Blinds, Clock + Controls, History, Switch Mode, End Session, Structure & Settings), Row 2 (Show Cards) */}
       <div className="space-y-2">
         {/* Row 1: Top Control Bar */}
-        <div className="flex items-center justify-between px-3.5 py-2 bg-[#121620] rounded-xl border border-slate-800 text-xs shadow-sm flex-wrap gap-2">
+        <div className="flex items-center justify-between px-3.5 py-2 bg-[#151921] rounded-xl border border-slate-800 text-xs shadow-sm flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-1 rounded-lg bg-amber-500/25 border border-amber-500/60 text-amber-300 font-black uppercase text-xs tracking-wider shadow">
               GO Mode · {variantBadge}
@@ -764,7 +764,7 @@ export default function GoModeView({
         </div>
 
         {/* Row 2: Show Stacks (Left) and Show Cards (Right) */}
-        <div className="flex items-center justify-between bg-[#141a24] px-3 py-1.5 rounded-xl border border-slate-700/80 shadow">
+        <div className="flex items-center justify-between bg-[#151921] px-3 py-1.5 rounded-xl border border-slate-700/80 shadow">
           <button
             type="button"
             onClick={() => setShowOpponentStacksModal((v) => !v)}
@@ -823,7 +823,7 @@ export default function GoModeView({
 
       {/* ALL-IN SHOWDOWN TOP BANNER */}
       {isAllInSituation && (
-        <div className="my-2 bg-[#121722] p-3 rounded-2xl border-2 border-amber-500/80 shadow-2xl space-y-2 animate-fade-in">
+        <div className="my-2 bg-[#151921] p-3 rounded-2xl border-2 border-amber-500/80 shadow-2xl space-y-2 animate-fade-in">
           <div className="text-center flex items-center justify-center gap-2">
             <span className="px-2.5 py-0.5 rounded-full bg-rose-500/20 border border-rose-500/50 text-rose-300 font-extrabold text-[11px] uppercase tracking-wider">
               {isShowdownComplete ? 'All-In Showdown Result' : 'All-In Showdown'}
@@ -845,7 +845,7 @@ export default function GoModeView({
                       ? 'bg-amber-950/40 border-amber-400 ring-2 ring-amber-400/50'
                       : isAtRisk
                       ? 'bg-rose-950/50 border-rose-500 ring-1 ring-rose-500/60'
-                      : 'bg-[#171d29] border-slate-700/80'
+                      : 'bg-[#19202b] border-slate-700/80'
                   }`}
                 >
                   <div className="flex items-center gap-1 text-xs font-bold text-white">
@@ -898,7 +898,7 @@ export default function GoModeView({
 
         {isAllInSituation ? (
           /* All-In Center Display: Pot, Split/Tie Chance, Community Cards, and Showdown Payouts */
-          <div className="bg-[#131722] p-5 rounded-3xl border border-amber-500/60 shadow-2xl text-center space-y-4">
+          <div className="bg-[#151921] p-5 rounded-3xl border border-amber-500/60 shadow-2xl text-center space-y-4">
             <div>
               <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
                 Current Pot
@@ -926,7 +926,7 @@ export default function GoModeView({
                     return (
                       <div
                         key={idx}
-                        className="w-10 h-14 rounded-lg border-2 border-dashed border-slate-700 bg-[#171c26] flex items-center justify-center text-slate-600 font-bold text-sm"
+                        className="w-10 h-14 rounded-lg border-2 border-dashed border-slate-700 bg-[#19202b] flex items-center justify-center text-slate-600 font-bold text-sm"
                       >
                         ?
                       </div>
@@ -953,7 +953,7 @@ export default function GoModeView({
 
             {/* All-In Showdown Payouts directly on the all-in view ([name] wins [profit]) */}
             {isShowdownComplete && aggregatedWinners.length > 0 && (
-              <div className="space-y-1.5 bg-[#171d29] p-3.5 rounded-2xl border border-emerald-500/50 mt-2 shadow-lg animate-fade-in text-center">
+              <div className="space-y-1.5 bg-[#19202b] p-3.5 rounded-2xl border border-emerald-500/50 mt-2 shadow-lg animate-fade-in text-center">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
                   Payouts
                 </div>
@@ -967,7 +967,7 @@ export default function GoModeView({
             )}
           </div>
         ) : cp ? (
-          <div className="bg-[#131722] p-4 sm:p-6 rounded-3xl border border-slate-700/80 shadow-2xl grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+          <div className="bg-[#151921] p-4 sm:p-6 rounded-3xl border border-slate-700/80 shadow-2xl grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
             {/* CENTER-LEFT: Player Name, Position, My Stack, Call Amount */}
             <div className="space-y-3 text-left border-b md:border-b-0 md:border-r border-slate-800 pb-4 md:pb-0 md:pr-4">
               <div className="flex items-center gap-2.5">
@@ -1005,7 +1005,7 @@ export default function GoModeView({
             <div className="space-y-3 text-center md:text-right md:pl-2">
               <div className="flex flex-wrap items-start justify-center md:justify-end gap-4">
                 {/* Last Raise / Bet Info (left of Current Pot) */}
-                <div className="bg-[#181e2c] border border-slate-700/80 rounded-2xl px-3 py-2 text-left min-w-[130px]">
+                <div className="bg-[#19202b] border border-slate-700/80 rounded-2xl px-3 py-2 text-left min-w-[130px]">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
                     Last Raise
                   </div>
@@ -1053,7 +1053,7 @@ export default function GoModeView({
                         return (
                           <div
                             key={idx}
-                            className="w-9 h-12 rounded-lg border-2 border-dashed border-slate-700 bg-[#171c26] flex items-center justify-center text-slate-600 font-bold text-xs"
+                            className="w-9 h-12 rounded-lg border-2 border-dashed border-slate-700 bg-[#19202b] flex items-center justify-center text-slate-600 font-bold text-xs"
                           >
                             ?
                           </div>
@@ -1079,10 +1079,10 @@ export default function GoModeView({
           </div>
         ) : (
           /* Standard Non-All-In Hand Concluded Screen ([name] wins [amount] + showdown hole cards) */
-          <div className="p-6 bg-[#131722] rounded-3xl border border-slate-800 text-center space-y-4">
+          <div className="p-6 bg-[#151921] rounded-3xl border border-slate-800 text-center space-y-4">
             <h2 className="text-2xl font-black text-amber-300">Hand Concluded</h2>
             {aggregatedWinners.length > 0 && (
-              <div className="space-y-1.5 bg-[#181d26] p-3 rounded-2xl border border-emerald-500/40">
+              <div className="space-y-1.5 bg-[#19202b] p-3 rounded-2xl border border-emerald-500/40">
                 {aggregatedWinners.map((w, idx) => (
                   <div key={idx} className="text-sm font-normal text-emerald-400">
                     🏆 {w.playerName} wins {formatFullBetAmount(w.amount, cur, hand, activeUnit)}
@@ -1111,7 +1111,7 @@ export default function GoModeView({
                         className={`px-3 py-2 rounded-2xl border flex flex-col items-center gap-1.5 shadow-lg ${
                           isWinner
                             ? 'bg-amber-950/40 border-amber-400 ring-2 ring-amber-400/50'
-                            : 'bg-[#171d29] border-slate-700/80'
+                            : 'bg-[#19202b] border-slate-700/80'
                         }`}
                       >
                         <div className="flex items-center gap-1 text-xs font-bold text-white">
@@ -1223,7 +1223,7 @@ export default function GoModeView({
         </div>
       ) : isAllInSituation ? (
         /* In an all-in: deal streets manually until river; on/post river show "Deal Next Hand" */
-        <div className="bg-[#141a24] p-3 rounded-2xl border border-slate-700/80 shadow-2xl">
+        <div className="bg-[#151921] p-3 rounded-2xl border border-slate-700/80 shadow-2xl">
           {isShowdownComplete ? (
             <button
               type="button"
@@ -1244,7 +1244,7 @@ export default function GoModeView({
         </div>
       ) : cp ? (
         /* Regular Action Area: If check is available, remove fold and show ONLY Check + All In. If check is not available, show Fold, Call, All In. */
-        <div className="bg-[#141a24] p-3 rounded-2xl border border-slate-700/80 space-y-2.5 shadow-2xl">
+        <div className="bg-[#151921] p-3 rounded-2xl border border-slate-700/80 space-y-2.5 shadow-2xl">
           <div className={`grid ${canCheck ? 'grid-cols-2' : 'grid-cols-3'} gap-2`}>
             {/* If check is NOT available, show Fold button */}
             {!canCheck && (
@@ -1313,7 +1313,7 @@ export default function GoModeView({
               value={raiseInput}
               onChange={(e) => setRaiseInput(e.target.value)}
               placeholder={`Min ${minRaise}`}
-              className="w-32 px-3 py-2 rounded-xl bg-[#0d1017] border border-slate-700 text-white text-sm font-bold text-center focus:outline-none focus:border-amber-400"
+              className="w-32 px-3 py-2 rounded-xl bg-[#11141b] border border-slate-700 text-white text-sm font-bold text-center focus:outline-none focus:border-amber-400"
               title="Shortcut: R to focus"
             />
 
@@ -1359,8 +1359,8 @@ export default function GoModeView({
 
       {/* TURN HANDOFF: hold 0.5s to open the acting player's controls */}
       {needsTurnAck && cp && !isAllInSituation && !hand.inBreak && (
-        <div className="fixed inset-0 z-50 bg-[#0d1017]/95 backdrop-blur-md flex items-start pt-10 sm:pt-14 justify-center p-5 animate-fade-in select-none">
-          <div className="bg-[#181d26] border-2 border-amber-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-5 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-[#11141b]/95 backdrop-blur-md flex items-start pt-10 sm:pt-14 justify-center p-5 animate-fade-in select-none">
+          <div className="bg-[#19202b] border-2 border-amber-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-5 shadow-2xl">
             <div className="w-16 h-16 rounded-full bg-amber-500/20 border-2 border-amber-500 text-amber-400 flex items-center justify-center mx-auto shadow-inner">
               <Smartphone size={32} />
             </div>
@@ -1408,8 +1408,8 @@ export default function GoModeView({
 
       {/* 3-DIGIT CARD PIN (only the hole cards are locked) */}
       {pinPromptOpen && cp && (
-        <div className="fixed inset-0 z-50 bg-[#0d1017]/95 backdrop-blur-md flex items-start pt-10 sm:pt-14 justify-center p-5 animate-fade-in select-none">
-          <div className="bg-[#181d26] border-2 border-amber-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-[#11141b]/95 backdrop-blur-md flex items-start pt-10 sm:pt-14 justify-center p-5 animate-fade-in select-none">
+          <div className="bg-[#19202b] border-2 border-amber-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
             <div className="w-14 h-14 rounded-full bg-amber-500/20 border-2 border-amber-500 text-amber-400 flex items-center justify-center mx-auto">
               <KeyRound size={26} />
             </div>
@@ -1491,7 +1491,7 @@ export default function GoModeView({
             <button
               type="button"
               onClick={() => { setPinPromptOpen(false); setPinEntry(''); setPinError(''); }}
-              className="w-full py-2 rounded-xl bg-[#242a33] hover:bg-[#2f3742] text-slate-300 text-xs font-bold cursor-pointer"
+              className="w-full py-2 rounded-xl bg-[#222834] hover:bg-[#222834] text-slate-300 text-xs font-bold cursor-pointer"
             >
               Cancel
             </button>
@@ -1502,7 +1502,7 @@ export default function GoModeView({
       {/* CONFIRM MUCK MODAL (When folding while check is free) */}
       {showConfirmMuckModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in select-none">
-          <div className="bg-[#181d26] border-2 border-rose-500/70 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+          <div className="bg-[#19202b] border-2 border-rose-500/70 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
             <div className="text-rose-400 font-black text-xl">Confirm Muck?</div>
             <div className="text-sm text-slate-300">
               Checking is free! Are you sure you want to muck/fold your hand instead of checking?
@@ -1536,7 +1536,7 @@ export default function GoModeView({
       {/* OPPONENT STACKS MODAL */}
       {showOpponentStacksModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in select-none">
-          <div className="bg-[#181d26] border-2 border-slate-700 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl text-white">
+          <div className="bg-[#19202b] border-2 border-slate-700 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl text-white">
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <h3 className="font-bold text-sm text-slate-200 uppercase tracking-wider">Opponent Stacks</h3>
               <span className="text-xs text-amber-400 font-mono">
@@ -1553,7 +1553,7 @@ export default function GoModeView({
                   : formatPlayerTagAmount(roundedVal, cur, hand, false, activeUnit);
                 const pos = positions[idx] || '';
                 return (
-                  <div key={p.id} className="bg-[#11141c] px-3 py-2 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-bold">
+                  <div key={p.id} className="bg-[#151921] px-3 py-2 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-bold">
                     <div className="flex items-center gap-2 min-w-0">
                       {pos && <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] uppercase font-mono">{pos}</span>}
                       <span className="text-slate-200 truncate">{p.name}</span>
@@ -1584,7 +1584,7 @@ export default function GoModeView({
       {/* PINEAPPLE DISCARD STEP */}
       {hand?.cpNeedsDiscard && !hand?.cpDiscarded && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 overflow-y-auto">
-          <div className="w-full max-w-md rounded-2xl border border-amber-500/50 bg-[#12161f] p-4 space-y-3 my-auto shadow-2xl">
+          <div className="w-full max-w-md rounded-2xl border border-amber-500/50 bg-[#151921] p-4 space-y-3 my-auto shadow-2xl">
             <div className="text-center">
               <div className="text-amber-300 font-black text-lg uppercase tracking-wide">Discard One Card</div>
               <p className="text-[11px] text-slate-400 mt-0.5">

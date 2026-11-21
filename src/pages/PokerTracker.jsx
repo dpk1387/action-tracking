@@ -101,7 +101,7 @@ export default function PokerTracker() {
   const [actionDisplayMode, setActionDisplayMode] = useState('all');
   const [isGoMode, setIsGoMode] = useState(() => config?.isGoMode || hand?.isGoMode || false);
   const [stackRounding, setStackRounding] = useState(() => config?.stackRounding || hand?.stackRounding || getDefaultStackRounding(config?.smallBlind || hand?.smallBlind || 25));
-  // Per-player GO-mode display prefs (chips/BB, deck colours, optional 3-digit hole-card PIN)
+  // Per-player GO-mode display prefs (chips/BB, deck colors, optional 3-digit hole-card PIN)
   const [goPlayerPrefs, setGoPlayerPrefs] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(`poker_go_player_prefs_${getShareCode() || 'local'}`) || '{}');
@@ -638,7 +638,7 @@ export default function PokerTracker() {
     }
     if (cfg.isGoMode !== undefined) setIsGoMode(cfg.isGoMode);
     if (cfg.stackRounding !== undefined) setStackRounding(cfg.stackRounding);
-    // A fresh game starts everyone on the defaults: chips, 2-colour deck, PIN off.
+    // A fresh game starts everyone on the defaults: chips, 2-color deck, PIN off.
     setGoPlayerPrefs({});
     try { localStorage.removeItem(`poker_go_player_prefs_${getShareCode() || 'local'}`); } catch {}
     const newHand = initLevelTimer(startHand(cfg, btn, 1), cfg.levelConfig);

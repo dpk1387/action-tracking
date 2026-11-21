@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { History, Layers, ListTree, LogOut, Minus, Pause, Play, Settings, SkipForward, Trophy } from 'lucide-react';
-import { applyAction, awardPots, computePots, dealNextStreet, startHand, tryAutoWinners } from '@/lib/poker';
+import { History, Layers, ListTree, LogOut, Settings, SkipForward, Trophy } from 'lucide-react';
+import { applyAction, awardPots, calcEquity, computePots, dealNextStreet, fillBoard, startHand, tryAutoWinners } from '@/lib/poker';
 import { generateGoDeck } from '@/lib/goMode';
 import {
   BOT_DIFFICULTIES,
@@ -11,27 +11,49 @@ import {
   decideBotAction,
   formatBlindLevel,
   handsPerLevel,
+  assignStyles,
   nextBlindSeats,
+  parseStyleSpec,
   resolveStyle,
   thinkDelay,
 } from '@/lib/bots';
 
 const SUIT_SYMBOL = { s: '♠', h: '♥', d: '♦', c: '♣' };
 const RED_SUITS = { h: true, d: true };
+const RANK_VALUE = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, T: 10, J: 11, Q: 12, K: 13, A: 14 };
+const SUIT_VALUE = { s: 4, h: 3, d: 2, c: 1 };
+const STACK_PRESETS = [25, 50, 100, 150, 200];
 
 function cardText(card) {
   if (!card) return '';
   return `${card.rank === 'T' ? '10' : card.rank}${SUIT_SYMBOL[card.suit] || card.suit}`;
 }
 
+function sortHole(cards) {
+  if (!Array.isArray(cards)) return [];
+  return [...cards].sort((a, b) => {
+    const rd = (RANK_VALUE[b?.rank] || 0) - (RANK_VALUE[a?.rank] || 0);
+    return rd !== 0 ? rd : (SUIT_VALUE[b?.suit] || 0) - (SUIT_VALUE[a?.suit] || 0);
+  });
+}
+
+const ACTION_LABEL = { fold: 'Fold', check: 'Check', call: 'Call', bet: 'Bet', raise: 'Raise', allin: 'All-in', sb: 'SB', bb: 'BB' };
+
 function CardChip({ card, fourColor = false }) {
-  if (!card) return null;
+  if (!card) {
+    return (
+      <span className="inline-flex items-center justify-center w-7 h-10 sm:w-8 sm:h-11 rounded-md bg-[#0f1319] border border-slate-700/70" />
+    );
+  }
   const red = RED_SUITS[card.suit];
-  const color = fourColor
-    ? card.suit === 's' ? 'text-slate-200' : card.suit === 'h' ? 'text-rose-400' : card.suit === 'd' ? 'text-sky-400' : 'text-emerald-400'
-    : red ? 'text-rose-400' : 'text-slate-100';
+  const color = !fourColor
+    ? (red ? 'text-rose-600' : 'text-slate-900')
+    : card.suit === 'h' ? 'text-rose-600'
+      : card.suit === 'd' ? 'text-sky-600'
+        : card.suit === 'c' ? 'text-emerald-600'
+          : 'text-slate-900';
   return (
-    <span className="inline-flex items-center justify-center w-8 h-11 rounded-md bg-white border border-slate-300 shadow-sm text-base font-black">
+    <span className="inline-flex items-center justify-center w-7 h-10 sm:w-8 sm:h-11 rounded-md bg-white border border-slate-300 shadow-sm text-sm font-black leading-none">
       <span className={color}>{cardText(card)}</span>
     </span>
   );
@@ -46,7 +68,15 @@ function formatChips(n, unit, bigBlind) {
   return v.toLocaleString('en-US');
 }
 
-const DEFAULT_SETUP = { difficulty: 'medium', seats: 6, style: 'random', stackBb: 100, speed: 'regular' };
+const STYLE_CHOICES = BOT_STYLES.filter((s) => s.id !== 'random');
+
+const DEFAULT_SETUP = {
+  difficulty: 'medium',
+  seats: 6,
+  stackBb: 100,
+  speed: 'regular',
+  styleSpecs: {},
+};
 
 export default function BotsMode() {
   const navigate = useNavigate();
@@ -61,7 +91,9 @@ export default function BotsMode() {
   const [showStructure, setShowStructure] = useState(false);
   const [showLevels, setShowLevels] = useState(false);
   const [showEnd, setShowEnd] = useState(false);
-  const [paused, setPaused] = useState(false);
+  const [showStyle, setShowStyle] = useState(false);
+  const [setupError, setSetupError] = useState(null);
+  const [equity, setEquity] = useState(null);
   const [unit, setUnit] = useState('chips');
   const [fourColor, setFourColor] = useState(false);
   const [levelSeconds, setLevelSeconds] = useState(0);
@@ -81,12 +113,27 @@ export default function BotsMode() {
 
   // Level clock (informational; blinds advance by hands played, per structure setup)
   useEffect(() => {
-    if (!game || paused || champion) return;
+    if (!game || champion) return;
     const id = setInterval(() => setLevelSeconds((s) => s + 1), 1000);
     return () => clearInterval(id);
-  }, [game, paused, champion]);
+  }, [game, champion]);
 
   const startGame = (draft) => {
+    const botCount = Number(draft.seats) - 1;
+    const specs = draft.styleSpecs || {};
+    const anySpec = Object.values(specs).some((v) => String(v ?? '').trim() !== '');
+    let botStyles;
+    if (!anySpec) {
+      botStyles = Array.from({ length: botCount }, () => 'random');
+    } else {
+      const assigned = assignStyles(specs, botCount);
+      if (assigned.error) {
+        setSetupError(assigned.error);
+        return;
+      }
+      botStyles = assigned.styles;
+    }
+    setSetupError(null);
     const seats = [];
     const ring = [];
     for (let i = 0; i < Number(draft.seats); i++) {
@@ -95,7 +142,7 @@ export default function BotsMode() {
         playerId: i,
         name: i === 0 ? 'You' : `Bot ${i}`,
         isHero: i === 0,
-        styleId: i === 0 ? null : resolveStyle(draft.style),
+        styleId: i === 0 ? null : botStyles[i - 1] || 'random',
         eliminated: false,
       });
       ring.push(i);
@@ -280,33 +327,41 @@ export default function BotsMode() {
     setGame(nextGame);
   }, [holes, dealHand]);
 
-  // Street advancement and hand completion.
+  // Board dealing and hand completion. applyAction opens the next street with
+  // hidden placeholders, so the board is filled from the deck here.
   useEffect(() => {
-    if (!hand || !game || paused || hand.phase === 'awarded') return;
+    if (!hand || !game || hand.phase === 'awarded') return undefined;
     const nonFolded = hand.players.filter((p) => p.status !== 'folded');
     if (nonFolded.length <= 1) {
       const t = setTimeout(() => finishHand(hand), 700);
       return () => clearTimeout(t);
     }
-    if (hand.currentPlayer === -1) {
-      if (hand.street !== 'river') {
-        const t = setTimeout(() => {
-          const cardsNeeded = hand.street === 'preflop' ? 3 : 1;
-          const cards = deckRef.current.splice(0, cardsNeeded);
-          const res = dealNextStreet(hand, cards);
-          if (!res.error) setHand(res.hand);
-        }, 650);
-        return () => clearTimeout(t);
-      }
-      const t = setTimeout(() => finishHand(hand), 800);
+    const hidden = (hand.communityCards || []).filter((c) => c && c.hidden).length;
+    if (hidden > 0) {
+      const t = setTimeout(() => {
+        const cards = deckRef.current.splice(0, hidden);
+        const res = fillBoard(hand, cards);
+        if (!res.error) setHand(res.hand);
+      }, 450);
       return () => clearTimeout(t);
     }
-    return undefined;
-  }, [hand, game, paused, finishHand]);
+    if (hand.currentPlayer !== -1) return undefined;
+    if (hand.street !== 'river') {
+      const cardsNeeded = hand.street === 'preflop' ? 3 : 1;
+      const t = setTimeout(() => {
+        const cards = deckRef.current.splice(0, cardsNeeded);
+        const res = dealNextStreet(hand, cards);
+        if (!res.error) setHand(res.hand);
+      }, 650);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => finishHand(hand), 800);
+    return () => clearTimeout(t);
+  }, [hand, game, finishHand]);
 
   // Bot turns.
   useEffect(() => {
-    if (!hand || !game || paused || hand.phase !== 'playing' || hand.currentPlayer < 0) return undefined;
+    if (!hand || !game || hand.phase !== 'playing' || hand.currentPlayer < 0) return undefined;
     const active = hand.players[hand.currentPlayer];
     const seat = game.seats.find((s) => s.seat === active?.seat);
     if (!seat || seat.isHero) return undefined;
@@ -324,15 +379,53 @@ export default function BotsMode() {
       if (res && !res.error) setHand(res);
     }, thinkDelay(game.speed));
     return () => clearTimeout(t);
-  }, [hand, game, holes, paused]);
+  }, [hand, game, holes]);
 
   const heroIndex = hand ? hand.players.findIndex((p) => (game?.seats.find((s) => s.isHero)?.seat === p.seat)) : -1;
   const hero = heroIndex >= 0 ? hand.players[heroIndex] : null;
-  const isHeroTurn = !!hand && hand.phase === 'playing' && hand.currentPlayer === heroIndex && !paused;
+  const isHeroTurn = !!hand && hand.phase === 'playing' && hand.currentPlayer === heroIndex;
   const pot = hand ? hand.players.reduce((s, p) => s + (p.totalBet || 0), 0) : 0;
   const toCall = hero ? Math.max(0, (hand.currentBet || 0) - (hero.currentBet || 0)) : 0;
   const minRaiseTo = hand ? (hand.currentBet || 0) + Math.max(hand.lastRaiseAmount || hand.bigBlind, hand.bigBlind) : 0;
   const maxRaiseTo = hero ? hero.currentBet + hero.stack : 0;
+
+  const allInSpot = !!hand && hand.players.some((p) => p.status === 'allin');
+  useEffect(() => {
+    if (!hand || !allInSpot) {
+      setEquity(null);
+      return undefined;
+    }
+    const live = hand.players.filter((p) => p.status !== 'folded');
+    const ids = live.map((p) => p.id);
+    const holeArrays = ids.map((id) => holes[id]);
+    if (holeArrays.length < 2 || holeArrays.some((h) => !Array.isArray(h) || h.length < 2)) {
+      setEquity(null);
+      return undefined;
+    }
+    const board = (hand.communityCards || []).filter((c) => c && !c.hidden);
+    const t = setTimeout(() => {
+      const { results } = calcEquity(holeArrays, board, 4000, 'nlh');
+      const next = {};
+      ids.forEach((id, i) => { next[id] = results[i]?.win ?? 0; });
+      setEquity(next);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [hand, holes, allInSpot]);
+
+  const seatCount = game?.seats?.length || 0;
+  const heroSeatNo = game?.seats?.find((s) => s.isHero)?.seat ?? 0;
+  const orderedPlayers = useMemo(() => {
+    if (!hand) return [];
+    const offset = (seat) => (((seat - heroSeatNo) % seatCount) + seatCount) % seatCount;
+    return [...hand.players].sort((a, b) => offset(a.seat) - offset(b.seat));
+  }, [hand, heroSeatNo, seatCount]);
+  const seatPosition = (p) => {
+    const n = Math.max(orderedPlayers.length, 2);
+    const idx = orderedPlayers.findIndex((q) => q.id === p.id);
+    if (idx <= 0) return { left: '50%', top: '90%' };
+    const theta = Math.PI / 2 + (idx / n) * Math.PI * 2;
+    return { left: `${50 + 37 * Math.cos(theta)}%`, top: `${50 + 32 * Math.sin(theta)}%` };
+  };
 
   const act = (type, amount) => {
     if (!hand || !isHeroTurn) return;
@@ -406,7 +499,28 @@ export default function BotsMode() {
 
   const levelLabel = formatBlindLevel(levels, game?.levelIndex || 0);
 
+  const styleFill = useMemo(() => {
+    const specs = Object.values(setupDraft.styleSpecs || {});
+    if (!specs.some((v) => String(v ?? '').trim() !== '')) return 'blank';
+    let min = 0;
+    let max = 0;
+    for (const v of specs) {
+      const parsed = parseStyleSpec(v);
+      if (!parsed) return 'invalid';
+      min += parsed.min;
+      max += parsed.max;
+    }
+    return { min, max };
+  }, [setupDraft.styleSpecs]);
+
   if (!setup) {
+    const botCount = Math.max(1, Number(setupDraft.seats) - 1);
+    const fillText = styleFill === 'blank'
+      ? `Bots to seat: ${botCount}. Leave every box blank for a random mix.`
+      : styleFill === 'invalid'
+        ? 'Use a number like 2, or a range like 2-3.'
+        : `${styleFill.min}-${styleFill.max} bots covered · ${botCount} needed.`;
+    const fillOk = styleFill === 'blank' || (styleFill !== 'invalid' && botCount >= styleFill.min && botCount <= styleFill.max);
     return (
       <div className="min-h-screen bg-[#121417] text-white p-4 sm:p-6">
         <div className="w-full max-w-xl mx-auto space-y-4">
@@ -450,30 +564,7 @@ export default function BotsMode() {
               <div className="flex justify-between text-[10px] text-slate-500 mt-1">
                 <span>Heads-up</span><span>10-max</span>
               </div>
-              <div className="mt-4 text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Starting stack ({setupDraft.stackBb} bb)</div>
-              <input
-                type="range"
-                min={10}
-                max={300}
-                value={setupDraft.stackBb}
-                onChange={(e) => setSetupDraft((s) => ({ ...s, stackBb: Number(e.target.value) }))}
-                className="w-full accent-emerald-500"
-              />
-            </div>
-
-            <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl">
-              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Bot playstyle</div>
-              <select
-                value={setupDraft.style}
-                onChange={(e) => setSetupDraft((s) => ({ ...s, style: e.target.value }))}
-                className="w-full bg-[#0e1219] border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-200"
-              >
-                {BOT_STYLES.map((st) => <option key={st.id} value={st.id}>{st.label} — {st.desc}</option>)}
-              </select>
-            </div>
-
-            <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl">
-              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Speed</div>
+              <div className="mt-4 text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Speed</div>
               <div className="grid grid-cols-2 gap-2">
                 {BOT_SPEEDS.map((sp) => (
                   <button
@@ -486,11 +577,74 @@ export default function BotsMode() {
                   </button>
                 ))}
               </div>
-              <p className="text-[11px] text-slate-500 mt-3">
+              <p className="text-[11px] text-slate-500 mt-2">
                 {handsPerLevel(setupDraft.speed, setupDraft.seats)} hands per level ({BOT_SPEEDS.find((s) => s.id === setupDraft.speed)?.handsPerPlayer} × {setupDraft.seats} players)
               </p>
             </div>
+
+            <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl sm:col-span-2">
+              <div className="flex items-baseline justify-between mb-2">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400">Starting stack</div>
+                <div className="text-[11px] font-mono text-emerald-300">{setupDraft.stackBb} bb</div>
+              </div>
+              <input
+                type="range"
+                min={10}
+                max={300}
+                step={5}
+                value={setupDraft.stackBb}
+                onChange={(e) => setSetupDraft((s) => ({ ...s, stackBb: Number(e.target.value) }))}
+                className="w-full accent-emerald-500"
+              />
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                <input
+                  type="number"
+                  min={10}
+                  max={300}
+                  value={setupDraft.stackBb}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setSetupDraft((s) => ({ ...s, stackBb: Number.isFinite(v) ? Math.min(300, Math.max(10, Math.round(v))) : 10 }));
+                  }}
+                  className="w-24 bg-[#0e1219] border border-slate-700 rounded-xl px-2.5 py-1.5 text-sm font-mono text-slate-100"
+                />
+                <span className="text-[11px] text-slate-500 mr-1">bb (10-300)</span>
+                {STACK_PRESETS.map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setSetupDraft((s) => ({ ...s, stackBb: v }))}
+                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer ${setupDraft.stackBb === v ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200' : 'bg-[#1d2430] border-slate-700/60 text-slate-300 hover:bg-[#283244]'}`}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl sm:col-span-2">
+              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Bot playstyles</div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {STYLE_CHOICES.map((st) => (
+                  <label key={st.id} title={st.desc} className="flex items-center justify-between gap-2 rounded-xl bg-[#19202b] border border-slate-700/70 px-2.5 py-1.5">
+                    <span className="text-[11px] font-semibold text-slate-300 truncate">{st.label}</span>
+                    <input
+                      value={setupDraft.styleSpecs?.[st.id] || ''}
+                      onChange={(e) => setSetupDraft((s) => ({ ...s, styleSpecs: { ...s.styleSpecs, [st.id]: e.target.value } }))}
+                      inputMode="numeric"
+                      placeholder="0"
+                      aria-label={`${st.label} bots`}
+                      className="w-12 bg-[#0e1219] border border-slate-700 rounded-lg px-1.5 py-1 text-[11px] font-mono text-center text-slate-100"
+                    />
+                  </label>
+                ))}
+              </div>
+              <p className={`text-[11px] mt-2 ${fillOk ? 'text-slate-500' : 'text-rose-300'}`}>{fillText}</p>
+              <p className="text-[11px] text-slate-500">Enter an exact count (2) or a range (2-3) per style. Everything left blank counts as zero.</p>
+            </div>
           </div>
+
+          {setupError && <div className="text-xs px-3 py-2 rounded-xl bg-rose-950/60 border border-rose-700 text-rose-200">{setupError}</div>}
 
           <button
             type="button"
@@ -505,7 +659,7 @@ export default function BotsMode() {
   }
 
   return (
-    <div className="min-h-screen bg-[#121417] text-white pb-44">
+    <div className="min-h-screen bg-[#121417] text-white pb-40">
       <div className="w-full max-w-xl mx-auto flex flex-col gap-3 p-2 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 bg-[#151921] border border-slate-800 rounded-2xl px-3.5 py-2.5 shadow-xl">
           <div className="flex items-center gap-3">
@@ -521,8 +675,6 @@ export default function BotsMode() {
             <button type="button" onClick={() => setShowStructure(true)} title="Structure setup" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><Layers size={14} /></button>
             <button type="button" onClick={() => setShowLevels(true)} title="Set level" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><ListTree size={14} /></button>
             <button type="button" onClick={() => { setGame((g) => ({ ...g, levelIndex: Math.min(levels.length - 1, g.levelIndex + 1), handsThisLevel: 0, handsTarget: handsPerLevel(g.speed, g.seats.filter((s) => !s.eliminated).length) })); setLevelSeconds(0); }} title="Next level" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><SkipForward size={14} /></button>
-            <button type="button" onClick={() => setLevelSeconds((s) => Math.max(0, s - 60))} title="Rewind 1 minute" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><Minus size={14} /></button>
-            <button type="button" onClick={() => setPaused((p) => !p)} title={paused ? 'Resume timer' : 'Pause timer'} className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer">{paused ? <Play size={14} /> : <Pause size={14} />}</button>
             <button type="button" onClick={() => setShowEnd(true)} title="End session" className="p-2 rounded-lg bg-rose-900/50 hover:bg-rose-800/60 cursor-pointer"><LogOut size={14} /></button>
           </div>
         </div>
@@ -535,57 +687,60 @@ export default function BotsMode() {
             <h2 className="text-xl font-black text-white">{champion.isHero ? 'You win it all!' : `${champion.name} wins it all`}</h2>
             <p className="text-xs text-slate-400">{history.length} hands played</p>
             <div className="flex justify-center gap-2 pt-2">
-              <button type="button" onClick={() => setShowHistory(true)} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold cursor-pointer">Hand history</button>
+              <button type="button" onClick={() => setShowHistory(true)} className="px-4 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Hand history</button>
               <button type="button" onClick={() => { setSetup(null); setGame(null); setHand(null); setChampion(null); }} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black cursor-pointer">New game</button>
-              <button type="button" onClick={() => navigate('/')} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold cursor-pointer">Home</button>
+              <button type="button" onClick={() => navigate('/')} className="px-4 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Home</button>
             </div>
           </div>
         ) : (
           <>
-            <div className="bg-[#11141b] border border-slate-800/90 rounded-2xl p-3 shadow-md">
-              <div className="text-center mb-4">
-                <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400">Pot</div>
-                <div className="text-2xl font-black text-white">{formatChips(pot, unit, hand?.bigBlind)}</div>
-                <div className="flex justify-center gap-1 mt-3 min-h-[44px]">
-                  {(hand?.communityCards || []).map((c, i) => <CardChip key={i} card={c.hidden ? null : c} fourColor={fourColor} />)}
+            <div className="relative w-full aspect-[4/3] min-h-[310px] max-h-[470px] bg-[#11141b] border border-slate-800/90 rounded-2xl shadow-md overflow-hidden">
+              <div className="absolute inset-[11%] rounded-[50%] border border-emerald-900/60 bg-[radial-gradient(ellipse_at_center,_#17332b_0%,_#0d1a17_75%)] shadow-[inset_0_0_40px_rgba(0,0,0,0.55)]" />
+
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 pointer-events-none px-12">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-emerald-200/60">Pot</div>
+                <div className="text-xl sm:text-2xl font-black text-white font-mono leading-tight">{formatChips(pot, unit, hand?.bigBlind)}</div>
+                <div data-testid="board" className="flex justify-center gap-1 mt-1 min-h-[40px] items-center">
+                  {(hand?.communityCards || []).map((c, i) => (
+                    <CardChip key={i} card={c && c.hidden ? null : c} fourColor={fourColor} size="sm" />
+                  ))}
                 </div>
+                <div className="text-[9px] text-slate-500 font-mono">Hand #{hand?.handNumber || 0}</div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                {(hand?.players || []).map((p) => {
-                  const seat = game.seats.find((s) => s.seat === p.seat);
-                  const isTurn = hand.currentPlayer === p.id && hand.phase === 'playing';
-                  const folded = p.status === 'folded';
-                  return (
-                    <div
-                      key={p.id}
-                      className={`flex items-center justify-between rounded-xl px-2.5 py-2 border ${isTurn ? 'border-amber-500/80 bg-amber-500/10' : folded ? 'border-slate-800 bg-[#141922] opacity-50' : 'bg-[#19202b] border-slate-700/80'} gap-2`}
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="text-xs font-bold text-white truncate">{p.name}</span>
-                        {p.seat === hand.buttonSeat && <span className="text-[9px] px-1 rounded bg-white text-black font-black">D</span>}
-                        {p.seat === hand.sbSeat && p.seat !== hand.bbSeat && <span className="text-[9px] px-1 rounded bg-sky-500/30 text-sky-200 font-bold">SB</span>}
-                        {p.seat === hand.bbSeat && <span className="text-[9px] px-1 rounded bg-rose-500/30 text-rose-200 font-bold">BB</span>}
-                        <span className="text-[9px] text-slate-500 truncate">{seat?.styleId ? seat.styleId.toUpperCase() : ''}</span>
+              {orderedPlayers.map((p) => {
+                const showAll = allInSpot && hand.phase === 'playing';
+                const seat = game.seats.find((s) => s.seat === p.seat);
+                const isTurn = hand.currentPlayer === p.id && hand.phase === 'playing';
+                const folded = p.status === 'folded';
+                const reveal = Boolean(seat?.isHero) || showAll || hand.phase === 'awarded';
+                return (
+                  <div key={p.id} data-testid={`seat-${p.seat}`} data-status={p.status} className="absolute -translate-x-1/2 -translate-y-1/2" style={seatPosition(p)}>
+                    <div className={`w-[74px] sm:w-[94px] rounded-xl border px-1 py-1 text-center ${isTurn ? 'border-amber-400 bg-amber-500/15 ring-2 ring-amber-400/40' : folded ? 'border-slate-800 bg-[#141922]/90 opacity-45' : 'border-slate-700/80 bg-[#19202b]/95'}`}>
+                      <div className="flex items-center justify-center gap-0.5">
+                        {p.seat === hand.buttonSeat && <span className="text-[8px] px-0.5 rounded bg-white text-black font-black leading-tight">D</span>}
+                        {p.seat === hand.sbSeat && p.seat !== hand.bbSeat && <span className="text-[8px] px-0.5 rounded bg-sky-500/30 text-sky-200 font-bold leading-tight">SB</span>}
+                        {p.seat === hand.bbSeat && <span className="text-[8px] px-0.5 rounded bg-rose-500/30 text-rose-200 font-bold leading-tight">BB</span>}
+                        <span className="text-[10px] font-bold text-white truncate">{p.name}</span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {((hand.phase === 'awarded' && p.status !== 'folded') || seat?.isHero) && (
-                          <div className="flex gap-0.5">
-                            {(holes[p.id] || []).map((c, i) => <CardChip key={i} card={c} fourColor={fourColor} />)}
-                          </div>
-                        )}
-                        <div className="text-right leading-tight">
-                          <div className="text-sm font-mono text-emerald-300">{formatChips(p.stack, unit, hand.bigBlind)}</div>
-                          <div className="flex items-center justify-end gap-1">
-                            <span className="text-[10px] text-slate-500">{p.lastAction?.type || ''}</span>
-                            {p.currentBet > 0 && <span className="text-[10px] font-mono text-amber-300">{formatChips(p.currentBet, unit, hand.bigBlind)}</span>}
-                          </div>
-                        </div>
+                      {showStyle && seat?.styleId && (
+                        <div data-testid={`style-${p.seat}`} className="text-[9px] text-slate-500 leading-tight">{STYLE_SHORT[seat.styleId] || seat.styleId}</div>
+                      )}
+                      <div className="text-[11px] font-mono text-emerald-300 leading-tight">{formatChips(p.stack, unit, hand.bigBlind)}</div>
+                      <div className="flex items-center justify-center gap-0.5 min-h-[32px] mt-0.5">
+                        {reveal
+                          ? sortHole(holes[p.id]).map((c, i) => <CardChip key={i} card={c} fourColor={fourColor} size="sm" />)
+                          : <span className="text-[10px] text-slate-600">—</span>}
                       </div>
+                      <div className="flex items-center justify-center gap-1 text-[9px] min-h-[12px]">
+                        {p.currentBet > 0 && <span className="font-mono text-amber-300">{formatChips(p.currentBet, unit, hand.bigBlind)}</span>}
+                        {equity && equity[p.id] != null && <span className="font-mono text-sky-300">{equity[p.id].toFixed(0)}%</span>}
+                      </div>
+                      {p.lastAction?.type && <div className="text-[9px] text-slate-500 leading-tight">{ACTION_LABEL[p.lastAction.type] || p.lastAction.type}</div>}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="fixed bottom-0 left-0 right-0 bg-[#0f1319]/95 border-t border-slate-800 backdrop-blur">
@@ -597,21 +752,24 @@ export default function BotsMode() {
                 ) : isHeroTurn ? (
                   <>
                     <div className="flex gap-2">
-                      <button type="button" onClick={() => act('fold')} title="Fold (F)" className="flex-1 py-3 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-rose-300 font-bold text-sm cursor-pointer">Fold</button>
+                      {toCall > 0 && (
+                        <button type="button" data-action="fold" onClick={() => act('fold')} title="Fold (F)" className="flex-1 py-3 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-rose-300 font-bold text-sm cursor-pointer">Fold</button>
+                      )}
                       {toCall > 0 ? (
-                        <button type="button" onClick={() => act('call')} title="Call (C)" className="flex-1 py-3 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-emerald-300 font-medium text-sm cursor-pointer">
+                        <button type="button" data-action="call" onClick={() => act('call')} title="Call (C)" className="flex-1 py-3 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-emerald-300 font-medium text-sm cursor-pointer">
                           Call {formatChips(Math.min(toCall, hero.stack), unit, hand.bigBlind)}
                         </button>
                       ) : (
-                        <button type="button" onClick={() => act('check')} title="Check (C)" className="flex-1 py-3 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-emerald-300 font-medium text-sm cursor-pointer">Check</button>
+                        <button type="button" data-action="check" onClick={() => act('check')} title="Check (C)" className="flex-1 py-3 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-emerald-300 font-medium text-sm cursor-pointer">Check</button>
                       )}
-                      <button type="button" onClick={() => act(toCall > 0 ? 'raise' : 'bet', maxRaiseTo)} title="All in (Shift + A)" className="flex-1 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-black font-black text-sm cursor-pointer">
+                      <button type="button" data-action="allin" onClick={() => act(toCall > 0 ? 'raise' : 'bet', maxRaiseTo)} title="All in (Shift + A)" className="flex-1 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-black font-black text-sm cursor-pointer">
                         All in
                       </button>
                     </div>
                     <div className="flex gap-2 items-center">
                       <input
                         ref={raiseInputRef}
+                        data-testid="raise-input"
                         type="number"
                         value={raiseTo}
                         onChange={(e) => setRaiseTo(e.target.value)}
@@ -636,7 +794,7 @@ export default function BotsMode() {
                   </>
                 ) : (
                   <div className="text-center text-xs text-slate-500 py-3">
-                    {hand ? (paused ? 'Paused' : `${hand.players[hand.currentPlayer]?.name || 'Waiting'} is acting…`) : 'Dealing…'}
+                    {hand ? `${hand.players[hand.currentPlayer]?.name || 'Waiting'} is acting…` : 'Dealing…'}
                   </div>
                 )}
               </div>
@@ -657,7 +815,7 @@ export default function BotsMode() {
             ) : (
               <div className="space-y-2">
                 {history.map((h, i) => (
-                  <div key={i} className="rounded-xl bg-slate-900/70 border border-slate-800 px-3 py-2">
+                  <div key={i} className="rounded-xl bg-[#19202b] border border-slate-800 px-3 py-2">
                     <div className="flex items-center justify-between text-[11px] text-slate-400">
                       <span>Hand #{h.handNumber} · {h.level}</span>
                       <span className="font-mono text-amber-300">{formatChips(h.pot, unit, hand?.bigBlind)}</span>
@@ -680,23 +838,29 @@ export default function BotsMode() {
               <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Show stack in</div>
               <div className="grid grid-cols-2 gap-2">
                 {['chips', 'bb'].map((u) => (
-                  <button key={u} type="button" onClick={() => setUnit(u)} className={`px-3 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${unit === u ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200' : 'bg-slate-900 border-slate-700 text-slate-300'}`}>
+                  <button key={u} type="button" onClick={() => setUnit(u)} className={`px-3 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${unit === u ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200' : 'bg-[#19202b] border-slate-700 text-slate-300'}`}>
                     {u === 'chips' ? 'Chips' : 'Big blinds'}
                   </button>
                 ))}
               </div>
             </div>
             <div>
-              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Deck colours</div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Deck colors</div>
               <div className="grid grid-cols-2 gap-2">
                 {[2, 4].map((n) => (
-                  <button key={n} type="button" onClick={() => setFourColor(n === 4)} className={`px-3 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${(n === 4) === fourColor ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200' : 'bg-slate-900 border-slate-700 text-slate-300'}`}>
-                    {n} colour
+                  <button key={n} type="button" onClick={() => setFourColor(n === 4)} className={`px-3 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${(n === 4) === fourColor ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200' : 'bg-[#19202b] border-slate-700 text-slate-300'}`}>
+                    {n} color
                   </button>
                 ))}
               </div>
             </div>
-            <button type="button" onClick={() => setShowSettings(false)} className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold cursor-pointer">Done</button>
+            <div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Bot playstyles</div>
+              <button type="button" onClick={() => setShowStyle((v) => !v)} className={`w-full px-3 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${showStyle ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200' : 'bg-[#19202b] border-slate-700 text-slate-300'}`}>
+                {showStyle ? 'Shown under each name' : 'Hidden'}
+              </button>
+            </div>
+            <button type="button" onClick={() => setShowSettings(false)} className="w-full py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Done</button>
           </div>
         </div>
       )}
@@ -705,25 +869,23 @@ export default function BotsMode() {
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowStructure(false)}>
           <div className="bg-[#141922] border border-slate-800 rounded-2xl w-full max-w-md max-h-[80vh] overflow-y-auto p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-white">Structure setup</h3>
-            <div>
-              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Speed</div>
-              <div className="grid grid-cols-2 gap-2">
-                {BOT_SPEEDS.map((sp) => (
-                  <button
-                    key={sp.id}
-                    type="button"
-                    onClick={() => {
-                      setSetup((s) => ({ ...s, speed: sp.id }));
-                      setGame((g) => (g ? { ...g, speed: sp.id, handsTarget: handsPerLevel(sp.id, g.seats.filter((s) => !s.eliminated).length) } : g));
-                    }}
-                    className={`px-3 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${setup?.speed === sp.id ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200' : 'bg-slate-900 border-slate-700 text-slate-300'}`}
-                  >
-                    {sp.label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] text-slate-500 mt-2">Every level antes one big blind (BBA). Hands per level are recalculated when a level changes.</p>
+            <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400">Speed</div>
+            <div className="grid grid-cols-2 gap-2">
+              {BOT_SPEEDS.map((sp) => (
+                <button
+                  key={sp.id}
+                  type="button"
+                  onClick={() => {
+                    setSetup((s) => ({ ...s, speed: sp.id }));
+                    setGame((g) => (g ? { ...g, speed: sp.id, handsTarget: handsPerLevel(sp.id, g.seats.filter((s) => !s.eliminated).length) } : g));
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold border cursor-pointer ${setup?.speed === sp.id ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200' : 'bg-[#19202b] border-slate-700 text-slate-300'}`}
+                >
+                  {sp.label}
+                </button>
+              ))}
             </div>
+            <p className="text-[11px] text-slate-500">Every level antes one big blind (BBA). Hands per level are recalculated when a level changes.</p>
             <div className="space-y-1">
               {levels.map((l, i) => (
                 <div key={i} className={`flex items-center justify-between text-[11px] px-2 py-1 rounded ${game?.levelIndex === i ? 'bg-emerald-900/40 text-emerald-200' : 'text-slate-400'}`}>
@@ -732,7 +894,7 @@ export default function BotsMode() {
                 </div>
               ))}
             </div>
-            <button type="button" onClick={() => setShowStructure(false)} className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold cursor-pointer">Done</button>
+            <button type="button" onClick={() => setShowStructure(false)} className="w-full py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Done</button>
           </div>
         </div>
       )}
@@ -750,7 +912,7 @@ export default function BotsMode() {
                   setLevelSeconds(0);
                   setShowLevels(false);
                 }}
-                className={`w-full flex items-center justify-between text-xs px-3 py-2 rounded-xl border cursor-pointer ${game?.levelIndex === i ? 'border-emerald-500 bg-emerald-600/20 text-emerald-200' : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500'}`}
+                className={`w-full flex items-center justify-between text-xs px-3 py-2 rounded-xl border cursor-pointer ${game?.levelIndex === i ? 'border-emerald-500 bg-emerald-600/20 text-emerald-200' : 'border-slate-700 bg-[#19202b] text-slate-300 hover:border-slate-500'}`}
               >
                 <span>Level {i + 1}</span>
                 <span className="font-mono">{l.sb.toLocaleString('en-US')}/{l.bb.toLocaleString('en-US')} ({l.ante.toLocaleString('en-US')})</span>
@@ -766,7 +928,7 @@ export default function BotsMode() {
             <h3 className="text-sm font-bold text-white">End session?</h3>
             <p className="text-xs text-slate-400">The current game will be discarded.</p>
             <div className="flex gap-2">
-              <button type="button" onClick={() => setShowEnd(false)} className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold cursor-pointer">Keep playing</button>
+              <button type="button" onClick={() => setShowEnd(false)} className="flex-1 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Keep playing</button>
               <button
                 type="button"
                 onClick={() => { setShowEnd(false); setSetup(null); setGame(null); setHand(null); setChampion(null); setHoles({}); }}
