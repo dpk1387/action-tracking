@@ -91,8 +91,9 @@ function raiseTarget(hand, cp, desiredTo) {
 
 /**
  * Decide one bot action from range strength (preflop) and equity plus made-hand
- * strength (postflop). Aggression is capped per street so bots cannot end up in
- * a nine-bet war, and the preflop ranges are the styles' actual opening ranges.
+ * strength (postflop). Postflop each style carries its own raise count and a
+ * rising strength bar per extra raise, so a nit raises once while a maniac can
+ * go to war - but only with a hand that keeps getting stronger.
  */
 export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile, tuning, rng = Math.random }) {
   const cp = hand.players[playerIndex];
@@ -188,19 +189,26 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
   // Pair-or-better bonus, so a made hand bets even when equity is close.
   const strength = Math.min(0.99, equity + (cat >= 3 ? 0.12 : cat >= 1 ? 0.05 : 0));
   const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
-  // Two aggressive actions per street at most: a bet, or a bet plus one raise.
-  const maxRaiseLevel = 2;
+  // How many raises this style will put in on one street. A bet (level 1) does
+  // not count, so the nit raises once, the maniac can go to war. Each extra
+  // raise also needs a stronger hand, which is what stops low-equity wars.
+  const maxRaises = Math.max(1, Math.min(4, Number(profile.maxRaises) || 2));
+  const raisesMade = Math.max(0, (raiseLevel || 0) - 1);
+  const raiseStep = profile.reRaiseStep ?? 0.06 + (1 - (profile.aggro || 0)) * 0.08;
+  const raiseStrengthNeed = Math.min(0.96, profile.betLine + raiseStep * raisesMade);
+  const raiseOdds = Math.max(0.06, 0.38 + (profile.aggro || 0) * 0.5 - raisesMade * 0.1);
 
   if (toCall <= 0) {
     const betSize = Math.max(cp.currentBet || 0, 0) + Math.max(bb, pot * profile.size * (0.7 + rng() * 0.5));
-    if (strength >= profile.betLine && canRaise && raiseLevel < maxRaiseLevel) {
+    if (strength >= profile.betLine && canRaise && raisesMade < maxRaises) {
       const amount = raiseTarget(hand, cp, (hand.currentBet || 0) + Math.max(bb, pot * Math.max(0.45, profile.size)));
       if (amount) {
         if (strength > 0.85 && stack <= pot * 1.4) return shove();
         return { type: 'raise', amount };
       }
     }
-    if (rng() < profile.bluff * (tuning.bluffMul || 1) * (opponents.length <= 2 ? 1 : 0.55) && raiseLevel < maxRaiseLevel && canRaise) {
+    // Bluffs only open the betting; nobody bluffs into a street that is already raised.
+    if (rng() < profile.bluff * (tuning.bluffMul || 1) * (opponents.length <= 2 ? 1 : 0.55) && raisesMade === 0 && canRaise) {
       const amount = raiseTarget(hand, cp, (hand.currentBet || 0) + Math.max(bb, betSize * 0.7));
       if (amount) return { type: 'raise', amount };
     }
@@ -213,15 +221,15 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
     return rng() < 0.2 ? { type: 'call' } : { type: 'fold' };
   }
 
-  // Raising is capped at two aggressive actions per street: bet, or bet + raise.
-  const canRaiseMore = canRaise && raiseLevel < maxRaiseLevel;
-  const raiseLine = Math.max(profile.betLine, callThreshold + 0.14);
-  if (canRaiseMore && strength >= raiseLine && rng() < 0.35 + profile.aggro * 0.5) {
+  const canRaiseMore = canRaise && raisesMade < maxRaises;
+  const raiseLine = Math.max(profile.betLine, callThreshold + 0.14, raiseStrengthNeed);
+  if (canRaiseMore && strength >= raiseLine && rng() < raiseOdds) {
     if (strength > 0.82 && stack <= pot * 1.3) return shove();
     const amount = raiseTarget(hand, cp, (hand.currentBet || 0) * 2.4 + pot * 0.25);
     if (amount) return { type: 'raise', amount };
   }
-  if (canRaiseMore && rng() < profile.bluff * 0.35 * (1 - profile.raiseGuard)) {
+  // A bluff raise over a single bet only, and only when the hand has real equity.
+  if (canRaiseMore && raisesMade === 0 && strength >= raiseStrengthNeed - 0.1 && rng() < profile.bluff * 0.35 * (1 - profile.raiseGuard)) {
     const amount = raiseTarget(hand, cp, (hand.currentBet || 0) * 2.3);
     if (amount) return { type: 'raise', amount };
   }

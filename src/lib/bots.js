@@ -133,16 +133,16 @@ export function nextBlindSeats({ ring, activeSeats, buttonSeat, sbSeat, bbSeat }
 // betLine is the postflop strength that bets, raiseGuard the reluctance to
 // raise a second time, callBonus the slack against raw pot odds.
 const STYLE_PROFILES = {
-  nit: { openPct: 0.13, limpPct: 0.04, threeBetPct: 0.03, coldCallPct: 0.05, fourBetPct: 0.015, callVs3Bet: 0.05, betLine: 0.62, raiseGuard: 0.35, bluff: 0.02, size: 0.6, callBonus: -0.06, aggro: 0.3 },
-  tag: { openPct: 0.19, limpPct: 0.05, threeBetPct: 0.055, coldCallPct: 0.075, fourBetPct: 0.025, callVs3Bet: 0.07, betLine: 0.55, raiseGuard: 0.2, bluff: 0.09, size: 0.7, callBonus: -0.02, aggro: 0.55 },
-  lag: { openPct: 0.30, limpPct: 0.08, threeBetPct: 0.10, coldCallPct: 0.12, fourBetPct: 0.04, callVs3Bet: 0.10, betLine: 0.48, raiseGuard: 0.1, bluff: 0.2, size: 0.8, callBonus: 0, aggro: 0.75 },
-  shark: { openPct: 0.24, limpPct: 0.05, threeBetPct: 0.06, coldCallPct: 0.11, fourBetPct: 0.035, callVs3Bet: 0.085, betLine: 0.5, raiseGuard: 0.15, bluff: 0.17, size: 0.75, callBonus: 0, aggro: 0.68 },
-  loose_passive: { openPct: 0.22, limpPct: 0.18, threeBetPct: 0.02, coldCallPct: 0.20, fourBetPct: 0.01, callVs3Bet: 0.08, betLine: 0.6, raiseGuard: 0.45, bluff: 0.03, size: 0.45, callBonus: 0.1, aggro: 0.15 },
-  tight_passive: { openPct: 0.14, limpPct: 0.08, threeBetPct: 0.03, coldCallPct: 0.10, fourBetPct: 0.015, callVs3Bet: 0.06, betLine: 0.6, raiseGuard: 0.4, bluff: 0.02, size: 0.45, callBonus: 0.02, aggro: 0.2 },
-  calling_station: { openPct: 0.32, limpPct: 0.30, threeBetPct: 0.01, coldCallPct: 0.38, fourBetPct: 0.005, callVs3Bet: 0.15, betLine: 0.7, raiseGuard: 0.5, bluff: 0.01, size: 0.4, callBonus: 0.16, aggro: 0.08 },
-  fish: { openPct: 0.28, limpPct: 0.18, threeBetPct: 0.03, coldCallPct: 0.22, fourBetPct: 0.01, callVs3Bet: 0.12, betLine: 0.6, raiseGuard: 0.3, bluff: 0.1, size: 0.5, callBonus: 0.12, extraNoise: 0.05, aggro: 0.35 },
-  rec: { openPct: 0.24, limpPct: 0.16, threeBetPct: 0.02, coldCallPct: 0.22, fourBetPct: 0.01, callVs3Bet: 0.12, betLine: 0.62, raiseGuard: 0.4, bluff: 0.05, size: 0.45, callBonus: 0.14, extraNoise: 0.04, aggro: 0.15 },
-  maniac: { openPct: 0.55, limpPct: 0.10, threeBetPct: 0.22, coldCallPct: 0.28, fourBetPct: 0.08, callVs3Bet: 0.16, betLine: 0.38, raiseGuard: 0, bluff: 0.3, size: 0.95, callBonus: 0.02, extraNoise: 0.06, aggro: 0.9 },
+  nit: { openPct: 0.13, limpPct: 0.04, threeBetPct: 0.03, coldCallPct: 0.05, fourBetPct: 0.015, callVs3Bet: 0.05, betLine: 0.62, raiseGuard: 0.35, bluff: 0.02, size: 0.6, callBonus: -0.06, aggro: 0.3, maxRaises: 1, reRaiseStep: 0.16 },
+  tag: { openPct: 0.19, limpPct: 0.05, threeBetPct: 0.055, coldCallPct: 0.075, fourBetPct: 0.025, callVs3Bet: 0.07, betLine: 0.55, raiseGuard: 0.2, bluff: 0.09, size: 0.7, callBonus: -0.02, aggro: 0.55, maxRaises: 2, reRaiseStep: 0.1 },
+  lag: { openPct: 0.30, limpPct: 0.08, threeBetPct: 0.10, coldCallPct: 0.12, fourBetPct: 0.04, callVs3Bet: 0.10, betLine: 0.48, raiseGuard: 0.1, bluff: 0.2, size: 0.8, callBonus: 0, aggro: 0.75, maxRaises: 3, reRaiseStep: 0.07 },
+  shark: { openPct: 0.24, limpPct: 0.05, threeBetPct: 0.06, coldCallPct: 0.11, fourBetPct: 0.035, callVs3Bet: 0.085, betLine: 0.5, raiseGuard: 0.15, bluff: 0.17, size: 0.75, callBonus: 0, aggro: 0.68, maxRaises: 2, reRaiseStep: 0.09 },
+  loose_passive: { openPct: 0.22, limpPct: 0.18, threeBetPct: 0.02, coldCallPct: 0.20, fourBetPct: 0.01, callVs3Bet: 0.08, betLine: 0.6, raiseGuard: 0.45, bluff: 0.03, size: 0.45, callBonus: 0.1, aggro: 0.15, maxRaises: 1, reRaiseStep: 0.18 },
+  tight_passive: { openPct: 0.14, limpPct: 0.08, threeBetPct: 0.03, coldCallPct: 0.10, fourBetPct: 0.015, callVs3Bet: 0.06, betLine: 0.6, raiseGuard: 0.4, bluff: 0.02, size: 0.45, callBonus: 0.02, aggro: 0.2, maxRaises: 1, reRaiseStep: 0.18 },
+  calling_station: { openPct: 0.32, limpPct: 0.30, threeBetPct: 0.01, coldCallPct: 0.38, fourBetPct: 0.005, callVs3Bet: 0.15, betLine: 0.7, raiseGuard: 0.5, bluff: 0.01, size: 0.4, callBonus: 0.16, aggro: 0.08, maxRaises: 1, reRaiseStep: 0.2 },
+  fish: { openPct: 0.28, limpPct: 0.18, threeBetPct: 0.03, coldCallPct: 0.22, fourBetPct: 0.01, callVs3Bet: 0.12, betLine: 0.6, raiseGuard: 0.3, bluff: 0.1, size: 0.5, callBonus: 0.12, extraNoise: 0.05, aggro: 0.35, maxRaises: 2, reRaiseStep: 0.12 },
+  rec: { openPct: 0.24, limpPct: 0.16, threeBetPct: 0.02, coldCallPct: 0.22, fourBetPct: 0.01, callVs3Bet: 0.12, betLine: 0.62, raiseGuard: 0.4, bluff: 0.05, size: 0.45, callBonus: 0.14, extraNoise: 0.04, aggro: 0.15, maxRaises: 2, reRaiseStep: 0.13 },
+  maniac: { openPct: 0.55, limpPct: 0.10, threeBetPct: 0.22, coldCallPct: 0.28, fourBetPct: 0.08, callVs3Bet: 0.16, betLine: 0.38, raiseGuard: 0, bluff: 0.3, size: 0.95, callBonus: 0.02, extraNoise: 0.06, aggro: 0.9, maxRaises: 4, reRaiseStep: 0.05 },
 };
 
 const DIFFICULTY_TUNING = {
