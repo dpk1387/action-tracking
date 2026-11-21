@@ -177,6 +177,36 @@ export function resumeLevelTimer(hand) {
   };
 }
 
+/**
+ * Drop every break / color-up row from the schedule.
+ * GO mode runs online and has no scheduled stoppages, so the clock skips them.
+ */
+export function removeScheduleStops(hand) {
+  if (!hand) return hand;
+  const rows = hand.blindSchedule || [];
+  const hasStops = rows.some((l) => l?.type === 'break' || l?.type === 'color_up');
+  const stuck = hand.inBreak || hand.pendingRace || (hand.pendingMissedRaces || []).length > 0;
+  if (!hasStops && !stuck) return hand;
+  const current = rows[hand.tLevel || 0];
+  const filtered = rows.filter((l) => l?.type !== 'break' && l?.type !== 'color_up');
+  const last = Math.max(0, filtered.length - 1);
+  const found = current ? filtered.indexOf(current) : -1;
+  // A break row is gone from the filtered list: land on the next playable level.
+  const tLevel = found >= 0 ? found : Math.min(hand.tLevel || 0, last);
+  const blindLevel = hand.blindLevel === hand.tLevel ? tLevel : Math.min(hand.blindLevel || 0, last);
+  return {
+    ...hand,
+    blindSchedule: filtered,
+    tLevel,
+    blindLevel,
+    inBreak: false,
+    isColorUp: false,
+    pendingRace: null,
+    pendingMissedRaces: null,
+    pauseStart: null,
+  };
+}
+
 export function advanceTimerSegment(hand, now = Date.now()) {
   if (!hand || hand.pauseStart != null) return hand;
   let h = hand;

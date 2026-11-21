@@ -169,31 +169,29 @@ export function parseStyleSpec(text) {
 
 /**
  * Turn per-style counts/ranges into one style per bot.
- * Returns { styles } or { error } when the numbers cannot fill the table.
+ * Bots not covered by the counts are filled in as random players, so the mix
+ * always fills the table; only impossible or malformed counts are an error.
  */
 export function assignStyles(specs, count, rng = Math.random) {
   const parsed = {};
   let minSum = 0;
-  let maxSum = 0;
   for (const [id, text] of Object.entries(specs || {})) {
     const spec = parseStyleSpec(text);
     const label = BOT_STYLES.find((s) => s.id === id)?.label || id;
     if (!spec) return { error: `${label}: use a number like 2 or a range like 2-3.` };
     parsed[id] = spec;
     minSum += spec.min;
-    maxSum += spec.max;
   }
-  if (count < minSum || count > maxSum) {
-    return { error: `Those counts allow ${minSum}-${maxSum} bots, but the table needs ${count}.` };
+  if (minSum > count) {
+    return { error: `Those counts need at least ${minSum} bots, but the table has ${count}.` };
   }
   const counts = {};
   Object.entries(parsed).forEach(([id, spec]) => { counts[id] = spec.min; });
   let budget = count - minSum;
-  // Spread the leftover bots randomly across the styles that still have room.
-  const open = Object.keys(parsed).filter((id) => parsed[id].max > parsed[id].min || budget === 0);
+  // Ranges take the leftover seats first, then anything still open goes random.
   let guard = 0;
   while (budget > 0 && guard++ < 1000) {
-    const room = open.filter((id) => counts[id] < parsed[id].max);
+    const room = Object.keys(parsed).filter((id) => counts[id] < parsed[id].max);
     if (!room.length) break;
     const pick = room[Math.floor(rng() * room.length)];
     counts[pick] += 1;
@@ -201,6 +199,7 @@ export function assignStyles(specs, count, rng = Math.random) {
   }
   const pool = [];
   Object.entries(counts).forEach(([id, n]) => { for (let i = 0; i < n; i++) pool.push(id); });
+  while (pool.length < count) pool.push('random');
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
