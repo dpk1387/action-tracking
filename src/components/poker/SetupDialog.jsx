@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Plus, Minus, FolderOpen, Clock, Trash2, Award, Sparkles } from 'lucide-react';
 import BlindScheduleEditor from '@/components/poker/BlindScheduleEditor';
 import ChipDenominationPicker from '@/components/poker/ChipDenominationPicker';
@@ -145,6 +145,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [bigBet, setBigBet] = useState(initial?.bigBet ?? 20);
   const [flMaxRaises, setFlMaxRaises] = useState(initial?.flMaxRaises ?? 4);
   const [isGoMode, setIsGoMode] = useState(initial?.isGoMode || false);
+  // GO mode plays online with no scheduled stops: hide and strip break/color-up rows.
+  const strippedSchedule = useMemo(
+    () => (isGoMode ? (schedule || []).filter((r) => r.type !== 'break' && r.type !== 'color_up') : (schedule || [])),
+    [schedule, isGoMode],
+  );
   const [stackRounding, setStackRounding] = useState(initial?.stackRounding || 100);
   const [error, setError] = useState('');
   const [showStructures, setShowStructures] = useState(false);
@@ -553,7 +558,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       desiredDurationMinutes: isCash ? undefined : (Number(desiredDurationMinutes) || 0),
       colorUpBreaksOnly: isCash ? undefined : Boolean(colorUpBreaksOnly),
       generatorSpeed: isCash ? undefined : generatorSpeed,
-      blindSchedule: isCash ? [] : schedule.map((l) => {
+      blindSchedule: isCash ? [] : strippedSchedule.map((l) => {
         if (l.type === 'break') {
           const hasRace = l.race && (parseAmount(l.race.retired) ?? Number(l.race.retired)) > 0 && (parseAmount(l.race.replacement) ?? Number(l.race.replacement)) > 0;
           return {
@@ -1347,6 +1352,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                     </div>
                   </div>
 
+                  {!isGoMode && (
+                    <>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
                       Break Duration
@@ -1412,6 +1419,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                     </div>
                   </div>
 
+                    </>
+                  )}
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
                       Structure Speed
@@ -1448,22 +1457,30 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                     Lowest Chip: <span className="font-mono text-emerald-400 font-bold">{lowestChip}</span> · Starting Stack: <span className="font-mono text-white font-bold">{Math.round(estStartingStack).toLocaleString()}</span> ({Math.round(estStartingStack / (2 * lowestChip))} BBs at Level 1)
                   </span>
                   <span className="text-slate-400">
-                    {Number(desiredDurationMinutes) > 0
-                      ? `Target: ${Math.floor(desiredDurationMinutes / 60)}h ${String(desiredDurationMinutes % 60).padStart(2, '0')}m · `
-                      : 'Standard full schedule · '}
-                    {colorUpBreaksOnly
-                      ? `Breaks during color-ups only (${breakDurationMinutes}m each)`
-                      : `Breaks every ${breakEveryLevels} levels (${breakDurationMinutes}m each)`}
+                    {isGoMode
+                      ? Number(desiredDurationMinutes) > 0
+                        ? `Target: ${Math.floor(desiredDurationMinutes / 60)}h ${String(desiredDurationMinutes % 60).padStart(2, '0')}m · no breaks`
+                        : 'Standard full schedule · no breaks'
+                      : (
+                        <>
+                          {Number(desiredDurationMinutes) > 0
+                            ? `Target: ${Math.floor(desiredDurationMinutes / 60)}h ${String(desiredDurationMinutes % 60).padStart(2, '0')}m · `
+                            : 'Standard full schedule · '}
+                          {colorUpBreaksOnly
+                            ? `Breaks during color-ups only (${breakDurationMinutes}m each)`
+                            : `Breaks every ${breakEveryLevels} levels (${breakDurationMinutes}m each)`}
+                        </>
+                      )}
                   </span>
                 </div>
               </div>
 
-              <BlindScheduleEditor schedule={schedule} onChange={setSchedule} anteType={anteType} chipDenominations={chipDenoms} />
+              <BlindScheduleEditor schedule={strippedSchedule} onChange={setSchedule} anteType={anteType} chipDenominations={chipDenoms} allowBreaks={!isGoMode} />
             </div>
           );
         })()}
         {!isCash && (() => {
-          const sched = schedule || [];
+          const sched = strippedSchedule;
           let playMinutes = 0;
           let breakMinutes = 0;
           let levelCount = 0;
@@ -1506,15 +1523,17 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                       <span className="text-white font-mono font-bold text-sm">{fmtDuration(playMinutes)}</span>
                       <span className="text-slate-500 text-[10px] block mt-0.5">({levelCount} levels)</span>
                     </div>
+                    {!isGoMode && (
                     <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
                       <span className="text-amber-400 text-[10px] uppercase font-bold block mb-0.5">On Break</span>
                       <span className="text-amber-300 font-mono font-bold text-sm">{fmtDuration(breakMinutes)}</span>
                       <span className="text-slate-500 text-[10px] block mt-0.5">total break time</span>
                     </div>
+                    )}
                     <div className="col-span-2 sm:col-span-1 rounded-lg bg-emerald-950/40 border border-emerald-600/40 p-2.5">
                       <span className="text-emerald-400 text-[10px] uppercase font-bold block mb-0.5">Total Time</span>
                       <span className="text-emerald-200 font-mono font-black text-sm">{fmtDuration(totalMinutes)}</span>
-                      <span className="text-emerald-400/60 text-[10px] block mt-0.5">play + breaks</span>
+                      <span className="text-emerald-400/60 text-[10px] block mt-0.5">{isGoMode ? 'play time' : 'play + breaks'}</span>
                     </div>
                   </>
                 ) : (
@@ -1528,11 +1547,13 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                       </span>
                       <span className="text-slate-500 text-[10px] block mt-0.5">({levelCount} levels × {defVal} {levelMethod})</span>
                     </div>
+                    {!isGoMode && (
                     <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
                       <span className="text-amber-400 text-[10px] uppercase font-bold block mb-0.5">On Break</span>
                       <span className="text-amber-300 font-mono font-bold text-sm">{fmtDuration(breakMinutes)}</span>
                       <span className="text-slate-500 text-[10px] block mt-0.5">total break time</span>
                     </div>
+                    )}
                   </>
                 )}
               </div>

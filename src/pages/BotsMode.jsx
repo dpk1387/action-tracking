@@ -519,8 +519,10 @@ export default function BotsMode() {
       ? `Bots to seat: ${botCount}. Leave every box blank for a random mix.`
       : styleFill === 'invalid'
         ? 'Use a number like 2, or a range like 2-3.'
-        : `${styleFill.min}-${styleFill.max} bots covered · ${botCount} needed.`;
-    const fillOk = styleFill === 'blank' || (styleFill !== 'invalid' && botCount >= styleFill.min && botCount <= styleFill.max);
+        : styleFill.min > botCount
+          ? `Needs at least ${styleFill.min} bots, but the table has ${botCount}.`
+          : `${styleFill.min}-${styleFill.max} picked · ${botCount - styleFill.max > 0 ? `${botCount - styleFill.max} random` : 'rest filled by ranges'}.`;
+    const fillOk = styleFill === 'blank' || (styleFill !== 'invalid' && styleFill.min <= botCount);
     return (
       <div className="min-h-screen bg-[#121417] text-white p-4 sm:p-6">
         <div className="w-full max-w-xl mx-auto space-y-4">
@@ -640,7 +642,7 @@ export default function BotsMode() {
                 ))}
               </div>
               <p className={`text-[11px] mt-2 ${fillOk ? 'text-slate-500' : 'text-rose-300'}`}>{fillText}</p>
-              <p className="text-[11px] text-slate-500">Enter an exact count (2) or a range (2-3) per style. Everything left blank counts as zero.</p>
+              <p className="text-[11px] text-slate-500">Enter an exact count (2) or a range (2-3) per style; any seats you leave uncovered are filled with random players.</p>
             </div>
           </div>
 

@@ -49,7 +49,7 @@ import {
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
 import { suggestNextBlinds } from '@/lib/tournamentStructures';
-import { advanceToNextHand, initLevelTimer, advanceTimerSegment, pauseLevelTimer, resumeLevelTimer, levelTimerState, formatTimer, formatTimerLabel, nudgeLevelTimer, scheduledLevelNumber } from '@/lib/levelTimer';
+import { advanceToNextHand, initLevelTimer, advanceTimerSegment, removeScheduleStops, pauseLevelTimer, resumeLevelTimer, levelTimerState, formatTimer, formatTimerLabel, nudgeLevelTimer, scheduledLevelNumber } from '@/lib/levelTimer';
 
 // GO Mode pineapple games: flag the hand once the discard step is due. For Pineapple the
 // flop stays face down until the discards are in; Crazy/Lazy Pineapple have a visible board.
@@ -393,6 +393,15 @@ export default function PokerTracker() {
     }, 1000);
     return () => clearInterval(id);
   }, [hand]);
+
+  // GO mode is played online, so scheduled breaks and chip races are skipped.
+  useEffect(() => {
+    if (!isGoMode || !hand) return;
+    setHand((prev) => {
+      const next = removeScheduleStops(prev);
+      return next === prev ? prev : next;
+    });
+  }, [isGoMode, hand]);
 
   useEffect(() => {
     if (!hand || !hand.pendingRace) return;

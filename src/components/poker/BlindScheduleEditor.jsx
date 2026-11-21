@@ -4,7 +4,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { suggestAnte, formatKM, parseAmount } from '@/lib/poker';
 import { suggestNextBlinds } from '@/lib/tournamentStructures';
 
-export default function BlindScheduleEditor({ schedule, onChange, anteType, chipDenominations }) {
+export default function BlindScheduleEditor({ schedule, onChange, anteType, chipDenominations, allowBreaks = true }) {
   const isBBA = anteType === 'bba';
   const isBtnAnte = anteType === 'btn_ante';
   const isSBHalfAnte = anteType === 'sb_half_ante';
@@ -292,8 +292,12 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
       </DragDropContext>
       <div className="mt-2 flex items-center gap-3">
         <button onClick={addLevel} className="flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200 cursor-pointer"><Plus size={14} /> Add level</button>
-        <button onClick={addBreak} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 cursor-pointer"><Plus size={14} /> Add break</button>
-        <button onClick={addColorUp} className="flex items-center gap-1 text-xs text-purple-300 hover:text-purple-200 cursor-pointer"><Plus size={14} /> Add color up</button>
+        {allowBreaks && (
+          <>
+            <button onClick={addBreak} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200 cursor-pointer"><Plus size={14} /> Add break</button>
+            <button onClick={addColorUp} className="flex items-center gap-1 text-xs text-purple-300 hover:text-purple-200 cursor-pointer"><Plus size={14} /> Add color up</button>
+          </>
+        )}
       </div>
     </div>
   );
