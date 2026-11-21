@@ -129,6 +129,8 @@ export default function GoModeView({
   onPauseTimer,
   onResumeTimer,
   onNudgeTimer,
+  onResumeFromBreak,
+  onRunChipRace,
 }) {
   const [peekCards, setPeekCards] = useState(false);
   const [showHandHistoryModal, setShowHandHistoryModal] = useState(false);
@@ -201,7 +203,8 @@ export default function GoModeView({
 
   const minRaise = (hand?.currentBet || 0) + (hand?.lastRaiseAmount || hand?.bigBlind || 10);
   const maxRaise = cp ? cp.stack + cp.currentBet : 0;
-
+  const breakItem = hand?.inBreak ? ((hand.blindSchedule || [])[hand.tLevel] || null) : null;
+  const hasBreakRace = !!(breakItem && ((breakItem.type === 'color_up') || (breakItem.race && Number(breakItem.race.retired) > 0 && Number(breakItem.race.replacement) > 0)));
   // Accurate pot size
   const potTotal = players.reduce((s, p) => s + (p.totalBet || 0), 0);
 
@@ -1175,7 +1178,35 @@ export default function GoModeView({
       </div>
 
       {/* BOTTOM ACTION AREA */}
-      {isAllInSituation ? (
+      {hand.inBreak ? (
+        <div className="bg-[#2a2414] border border-amber-600/60 p-4 rounded-2xl shadow-2xl space-y-3 text-center">
+          <div className="text-xs font-black uppercase tracking-widest text-amber-400">
+            {hasBreakRace ? 'Chip race break' : 'Tournament break'}
+          </div>
+          <div className="text-3xl font-mono font-black text-amber-200">{formatTimer(levelTimerState(hand, now))}</div>
+          <div className="text-xs text-amber-200/70">
+            {hand.blindsPosted === false ? 'Blinds post when play resumes.' : 'Blinds update when the next hand starts.'}
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {hasBreakRace && onRunChipRace && (
+              <button
+                type="button"
+                onClick={onRunChipRace}
+                className="px-4 py-3 rounded-xl bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white font-medium text-sm cursor-pointer"
+              >
+                Run chip race
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onResumeFromBreak?.()}
+              className="px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:brightness-110 text-black font-black text-base cursor-pointer shadow-xl"
+            >
+              Resume play →
+            </button>
+          </div>
+        </div>
+      ) : isAllInSituation ? (
         /* In an all-in: deal streets manually until river; on/post river show "Deal Next Hand" */
         <div className="bg-[#141a24] p-3 rounded-2xl border border-slate-700/80 shadow-2xl">
           {isShowdownComplete ? (
@@ -1312,7 +1343,7 @@ export default function GoModeView({
       ) : null}
 
       {/* TURN HANDOFF: hold 0.9s to open the acting player's controls */}
-      {needsTurnAck && cp && !isAllInSituation && (
+      {needsTurnAck && cp && !isAllInSituation && !hand.inBreak && (
         <div className="fixed inset-0 z-50 bg-[#0d1017]/95 backdrop-blur-md flex items-start pt-10 sm:pt-14 justify-center p-5 animate-fade-in select-none">
           <div className="bg-[#181d26] border-2 border-amber-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-5 shadow-2xl">
             <div className="w-16 h-16 rounded-full bg-amber-500/20 border-2 border-amber-500 text-amber-400 flex items-center justify-center mx-auto shadow-inner">
