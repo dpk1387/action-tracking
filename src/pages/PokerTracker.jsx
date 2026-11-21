@@ -50,6 +50,7 @@ import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
 import { suggestNextBlinds } from '@/lib/tournamentStructures';
 import { advanceToNextHand, initLevelTimer, advanceTimerSegment, removeScheduleStops, pauseLevelTimer, resumeLevelTimer, levelTimerState, formatTimer, formatTimerLabel, nudgeLevelTimer, scheduledLevelNumber } from '@/lib/levelTimer';
+import { minChipForBlinds, roundHandToMinChip } from '@/lib/tableRules';
 
 // GO Mode pineapple games: flag the hand once the discard step is due. For Pineapple the
 // flop stays face down until the discards are in; Crazy/Lazy Pineapple have a visible board.
@@ -213,6 +214,21 @@ export default function PokerTracker() {
       return prev;
     });
   }, [hand?.blindLevel, hand?.tLevel, hand?.smallBlind, hand?.chipDenominations, isGoMode]);
+
+  // GO runs without scheduled color-ups, so a level that brings a bigger minimum
+  // chip rounds every bet to it and tops stacks up the way a live color-up does.
+  const goMinChipRef = useRef(null);
+  useEffect(() => {
+    if (!isGoMode || !hand) {
+      goMinChipRef.current = null;
+      return;
+    }
+    const chip = minChipForBlinds(hand.bigBlind);
+    const prev = goMinChipRef.current;
+    goMinChipRef.current = chip;
+    if (prev == null || prev === chip) return;
+    setHand((h) => (h ? roundHandToMinChip(h, chip) : h));
+  }, [hand?.bigBlind, isGoMode]);
 
   // Action Clock System
   const [shotClockEnabled, setShotClockEnabled] = useState(true);

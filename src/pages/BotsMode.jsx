@@ -4,6 +4,15 @@ import { History, Layers, ListTree, LogOut, Settings, SkipForward, Trophy } from
 import { applyAction, awardPots, calcEquity, computePots, dealNextStreet, fillBoard, startHand, tryAutoWinners } from '@/lib/poker';
 import { generateGoDeck } from '@/lib/goMode';
 import {
+  GAME_TYPES,
+  betShortcuts,
+  displayBet,
+  displayStack,
+  minChipForBlinds,
+  roundToNearest,
+  roundUpTo,
+} from '@/lib/tableRules';
+import {
   BOT_DIFFICULTIES,
   BOT_SPEEDS,
   BOT_STYLES,
@@ -71,6 +80,7 @@ function formatChips(n, unit, bigBlind) {
 const STYLE_CHOICES = BOT_STYLES.filter((s) => s.id !== 'random');
 
 const DEFAULT_SETUP = {
+  gameType: 'online',
   difficulty: 'medium',
   seats: 6,
   stackBb: 100,
@@ -373,7 +383,14 @@ export default function BotsMode() {
         styleId: seat.styleId,
         difficulty: game.difficulty,
       });
-      let res = applyAction(hand, hand.currentPlayer, action.type, action.amount);
+      let amount = action.amount;
+      if (amount != null && game.gameType === 'live') {
+        const chip = minChipForBlinds(hand.bigBlind);
+        const minTo = (hand.currentBet || 0) + Math.max(hand.lastRaiseAmount || hand.bigBlind, hand.bigBlind);
+        const maxTo = active.currentBet + active.stack;
+        amount = Math.min(maxTo, Math.max(roundUpTo(minTo, chip), roundToNearest(amount, chip)));
+      }
+      let res = applyAction(hand, hand.currentPlayer, action.type, amount);
       if (res && res.error) res = applyAction(hand, hand.currentPlayer, action.type === 'raise' ? 'call' : 'check');
       if (res && res.error) res = applyAction(hand, hand.currentPlayer, 'fold');
       if (res && !res.error) setHand(res);
@@ -388,6 +405,38 @@ export default function BotsMode() {
   const toCall = hero ? Math.max(0, (hand.currentBet || 0) - (hero.currentBet || 0)) : 0;
   const minRaiseTo = hand ? (hand.currentBet || 0) + Math.max(hand.lastRaiseAmount || hand.bigBlind, hand.bigBlind) : 0;
   const maxRaiseTo = hero ? hero.currentBet + hero.stack : 0;
+
+  // Online vs live: the live table hides the pot, rounds every bet to the
+  // smallest chip in play and shows stacks the way a live player would see them.
+  const bigBlind = hand?.bigBlind || 1;
+  const gameType = game?.gameType || setup?.gameType || 'online';
+  const isLive = gameType === 'live';
+  const minChip = minChipForBlinds(bigBlind);
+  const roundBet = useCallback((v) => {
+    const n = Math.round(Number(v) || 0);
+    if (!isLive) return n;
+    // Bets must be payable in real chips and never below the legal raise.
+    return Math.max(roundUpTo(minRaiseTo, minChip), roundToNearest(n, minChip));
+  }, [isLive, minChip, minRaiseTo]);
+  const betLabel = useCallback((v) => displayBet({ value: v, unit, bb: bigBlind }), [unit, bigBlind]);
+  const stackLabel = useCallback((p, seat) => displayStack({
+    value: p.stack,
+    unit,
+    bb: bigBlind,
+    gameType,
+    isHero: !!seat?.isHero,
+    allIn: p.status === 'allin',
+    minChip,
+  }), [unit, bigBlind, gameType, minChip]);
+  const shortcuts = useMemo(() => betShortcuts({
+    street: hand?.street || 'preflop',
+    currentBet: hand?.currentBet || 0,
+    bigBlind,
+    pot,
+    minRaiseTo,
+    maxRaiseTo,
+    minChip: isLive ? minChip : 1,
+  }), [hand?.street, hand?.currentBet, bigBlind, pot, minRaiseTo, maxRaiseTo, minChip, isLive]);
 
   const allInSpot = !!hand && hand.players.some((p) => p.status === 'allin');
   useEffect(() => {
@@ -440,9 +489,10 @@ export default function BotsMode() {
   };
 
   const submitRaise = (value) => {
-    const amount = Math.round(Number(value) || 0);
+    const amount = roundBet(value);
     if (!amount) return;
-    act(toCall > 0 ? 'raise' : 'bet', Math.min(Math.max(amount, minRaiseTo), maxRaiseTo));
+    const capped = Math.min(amount, maxRaiseTo);
+    act(toCall > 0 ? 'raise' : 'bet', Math.max(capped, Math.min(maxRaiseTo, minRaiseTo)));
   };
 
   // Shortcuts: F fold, C call/check, R bet/raise, M min bet/raise, Shift+A all in,
@@ -553,6 +603,24 @@ export default function BotsMode() {
               </div>
             </div>
 
+            <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl sm:col-span-2">
+              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Game type</div>
+              <div className="grid grid-cols-2 gap-2">
+                {GAME_TYPES.map((gt) => (
+                  <button
+                    key={gt.id}
+                    type="button"
+                    onClick={() => setSetupDraft((s2) => ({ ...s2, gameType: gt.id }))}
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold border cursor-pointer text-left ${(setupDraft.gameType || 'online') === gt.id ? 'bg-emerald-600/20 border-emerald-500 text-emerald-200' : 'bg-[#1d2430] border-slate-700/60 text-slate-200 hover:bg-[#283244]'}`}
+                  >
+                    <div>{gt.label}</div>
+                    <div className="text-[10px] font-normal text-slate-400 leading-tight mt-0.5">{gt.desc}</div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-2">Live hides the pot, rounds stacks and bets to real chips, and starts bets at the level’s smallest chip.</p>
+            </div>
+
             <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl">
               <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Seats ({setupDraft.seats}-max)</div>
               <input
@@ -661,11 +729,12 @@ export default function BotsMode() {
   }
 
   return (
-    <div className="min-h-screen bg-[#121417] text-white pb-40">
-      <div className="w-full max-w-xl mx-auto flex flex-col gap-3 p-2 sm:p-4">
+    <div className="h-[100dvh] min-h-[560px] bg-[#121417] text-white flex flex-col overflow-hidden">
+      <div className="w-full max-w-xl mx-auto flex-1 min-h-0 flex flex-col gap-2 p-2 sm:p-3">
         <div className="flex flex-wrap items-center justify-between gap-2 bg-[#151921] border border-slate-800 rounded-2xl px-3.5 py-2.5 shadow-xl">
           <div className="flex items-center gap-3">
             <span className="text-xs font-black uppercase tracking-widest text-emerald-400">Play Bots · {BOT_DIFFICULTIES.find((d) => d.id === setup.difficulty)?.label}</span>
+            <span data-testid="game-type" className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{isLive ? 'Live' : 'Online'}</span>
             <span className="text-xs text-slate-400">Level {game.levelIndex + 1}</span>
             <span className="text-xs font-mono text-slate-300">{levelLabel}</span>
             <span className="text-xs text-slate-500">Hand {game.handsThisLevel}/{game.handsTarget}</span>
@@ -696,12 +765,16 @@ export default function BotsMode() {
           </div>
         ) : (
           <>
-            <div className="relative w-full aspect-[4/3] min-h-[310px] max-h-[470px] bg-[#11141b] border border-slate-800/90 rounded-2xl shadow-md overflow-hidden">
+            <div data-testid="table" className="relative w-full flex-1 min-h-[280px] bg-[#11141b] border border-slate-800/90 rounded-2xl shadow-md overflow-hidden">
               <div className="absolute inset-[11%] rounded-[50%] border border-emerald-900/60 bg-[radial-gradient(ellipse_at_center,_#17332b_0%,_#0d1a17_75%)] shadow-[inset_0_0_40px_rgba(0,0,0,0.55)]" />
 
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 pointer-events-none px-12">
-                <div className="text-[10px] uppercase tracking-widest font-bold text-emerald-200/60">Pot</div>
-                <div className="text-xl sm:text-2xl font-black text-white font-mono leading-tight">{formatChips(pot, unit, hand?.bigBlind)}</div>
+                {!isLive && (
+                  <>
+                    <div className="text-[10px] uppercase tracking-widest font-bold text-emerald-200/60">Pot</div>
+                    <div className="text-xl sm:text-2xl font-black text-white font-mono leading-tight">{formatChips(pot, unit, hand?.bigBlind)}</div>
+                  </>
+                )}
                 <div data-testid="board" className="flex justify-center gap-1 mt-1 min-h-[40px] items-center">
                   {(hand?.communityCards || []).map((c, i) => (
                     <CardChip key={i} card={c && c.hidden ? null : c} fourColor={fourColor} size="sm" />
@@ -728,14 +801,14 @@ export default function BotsMode() {
                       {showStyle && seat?.styleId && (
                         <div data-testid={`style-${p.seat}`} className="text-[9px] text-slate-500 leading-tight">{STYLE_SHORT[seat.styleId] || seat.styleId}</div>
                       )}
-                      <div className="text-[11px] font-mono text-emerald-300 leading-tight">{formatChips(p.stack, unit, hand.bigBlind)}</div>
+                      <div data-testid={`stack-${p.seat}`} className="text-[11px] font-mono text-emerald-300 leading-tight">{stackLabel(p, seat)}</div>
                       <div className="flex items-center justify-center gap-0.5 min-h-[32px] mt-0.5">
                         {reveal
                           ? sortHole(holes[p.id]).map((c, i) => <CardChip key={i} card={c} fourColor={fourColor} size="sm" />)
                           : <span className="text-[10px] text-slate-600">—</span>}
                       </div>
                       <div className="flex items-center justify-center gap-1 text-[9px] min-h-[12px]">
-                        {p.currentBet > 0 && <span className="font-mono text-amber-300">{formatChips(p.currentBet, unit, hand.bigBlind)}</span>}
+                        {p.currentBet > 0 && <span className="font-mono text-amber-300">{betLabel(p.currentBet)}</span>}
                         {equity && equity[p.id] != null && <span className="font-mono text-sky-300">{equity[p.id].toFixed(0)}%</span>}
                       </div>
                       {p.lastAction?.type && <div className="text-[9px] text-slate-500 leading-tight">{ACTION_LABEL[p.lastAction.type] || p.lastAction.type}</div>}
@@ -745,11 +818,11 @@ export default function BotsMode() {
               })}
             </div>
 
-            <div className="fixed bottom-0 left-0 right-0 bg-[#0f1319]/95 border-t border-slate-800 backdrop-blur">
-              <div className="w-full max-w-xl mx-auto p-2.5 sm:p-3 space-y-2">
+            <div className="shrink-0 bg-[#0f1319]/95 border border-slate-800 rounded-2xl shadow-xl">
+              <div className="w-full p-2 sm:p-2.5 space-y-2">
                 {hand?.phase === 'awarded' ? (
                   <div className="text-center text-sm font-bold text-amber-300">
-                    {[...new Set(hand.winners.map((w) => hand.players.find((p) => p.id === w.playerId)?.name))].join(', ')} wins {formatChips(hand.winners.reduce((s, w) => s + (w.amount || 0), 0), unit, hand.bigBlind)}
+                    {[...new Set(hand.winners.map((w) => hand.players.find((p) => p.id === w.playerId)?.name))].join(', ')} wins {betLabel(hand.winners.reduce((s, w) => s + (w.amount || 0), 0))}
                   </div>
                 ) : isHeroTurn ? (
                   <>
@@ -759,12 +832,12 @@ export default function BotsMode() {
                       )}
                       {toCall > 0 ? (
                         <button type="button" data-action="call" onClick={() => act('call')} title="Call (C)" className="flex-1 py-3 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-emerald-300 font-medium text-sm cursor-pointer">
-                          Call {formatChips(Math.min(toCall, hero.stack), unit, hand.bigBlind)}
+                          Call {betLabel(Math.min(toCall, hero.stack))}
                         </button>
                       ) : (
                         <button type="button" data-action="check" onClick={() => act('check')} title="Check (C)" className="flex-1 py-3 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-emerald-300 font-medium text-sm cursor-pointer">Check</button>
                       )}
-                      <button type="button" data-action="allin" onClick={() => act(toCall > 0 ? 'raise' : 'bet', maxRaiseTo)} title="All in (Shift + A)" className="flex-1 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-black font-black text-sm cursor-pointer">
+                      <button type="button" data-action="allin" onClick={() => act(toCall > 0 ? 'raise' : 'bet', maxRaiseTo)} title="All in (Shift + A)" className="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 border border-rose-400/60 text-white font-bold text-sm cursor-pointer transition-colors shadow-lg shadow-rose-950/40">
                         All in
                       </button>
                     </div>
@@ -782,16 +855,20 @@ export default function BotsMode() {
                       <button type="button" onClick={() => submitRaise(raiseTo)} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold cursor-pointer">
                         {toCall > 0 ? 'Raise to' : 'Bet'}
                       </button>
-                      {[0.5, 0.75, 1].map((f) => (
-                        <button
-                          key={f}
-                          type="button"
-                          onClick={() => submitRaise(Math.round((hand.currentBet || 0) + Math.max(pot * f, minRaiseTo - (hand.currentBet || 0))))}
-                          className="px-3 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-[11px] font-semibold cursor-pointer"
-                        >
-                          {f === 0.5 ? '½ pot' : f === 0.75 ? '¾ pot' : 'Pot'}
-                        </button>
-                      ))}
+                      <div className="flex flex-1 flex-wrap items-center gap-1.5">
+                        {shortcuts.map((sc) => (
+                          <button
+                            key={sc.id}
+                            type="button"
+                            data-shortcut={sc.id}
+                            onClick={() => submitRaise(sc.amount)}
+                            title={`${betLabel(sc.amount)}`}
+                            className="px-2.5 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-[11px] font-semibold cursor-pointer"
+                          >
+                            {sc.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </>
                 ) : (
