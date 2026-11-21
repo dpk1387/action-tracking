@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Settings, X, KeyRound, ShieldCheck } from 'lucide-react';
+import { Settings, X, KeyRound, ShieldCheck, Timer } from 'lucide-react';
 
 const shell = 'fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4';
 const card = 'bg-[#181d24] border border-slate-700/80 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-fade-in';
@@ -49,6 +49,7 @@ function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins
   const unit = goPlayerPrefs.displayUnit || 'chips';
   const colors = goPlayerPrefs.suitColors || 2;
   const pin = String(goPlayerPrefs.pin || '');
+  const cardTimeout = Number(goPlayerPrefs.cardTimeout ?? 10);
   const [pinDraft, setPinDraft] = useState('');
   const [pinMsg, setPinMsg] = useState('');
 
@@ -104,6 +105,26 @@ function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins
         <div className={rowBorder}>
           <div>
             <div className="font-bold text-white flex items-center gap-1.5">
+              <Timer size={13} className="text-amber-400" />
+              Hide Cards After
+            </div>
+            <div className="text-[11px] text-slate-400">Cards re-hide on their own so they are not left face up</div>
+          </div>
+          <select
+            value={cardTimeout}
+            onChange={(e) => onUpdateGoPlayerPrefs({ cardTimeout: Number(e.target.value) })}
+            className="bg-[#181d24] border border-slate-700 rounded-lg px-2 py-1.5 text-white text-xs font-bold cursor-pointer focus:outline-none focus:border-amber-400"
+          >
+            <option value={5}>5 sec</option>
+            <option value={10}>10 sec</option>
+            <option value={30}>30 sec</option>
+            <option value={0}>Never</option>
+          </select>
+        </div>
+
+        <div className={rowBorder}>
+          <div>
+            <div className="font-bold text-white flex items-center gap-1.5">
               <KeyRound size={13} className="text-amber-400" />
               Hole Card PIN
             </div>
@@ -147,7 +168,7 @@ function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins
 
         <div className="flex items-start gap-2 rounded-xl bg-[#12161c] border border-slate-800 px-3 py-2 text-[11px] text-slate-400 leading-relaxed">
           <ShieldCheck size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-          Every turn starts behind a hold-to-open screen, so a stray tap cannot see or act for you.
+          Every turn starts behind a hold-to-open screen, so a stray tap cannot see or act for you. Three wrong PINs lock the keypad for 30 seconds and reshuffle the digits.
         </div>
       </div>
     </ModalFrame>

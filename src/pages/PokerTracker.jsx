@@ -52,6 +52,7 @@ import { suggestAnte } from '@/lib/poker';
 import { suggestNextBlinds } from '@/lib/tournamentStructures';
 import { advanceToNextHand, initLevelTimer, advanceTimerSegment, removeScheduleStops, pauseLevelTimer, resumeLevelTimer, levelTimerState, formatTimer, formatTimerLabel, nudgeLevelTimer, scheduledLevelNumber } from '@/lib/levelTimer';
 import { minChipForBlinds, roundHandToMinChip } from '@/lib/tableRules';
+import { buildBustRecovery, recoveryChips } from '@/lib/bustRecovery';
 
 // GO Mode pineapple games: flag the hand once the discard step is due. For Pineapple the
 // flop stays face down until the discards are in; Crazy/Lazy Pineapple have a visible board.
@@ -1195,11 +1196,13 @@ export default function PokerTracker() {
     if (!rec?.appliedHand) return;
     const base = rec.baseHand || {};
     const isRebuy = kind === 'rebuy';
-    const stack = Number(isRebuy ? base.rebuyChips : base.startingStack) || 0;
+    const offer = rec.plan?.offers?.find((o) => o.elim?.seat === elim.seat && o.elim?.name === elim.name);
+    if (offer && !offer.allowed) return;
+    const stack = recoveryChips(base, offer || { kind, chips: isRebuy ? base.rebuyChips : base.startingStack });
     const pending = {
       name: elim.name,
       seat: elim.seat,
-      stack: stack > 0 ? stack : (Number(base.bigBlind) || 1) * 100,
+      stack,
       reentries: isRebuy ? (Number(elim.reentries) || 0) : (Number(elim.reentries) || 0) + 1,
       rebuys: isRebuy ? (Number(elim.rebuys) || 0) + 1 : (Number(elim.rebuys) || 0),
     };
@@ -1307,16 +1310,15 @@ export default function PokerTracker() {
     setHistory([]);
     if (res.gameOver) {
       const winner = res.remaining[0];
-      const busted = (res.eliminatedPlayers || []).filter(Boolean);
-      const format = currentHand?.mode === 'tournament' ? currentHand?.tournamentFormat : null;
-      const maxRe = Number(currentHand?.maxReEntries) || 0;
-      const canContinue = currentHand?.mode === 'tournament' && busted.length > 0 && (
-        (format === 'reentry' && busted.some((e) => maxRe === 0 || (Number(e.reentries) || 0) < maxRe))
-        || (format === 'rebuy' && Number(currentHand?.rebuyChips) > 0)
-      );
-      if (canContinue) {
-        // Busted players may still buy back in; keep the session alive behind the prompt.
-        setBustRecovery({ winner, busted, baseHand: currentHand, appliedHand: res.appliedHand });
+      const busted = (res.eliminatedPlayers || []).filter(Boolean).map((e) => (
+        // Cash games buy the busted player back in for their own table buy-in.
+        currentHand?.mode === 'cash' ? { ...e, chips: Number(frozenStacks?.[e.seat]) || 0 } : e
+      ));
+      const plan = buildBustRecovery(currentHand, busted);
+      if (plan.anyAllowed) {
+        // Busted players may still buy back in (cash games, re-entry or allowed rebuys);
+        // keep the session alive behind the prompt so heads-up play can continue.
+        setBustRecovery({ winner, busted, baseHand: currentHand, appliedHand: res.appliedHand, plan });
       } else {
         endTournament(winner, currentHand);
       }
