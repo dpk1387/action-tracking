@@ -477,7 +477,7 @@ export default function GoModeView({
     setTurnVerified(true);
   };
 
-  // Hold-to-confirm: the handoff button must be held for 0.9s so a stray tap cannot open a turn.
+  // Hold-to-confirm: the handoff button must be held for 0.5s so a stray tap cannot open a turn.
   const holdTimerRef = useRef(null);
   const holdStartRef = useRef(0);
   const cancelHold = () => {
@@ -494,7 +494,7 @@ export default function GoModeView({
     if (holdTimerRef.current) return;
     holdStartRef.current = Date.now();
     holdTimerRef.current = setInterval(() => {
-      const pct = Math.min(100, ((Date.now() - holdStartRef.current) / 900) * 100);
+      const pct = Math.min(100, ((Date.now() - holdStartRef.current) / 500) * 100);
       setHoldProgress(pct);
       if (pct >= 100) {
         cancelHold();
@@ -531,6 +531,13 @@ export default function GoModeView({
         if (e.key === 'Enter' && e.target === raiseInputRef.current) {
           e.preventDefault();
           handleExecuteRaise();
+        } else if (e.target === raiseInputRef.current && /^[+\-=]$/.test(e.key)) {
+          // +/- resize the bet by half a big blind even while the box has focus.
+          e.preventDefault();
+          const step = Math.max(1, Math.round((hand?.bigBlind || 0) / 2));
+          const base = parseBetShorthand(raiseInput) || minRaise;
+          const next = e.key === '-' ? base - step : base + step;
+          setRaiseInput(String(Math.min(Math.max(next, minRaise), effectiveMaxRaise || next)));
         }
         return;
       }
@@ -577,6 +584,14 @@ export default function GoModeView({
         e.preventDefault();
         setRaiseInput(String(Math.min(minRaise, effectiveMaxRaise || minRaise)));
         raiseInputRef.current?.focus();
+      } else if (key === '+' || key === '=' || key === '-') {
+        // Bet size steps by half a big blind, clamped to the legal raise range.
+        e.preventDefault();
+        const step = Math.max(1, Math.round((hand?.bigBlind || 0) / 2));
+        const base = parseBetShorthand(raiseInput) || minRaise;
+        const next = key === '-' ? base - step : base + step;
+        const cap = effectiveMaxRaise || next;
+        setRaiseInput(String(Math.min(Math.max(next, minRaise), cap)));
       }
     };
 
@@ -1342,7 +1357,7 @@ export default function GoModeView({
         </div>
       ) : null}
 
-      {/* TURN HANDOFF: hold 0.9s to open the acting player's controls */}
+      {/* TURN HANDOFF: hold 0.5s to open the acting player's controls */}
       {needsTurnAck && cp && !isAllInSituation && !hand.inBreak && (
         <div className="fixed inset-0 z-50 bg-[#0d1017]/95 backdrop-blur-md flex items-start pt-10 sm:pt-14 justify-center p-5 animate-fade-in select-none">
           <div className="bg-[#181d26] border-2 border-amber-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-5 shadow-2xl">

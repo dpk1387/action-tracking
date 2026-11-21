@@ -70,6 +70,7 @@ export default function BotsMode() {
   const [flash, setFlash] = useState(null);
 
   const deckRef = useRef([]);
+  const raiseInputRef = useRef(null);
   const gameRef = useRef(null);
   const handRef = useRef(null);
 
@@ -351,6 +352,58 @@ export default function BotsMode() {
     act(toCall > 0 ? 'raise' : 'bet', Math.min(Math.max(amount, minRaiseTo), maxRaiseTo));
   };
 
+  // Shortcuts: F fold, C call/check, R bet/raise, M min bet/raise, Shift+A all in,
+  // +/- move the bet size by half a big blind inside [min raise, all in].
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!hand || !isHeroTurn || e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = e.target?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      if (e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+        e.preventDefault();
+        act(toCall > 0 ? 'raise' : 'bet', maxRaiseTo);
+        return;
+      }
+      if (typing && /^[+\-=]$/.test(e.key)) {
+        e.preventDefault();
+        const step = Math.max(1, Math.round(hand.bigBlind / 2));
+        const base = Number(e.target.value) || minRaiseTo;
+        const next = e.key === '-' ? base - step : base + step;
+        setRaiseTo(String(Math.min(Math.max(next, minRaiseTo), maxRaiseTo)));
+        return;
+      }
+      // The raise box is a number field, so letter shortcuts still work while it
+      // has focus; blur it first so the typed text is not captured again.
+      if (typing && !/^[acfmr]$/.test(e.key.toLowerCase())) return;
+      if (typing) e.target.blur();
+      const key = e.key.toLowerCase();
+      if (key === 'f') {
+        e.preventDefault();
+        act('fold');
+      } else if (key === 'c') {
+        e.preventDefault();
+        act(toCall > 0 ? 'call' : 'check');
+      } else if (key === 'r') {
+        e.preventDefault();
+        setRaiseTo(String(Math.min(Math.max(Math.round((hand.currentBet || 0) + Math.max(pot * 0.5, minRaiseTo - (hand.currentBet || 0))), minRaiseTo), maxRaiseTo)));
+        raiseInputRef.current?.focus();
+        raiseInputRef.current?.select();
+      } else if (key === 'm') {
+        e.preventDefault();
+        setRaiseTo(String(Math.min(minRaiseTo, maxRaiseTo)));
+        raiseInputRef.current?.focus();
+      } else if (key === '+' || key === '=' || key === '-') {
+        e.preventDefault();
+        const step = Math.max(1, Math.round(hand.bigBlind / 2));
+        const base = Number(raiseTo) || minRaiseTo;
+        const next = key === '-' ? base - step : base + step;
+        setRaiseTo(String(Math.min(Math.max(next, minRaiseTo), maxRaiseTo)));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hand, isHeroTurn, toCall, pot, minRaiseTo, maxRaiseTo, raiseTo]);
+
   const levelLabel = formatBlindLevel(levels, game?.levelIndex || 0);
 
   if (!setup) {
@@ -544,24 +597,26 @@ export default function BotsMode() {
                 ) : isHeroTurn ? (
                   <>
                     <div className="flex gap-2">
-                      <button type="button" onClick={() => act('fold')} className="flex-1 py-3 rounded-xl bg-rose-900/60 hover:bg-rose-800 text-white font-bold text-sm cursor-pointer">Fold</button>
+                      <button type="button" onClick={() => act('fold')} title="Fold (F)" className="flex-1 py-3 rounded-xl bg-rose-900/60 hover:bg-rose-800 text-white font-bold text-sm cursor-pointer">Fold</button>
                       {toCall > 0 ? (
-                        <button type="button" onClick={() => act('call')} className="flex-1 py-3 rounded-xl bg-emerald-800 hover:bg-emerald-700 text-white font-medium text-sm cursor-pointer">
+                        <button type="button" onClick={() => act('call')} title="Call (C)" className="flex-1 py-3 rounded-xl bg-emerald-800 hover:bg-emerald-700 text-white font-medium text-sm cursor-pointer">
                           Call {formatChips(Math.min(toCall, hero.stack), unit, hand.bigBlind)}
                         </button>
                       ) : (
-                        <button type="button" onClick={() => act('check')} className="flex-1 py-3 rounded-xl bg-emerald-800 hover:bg-emerald-700 text-white font-medium text-sm cursor-pointer">Check</button>
+                        <button type="button" onClick={() => act('check')} title="Check (C)" className="flex-1 py-3 rounded-xl bg-emerald-800 hover:bg-emerald-700 text-white font-medium text-sm cursor-pointer">Check</button>
                       )}
-                      <button type="button" onClick={() => act(toCall > 0 ? 'raise' : 'bet', maxRaiseTo)} className="flex-1 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-black font-black text-sm cursor-pointer">
+                      <button type="button" onClick={() => act(toCall > 0 ? 'raise' : 'bet', maxRaiseTo)} title="All in (Shift + A)" className="flex-1 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-black font-black text-sm cursor-pointer">
                         All in
                       </button>
                     </div>
                     <div className="flex gap-2 items-center">
                       <input
+                        ref={raiseInputRef}
                         type="number"
                         value={raiseTo}
                         onChange={(e) => setRaiseTo(e.target.value)}
                         placeholder={`${minRaiseTo}`}
+                        title="Bet size: M = min, R = half pot, +/- = half a big blind"
                         className="w-32 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm"
                       />
                       <button type="button" onClick={() => submitRaise(raiseTo)} className="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-xs font-bold cursor-pointer">
