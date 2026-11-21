@@ -20,21 +20,7 @@ import {
   RotateCcw,
   UserPlus,
 } from 'lucide-react';
-import {
-  money,
-  formatPotAmount,
-  formatPlayerTagAmount,
-  formatBlinds,
-  positionForSeat,
-  SUIT_SYMBOL,
-  rankDisplay,
-  suitColorClass,
-  calcEquity,
-  bettingFrozen,
-  winningHandCards,
-  effectiveHoleSize,
-  isPotLimitVariant,
-} from '@/lib/poker';
+import { bettingFrozen, calcEquity, effectiveHoleSize, formatBlinds, formatPlayerTagAmount, formatPotAmount, isPotLimitVariant, mandatoryCallBlocker, money, positionForSeat, rankDisplay, SUIT_SYMBOL, suitColorClass, winningHandCards } from '@/lib/poker';
 import { minChipForBlinds, roundToNearest } from '@/lib/tableRules';
 import {
   roundStack,
@@ -109,6 +95,10 @@ export default function GoModeView({
   onAction,
   goDiscards = {},
   onGoDiscardPick,
+  goExposed = {},
+  goExposeDone = false,
+  onGoExposePick,
+  onGoExposeConfirm,
   goHoleCards = {},
   stackRounding = 'exact',
   goPlayerPrefs = {},
@@ -199,8 +189,8 @@ export default function GoModeView({
 
   const toCall = cp ? Math.max(0, (hand?.currentBet || 0) - (cp.currentBet || 0)) : 0;
   const canCheck = toCall === 0;
-  const isMandatory3BetPreflop = hand?.street === 'preflop' && hand?.variant === 'mandatory_3bet' && !hand?.threeBetOccurred && (hand?.raiseLevel || 1) < 3;
-  const disableCall = canCheck || isMandatory3BetPreflop;
+  const mandatoryBlock = mandatoryCallBlocker(hand);
+  const disableCall = canCheck || !!mandatoryBlock;
 
   const minRaise = (hand?.currentBet || 0) + (hand?.lastRaiseAmount || hand?.bigBlind || 10);
   const maxRaise = cp ? cp.stack + cp.currentBet : 0;
@@ -825,6 +815,80 @@ export default function GoModeView({
         </div>
       )}
 
+      {/* PIRATE POKER: public exposed card per player */}
+      {hand?.variant === 'pirate_poker' && Object.keys(goExposed).length > 0 && (
+        <div className="my-2 bg-[#151921] px-3 py-2 rounded-xl border border-amber-500/50 flex items-center gap-3 overflow-x-auto" data-testid="go-exposed-strip">
+          <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 shrink-0">Exposed</span>
+          {(hand.players || []).filter((p) => p.status !== 'folded').map((p) => {
+            const card = (goHoleCards[p.id] || [])[goExposed[p.id]];
+            if (!card) return null;
+            return (
+              <span key={p.id} className="flex items-center gap-1 shrink-0 text-[11px] text-slate-300">
+                <span className="truncate max-w-[70px]">{p.name}</span>
+                <span className={`px-1 py-0.5 rounded border border-amber-300 bg-amber-50 font-black ${suitColorClass(card.suit, displaySuitColors)}`}>
+                  {rankDisplay(card.rank)}{SUIT_SYMBOL[card.suit]}
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* PIRATE POKER EXPOSE STEP */}
+      {hand?.variant === 'pirate_poker' && !goExposeDone && hand?.street === 'preflop' && hand?.phase === 'playing' && (() => {
+        const live = (hand.players || []).filter((p) => p.status !== 'folded' && (goHoleCards[p.id] || []).length >= 2);
+        if (live.length < 2) return null;
+        const ready = live.every((p) => goExposed[p.id] != null);
+        return (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 overflow-y-auto" data-testid="go-expose-step">
+            <div className="w-full max-w-md rounded-2xl border border-amber-500/50 bg-[#151921] p-4 space-y-3 my-auto shadow-2xl">
+              <div className="text-center">
+                <div className="text-amber-300 font-black text-lg uppercase tracking-wide">Pirate Poker</div>
+                <p className="text-[11px] text-slate-400 mt-0.5">Each player turns one hole card face up before the first bet.</p>
+              </div>
+              {live.map((p) => {
+                const cards = goHoleCards[p.id] || [];
+                const picked = goExposed[p.id];
+                return (
+                  <div key={p.id} className="rounded-xl bg-slate-900/70 border border-slate-700 p-2">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-slate-200 truncate">{p.name}</span>
+                      <span className={`text-[10px] font-black uppercase ${picked != null ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {picked != null ? 'Exposed' : 'Tap a card'}
+                      </span>
+                    </div>
+                    <div className="flex gap-2 justify-center">
+                      {cards.map((c, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => onGoExposePick && onGoExposePick(p.id, i)}
+                          className={`w-12 h-16 rounded-md flex flex-col items-center justify-center text-sm font-black transition-all cursor-pointer ${
+                            picked === i
+                              ? 'bg-amber-500/30 border-2 border-amber-400'
+                              : 'bg-white border-2 border-slate-300 hover:border-amber-400'
+                          } ${suitColorClass(c.suit, displaySuitColors)}`}
+                        >
+                          {rankDisplay(c.rank)}{SUIT_SYMBOL[c.suit]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => onGoExposeConfirm && onGoExposeConfirm()}
+                disabled={!ready}
+                className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-30 disabled:cursor-not-allowed text-slate-950 font-black text-xs uppercase tracking-wide cursor-pointer"
+              >
+                Start the hand
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ALL-IN SHOWDOWN TOP BANNER */}
       {isAllInSituation && (
         <div className="my-2 bg-[#151921] p-3 rounded-2xl border-2 border-amber-500/80 shadow-2xl space-y-2 animate-fade-in">
@@ -1277,7 +1341,7 @@ export default function GoModeView({
                 type="button"
                 disabled={disableCall}
                 onClick={() => submitGoAction('call')}
-                title={isMandatory3BetPreflop ? 'Mandatory 3-Bet: Cannot call or limp preflop until a 3-bet occurs.' : 'Shortcut: C'}
+                title={mandatoryBlock ? mandatoryBlock.reason : 'Shortcut: C'}
                 className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-white font-extrabold text-sm cursor-pointer transition-colors shadow-lg"
               >
                 Call {formatFullBetAmount(toCall, cur, hand, activeUnit)}{' '}

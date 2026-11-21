@@ -1,26 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Maximize2, Undo2, Clock, ArrowRight, Zap, CheckCircle2, RotateCcw } from 'lucide-react';
-import {
-  money,
-  parseAmount,
-  formatBlinds,
-  formatSessionName,
-  formatPotAmount,
-  formatPotOutcome,
-  formatBetAmount,
-  formatPlayerTagAmount,
-  bettingFrozen,
-  hasSoleDeepestStack,
-  effectiveHoleSize,
-  holeCardsComplete,
-  STREET_LABEL,
-  potTotal,
-  RANKS,
-  SUITS,
-  evaluateWinners,
-  calculateAllInOuts,
-  positionForSeat,
-} from '@/lib/poker';
+import { bettingFrozen, calculateAllInOuts, effectiveHoleSize, evaluateWinners, formatBetAmount, formatBlinds, formatPlayerTagAmount, formatPotAmount, formatPotOutcome, formatSessionName, hasSoleDeepestStack, holeCardsComplete, mandatoryCallBlocker, money, parseAmount, positionForSeat, potTotal, RANKS, STREET_LABEL, SUITS } from '@/lib/poker';
 import {
   levelTimerState,
   formatTimer,
@@ -132,8 +112,8 @@ export default function CompactModeView({
   const canReopenRaise = cp ? (!hand.shortAllinOpen || !cp.hasActed || cp.currentBet < hand.currentBet) : false;
   const canRaise = cp ? (cp.stack > toCall && canReopenRaise && othersHaveChips) : false;
   const mustAllinToCall = cp ? (!canCheck && cp.stack < toCall) : false;
-  const isMandatory3BetPreflop = hand.street === 'preflop' && hand.variant === 'mandatory_3bet' && !hand.threeBetOccurred && (hand.raiseLevel || 1) < 3;
-  const disableCall = canCheck || mustAllinToCall || isMandatory3BetPreflop;
+  const mandatoryBlock = mandatoryCallBlocker(hand);
+  const disableCall = canCheck || mustAllinToCall || !!mandatoryBlock;
 
   const effectiveLiveBlind = (hand.street === 'preflop')
     ? (hand.anteType === 'four_blinds'
@@ -1322,7 +1302,7 @@ export default function CompactModeView({
               type="button"
               onClick={() => onAction('call')}
               disabled={disableCall}
-              title={isMandatory3BetPreflop ? 'Mandatory 3-Bet: Cannot call or limp preflop until a 3-bet occurs.' : ''}
+              title={mandatoryBlock ? mandatoryBlock.reason : ''}
               className="py-3 px-2 rounded-xl bg-emerald-800 hover:bg-emerald-700 disabled:opacity-25 disabled:cursor-not-allowed text-white font-medium text-sm transition-all shadow-md flex items-center justify-center border border-emerald-600/60 cursor-pointer truncate"
             >
               <span className="truncate">{callLabel}</span>

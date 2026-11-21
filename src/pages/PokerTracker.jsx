@@ -11,6 +11,7 @@ import EndHandDialog from '@/components/poker/EndHandDialog';
 import SevenTwoAward from '@/components/poker/SevenTwoAward';
 import AllInEquity from '@/components/poker/AllInEquity';
 import DiscardStep from '@/components/poker/DiscardStep';
+import ExposeStep from '@/components/poker/ExposeStep';
 import NextLevelDialog from '@/components/poker/NextLevelDialog';
 import RebuyCashoutDialog from '@/components/poker/RebuyCashoutDialog';
 import LateEntryDialog from '@/components/poker/LateEntryDialog';
@@ -124,11 +125,16 @@ export default function PokerTracker() {
   };
   const [goHoleCards, setGoHoleCards] = useState({});
   const [goDiscards, setGoDiscards] = useState({});
+  const [goExposed, setGoExposed] = useState({});
+  const [goExposeDone, setGoExposeDone] = useState(false);
   const [bustRecovery, setBustRecovery] = useState(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   // Which player's GO settings the modal edits: the player whose turn it is (the one holding the phone)
   const goSettingsPlayer = isGoMode && hand?.players ? hand.players[hand.currentPlayer] : null;
   const [discards, setDiscards] = useState({});
+  // Pirate Poker: playerId -> index of the hole card that was turned face up.
+  const [pirateExposed, setPirateExposed] = useState({});
+  const [pirateDone, setPirateDone] = useState(false);
   const [actionError, setActionError] = useState('');
   const [showShare, setShowShare] = useState(false);
   const [shareVersion, setShareVersion] = useState(0);
@@ -194,7 +200,12 @@ export default function PokerTracker() {
     setGoDiscards({});
   }, [goDiscards, goHoleCards, isGoMode, hand?.cpNeedsDiscard, hand?.cpDiscarded, hand?.handNumber]);
 
-  useEffect(() => { setGoDiscards({}); }, [hand?.handNumber]);
+  useEffect(() => { setGoDiscards({}); setGoExposed({}); setGoExposeDone(false); }, [hand?.handNumber]);
+
+  const handleGoExposePick = (playerId, cardIndex) => {
+    setGoExposed((prev) => ({ ...prev, [playerId]: cardIndex }));
+  };
+  const handleGoExposeConfirm = () => setGoExposeDone(true);
 
   const handleGoDiscardPick = (playerId, cardIndex) => {
     setGoDiscards((prev) => ({ ...prev, [playerId]: cardIndex }));
@@ -551,7 +562,7 @@ export default function PokerTracker() {
     return h.players.map((_, i) => positionForSeat(n, bi, i, h.variant));
   };
 
-  const resetHoleCards = () => { setHoleCards({}); setEquity(null); };
+  const resetHoleCards = () => { setHoleCards({}); setEquity(null); setPirateExposed({}); setPirateDone(false); };
   const pushHistory = (h) => setHistory((prev) => [...prev, h]);
 
   const handleSave = (cfg) => {
@@ -1482,6 +1493,8 @@ export default function PokerTracker() {
     }
   };
 
+  const handlePickExpose = (pid, idx) => setPirateExposed((prev) => ({ ...prev, [pid]: idx }));
+  const handleConfirmExpose = () => { setPirateDone(true); };
   const handlePickDiscard = (pid, idx) => setDiscards((prev) => ({ ...prev, [pid]: idx }));
   const handleConfirmDiscard = () => {
     const nf = hand.players.filter((p) => p.status !== 'folded');
@@ -2227,6 +2240,23 @@ export default function PokerTracker() {
       (frozen && isAllInAllPlayers)
     ))
   );
+  // Pirate Poker: everyone exposes one card before the first preflop action.
+  const piratePlayers = hand ? hand.players.filter((p) => p.status !== 'folded') : [];
+  const showExposeStep = !!hand
+    && hand.variant === 'pirate_poker'
+    && !pirateDone
+    && hand.phase === 'playing'
+    && (hand.street || 'preflop') === 'preflop'
+    && piratePlayers.length >= 2;
+  const exposedCards = useMemo(() => {
+    if (!hand || hand.variant !== 'pirate_poker') return null;
+    const out = {};
+    Object.entries(pirateExposed).forEach(([pid, idx]) => {
+      const cards = holeCards[Number(pid)] || holeCards[pid] || [];
+      if (cards[idx]) out[Number(pid)] = cards[idx];
+    });
+    return out;
+  }, [hand, pirateExposed, holeCards]);
   const showDiscardStep = hand && hand.variant === 'crazy_pineapple' && hand.cpNeedsDiscard && !hand.cpDiscarded && hand.currentPlayer === -1 && hand.phase !== 'awarded' && hand.communityCards.length >= 3 && nonFolded.length >= 2 && nonFolded.every((p) => holeCards[p.id] && holeCards[p.id].length === 3);
   const isCash = hand?.mode === 'cash' || config?.mode === 'cash' || gameOver?.mode === 'cash' || (sessionStore.get()?.config?.mode === 'cash');
   const lowGame = variantMeta(variant).group === 'low';
@@ -2326,6 +2356,10 @@ export default function PokerTracker() {
           goHoleCards={goHoleCards}
           goDiscards={goDiscards}
           onGoDiscardPick={handleGoDiscardPick}
+          goExposed={goExposed}
+          goExposeDone={goExposeDone}
+          onGoExposePick={handleGoExposePick}
+          onGoExposeConfirm={handleGoExposeConfirm}
           stackRounding={stackRounding}
           goPlayerPrefs={goPlayerPrefs}
           onUpdatePlayerPrefs={updateGoPlayerPrefs}
@@ -2677,6 +2711,7 @@ export default function PokerTracker() {
               pot={mainPot}
               sidePots={sidePots}
               holeCards={holeCards}
+              exposedCards={exposedCards}
               equity={equity}
               hideAmounts={hideAmounts}
               showPosition={showPosition}
@@ -2780,6 +2815,16 @@ export default function PokerTracker() {
 
                 {showDiscardStep && (
                   <DiscardStep players={nonFolded} holeCards={holeCards} discards={discards} onPick={handlePickDiscard} onConfirm={handleConfirmDiscard} />
+                )}
+                {showExposeStep && (
+                  <ExposeStep
+                    players={piratePlayers}
+                    holeCards={holeCards}
+                    exposed={pirateExposed}
+                    onCards={(pid, cards) => handleHoleChange(pid, cards)}
+                    onPick={handlePickExpose}
+                    onConfirm={handleConfirmExpose}
+                  />
                 )}
               </>
             ) : (

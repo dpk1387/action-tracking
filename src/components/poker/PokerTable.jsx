@@ -81,7 +81,7 @@ export default function PokerTable({
   showPosition = true, suitColors = 2, actionDisplayMode = 'all',
   highlightKeys, winningPlayerIds, stackVisibleIds, showPot, alwaysShow,
   helpMode = false, clockSecondsLeft, clockActive, clockType, onUseTimeBank, onAdjustTimeBanks,
-  displayUnit = 'chips'
+  displayUnit = 'chips', exposedCards = null
 }) {
   const n = hand.players.length;
   const tableSize = hand.tableSize || n;
@@ -434,6 +434,15 @@ export default function PokerTable({
                     </span>
                   </div>
                 ) : null}
+
+                {/* Pirate Poker: the one hole card this player exposed is public */}
+                {exposedCards && exposedCards[p.id] && (
+                  <div className="mt-1 flex items-center justify-center" data-testid={`exposed-${p.id}`}>
+                    <span className={`px-1.5 py-0.5 rounded bg-amber-100 border border-amber-300 text-[10px] font-bold leading-none shadow-sm ${suitColorClass(exposedCards[p.id].suit, suitColors)}`}>
+                      <strong className="font-bold">{rankDisplay(exposedCards[p.id].rank)}</strong>{SUIT_SYMBOL[exposedCards[p.id].suit]}
+                    </span>
+                  </div>
+                )}
 
                 {/* Naked Hold 'Em: Face-up Folded Cards Display on player tag */}
                 {folded && hand.variant === 'showtime' && (

@@ -1,4 +1,4 @@
-import { calcEquity } from '@/lib/poker';
+import { decideBotAction as decideFromRanges } from '@/lib/botStrategy';
 
 export const BOT_DIFFICULTIES = [
   { id: 'beginner', label: 'Beginner', desc: 'Calls too much, rarely bluffs, makes mistakes.' },
@@ -20,6 +20,7 @@ export const BOT_STYLES = [
   { id: 'fish', label: 'Fish', desc: 'Weak, spazzy play' },
   { id: 'shark', label: 'Shark', desc: 'Strong, aggressive, tricky' },
   { id: 'rec', label: 'REC', desc: 'Recreational: plays too many hands, calls wide, rarely raises' },
+  { id: 'maniac', label: 'Maniac', desc: 'Raises constantly with a very wide range' },
 ];
 
 // Short badges used when playstyles are shown at the table.
@@ -33,6 +34,7 @@ export const STYLE_SHORT = {
   fish: 'FISH',
   shark: 'SHARK',
   rec: 'REC',
+  maniac: 'MANIAC',
   random: 'MIX',
 };
 
@@ -126,18 +128,21 @@ export function nextBlindSeats({ ring, activeSeats, buttonSeat, sbSeat, bbSeat }
   };
 }
 
-// callBonus = extra slack against the raw pot odds (loose callers need less
-// equity, nits need more). aggro = how often a betting opportunity is taken.
+// Ranges are shares of all starting hands (0.19 = the best 19%). openPct is a
+// late-position opening range and is tightened in early seats by the strategy.
+// betLine is the postflop strength that bets, raiseGuard the reluctance to
+// raise a second time, callBonus the slack against raw pot odds.
 const STYLE_PROFILES = {
-  lag: { open: 0.42, call: 0.36, raise: 0.56, bluff: 0.2, size: 0.85, callBonus: 0, aggro: 0.75 },
-  tag: { open: 0.5, call: 0.46, raise: 0.63, bluff: 0.1, size: 0.7, callBonus: -0.03, aggro: 0.6 },
-  loose_passive: { open: 0.34, call: 0.27, raise: 0.82, bluff: 0.03, size: 0.45, callBonus: 0.1, aggro: 0.15 },
-  tight_passive: { open: 0.52, call: 0.44, raise: 0.86, bluff: 0.02, size: 0.45, callBonus: 0.02, aggro: 0.2 },
-  calling_station: { open: 0.3, call: 0.2, raise: 0.94, bluff: 0.01, size: 0.4, callBonus: 0.18, aggro: 0.08 },
-  nit: { open: 0.62, call: 0.58, raise: 0.74, bluff: 0.01, size: 0.6, callBonus: -0.05, aggro: 0.25 },
-  fish: { open: 0.3, call: 0.38, raise: 0.52, bluff: 0.13, size: 0.5, callBonus: 0.12, extraNoise: 0.05, aggro: 0.4 },
-  shark: { open: 0.46, call: 0.44, raise: 0.56, bluff: 0.17, size: 0.78, callBonus: 0, aggro: 0.7 },
-  rec: { open: 0.26, call: 0.34, raise: 0.84, bluff: 0.06, size: 0.45, callBonus: 0.14, extraNoise: 0.04, aggro: 0.12 },
+  nit: { openPct: 0.13, limpPct: 0.04, threeBetPct: 0.03, coldCallPct: 0.05, fourBetPct: 0.015, callVs3Bet: 0.05, betLine: 0.62, raiseGuard: 0.35, bluff: 0.02, size: 0.6, callBonus: -0.06, aggro: 0.3 },
+  tag: { openPct: 0.19, limpPct: 0.05, threeBetPct: 0.055, coldCallPct: 0.075, fourBetPct: 0.025, callVs3Bet: 0.07, betLine: 0.55, raiseGuard: 0.2, bluff: 0.09, size: 0.7, callBonus: -0.02, aggro: 0.55 },
+  lag: { openPct: 0.30, limpPct: 0.08, threeBetPct: 0.10, coldCallPct: 0.12, fourBetPct: 0.04, callVs3Bet: 0.10, betLine: 0.48, raiseGuard: 0.1, bluff: 0.2, size: 0.8, callBonus: 0, aggro: 0.75 },
+  shark: { openPct: 0.24, limpPct: 0.05, threeBetPct: 0.06, coldCallPct: 0.11, fourBetPct: 0.035, callVs3Bet: 0.085, betLine: 0.5, raiseGuard: 0.15, bluff: 0.17, size: 0.75, callBonus: 0, aggro: 0.68 },
+  loose_passive: { openPct: 0.22, limpPct: 0.18, threeBetPct: 0.02, coldCallPct: 0.20, fourBetPct: 0.01, callVs3Bet: 0.08, betLine: 0.6, raiseGuard: 0.45, bluff: 0.03, size: 0.45, callBonus: 0.1, aggro: 0.15 },
+  tight_passive: { openPct: 0.14, limpPct: 0.08, threeBetPct: 0.03, coldCallPct: 0.10, fourBetPct: 0.015, callVs3Bet: 0.06, betLine: 0.6, raiseGuard: 0.4, bluff: 0.02, size: 0.45, callBonus: 0.02, aggro: 0.2 },
+  calling_station: { openPct: 0.32, limpPct: 0.30, threeBetPct: 0.01, coldCallPct: 0.38, fourBetPct: 0.005, callVs3Bet: 0.15, betLine: 0.7, raiseGuard: 0.5, bluff: 0.01, size: 0.4, callBonus: 0.16, aggro: 0.08 },
+  fish: { openPct: 0.28, limpPct: 0.18, threeBetPct: 0.03, coldCallPct: 0.22, fourBetPct: 0.01, callVs3Bet: 0.12, betLine: 0.6, raiseGuard: 0.3, bluff: 0.1, size: 0.5, callBonus: 0.12, extraNoise: 0.05, aggro: 0.35 },
+  rec: { openPct: 0.24, limpPct: 0.16, threeBetPct: 0.02, coldCallPct: 0.22, fourBetPct: 0.01, callVs3Bet: 0.12, betLine: 0.62, raiseGuard: 0.4, bluff: 0.05, size: 0.45, callBonus: 0.14, extraNoise: 0.04, aggro: 0.15 },
+  maniac: { openPct: 0.55, limpPct: 0.10, threeBetPct: 0.22, coldCallPct: 0.28, fourBetPct: 0.08, callVs3Bet: 0.16, betLine: 0.38, raiseGuard: 0, bluff: 0.3, size: 0.95, callBonus: 0.02, extraNoise: 0.06, aggro: 0.9 },
 };
 
 const DIFFICULTY_TUNING = {
@@ -211,94 +216,12 @@ export function styleProfile(styleId) {
   return STYLE_PROFILES[styleId] || STYLE_PROFILES.tag;
 }
 
-function liveOpponents(hand, playerId) {
-  return hand.players.filter((p) => p.id !== playerId && p.status !== 'folded' && p.status !== 'out' && p.status !== 'eliminated');
-}
-
 /**
- * Decide an action for one bot.
- * Returns { type: 'fold'|'check'|'call'|'raise', amount } where amount is the
- * total raise-to amount.
+ * Decide an action for one bot. Ranges and sizing live in botStrategy; this
+ * wrapper resolves the style and applies the difficulty tuning.
  */
 export function decideBotAction({ hand, playerIndex, holeCards, styleId, difficulty, rng = Math.random }) {
-  const cp = hand.players[playerIndex];
-  if (!cp || !holeCards || holeCards.length === 0) return { type: 'check' };
   const tuning = DIFFICULTY_TUNING[difficulty] || DIFFICULTY_TUNING.medium;
-  const profile = styleProfile(styleId);
-  const noise = tuning.noise + (profile.extraNoise || 0);
-
-  const opponents = liveOpponents(hand, cp.id);
-  const pot = hand.players.reduce((s, p) => s + (p.totalBet || 0), 0);
-  const toCall = Math.max(0, (hand.currentBet || 0) - (cp.currentBet || 0));
-  const stack = cp.stack || 0;
-  const board = (hand.communityCards || []).filter((c) => c && !c.hidden);
-  const street = hand.street || 'preflop';
-
-  let rawEquity;
-  try {
-    const holes = [holeCards, ...opponents.map(() => null)];
-    const res = calcEquity(holes, board, tuning.iters, hand.variant || 'nlh');
-    const r = res?.results?.[0] || {};
-    rawEquity = ((r.win || 0) + (res?.split || 0) / 2) / 100;
-  } catch (_) {
-    rawEquity = 0.5 / Math.max(1, opponents.length);
-  }
-  let equity = rawEquity + (rng() * 2 - 1) * noise;
-  equity = Math.max(0.02, Math.min(0.98, equity));
-
-  const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
-  const minRaiseTo = (hand.currentBet || 0) + Math.max(hand.lastRaiseAmount || hand.bigBlind || 1, hand.bigBlind || 1);
-  const maxRaiseTo = cp.currentBet + stack;
-
-  const makeRaise = (fraction) => {
-    const target = Math.round((hand.currentBet || 0) + Math.max(pot * fraction, minRaiseTo - (hand.currentBet || 0)));
-    const clamped = Math.min(Math.max(target, minRaiseTo), maxRaiseTo);
-    if (clamped <= (hand.currentBet || 0)) return { type: 'call' };
-    return { type: 'raise', amount: clamped };
-  };
-
-  if (tuning.mistake > 0 && rng() < tuning.mistake) {
-    const roll = rng();
-    if (toCall <= 0) return roll < 0.5 ? { type: 'check' } : makeRaise(0.5);
-    if (roll < 0.35) return { type: 'fold' };
-    if (roll < 0.8) return { type: 'call' };
-    return makeRaise(0.6);
-  }
-
-  const streetSize = street === 'preflop' ? 0.55 : street === 'flop' ? 1 : 1.1;
-  const betFraction = Math.max(0.25, profile.size * streetSize * (0.85 + rng() * 0.3));
-
-  if (toCall <= 0) {
-    const bluffChance = profile.bluff * tuning.bluffMul * (opponents.length <= 2 ? 1 : 0.6);
-    if (equity >= profile.open) {
-      // Very strong: sometimes shove for value.
-      if (equity > 0.82 && stack < pot * 2.5 && rng() < 0.5) return { type: 'raise', amount: maxRaiseTo };
-      if (rng() < profile.aggro) return makeRaise(betFraction);
-      return { type: 'check' };
-    }
-    if (rng() < bluffChance) return makeRaise(betFraction * 0.9);
-    return { type: 'check' };
-  }
-
-  // callBonus is slack: a loose caller (calling station, fish) needs less equity
-  // than the raw pot odds, a nit needs more.
-  const callThreshold = potOdds - profile.callBonus;
-  if (equity < callThreshold) {
-    const cheap = toCall <= (hand.bigBlind || 1) * 0.5;
-    if (cheap && equity > potOdds * 0.6) return { type: 'call' };
-    if (equity < callThreshold - 0.18) return { type: 'fold' };
-    return rng() < 0.25 ? { type: 'call' } : { type: 'fold' };
-  }
-
-  // Aggressive styles raise with a thin edge over the calling line, not only with
-  // premium equity; passive styles still need the absolute raise threshold.
-  const raiseLine = Math.min(profile.raise, callThreshold + 0.06);
-  if (equity >= raiseLine && rng() < 0.35 + profile.aggro * 0.6) {
-    if (equity > 0.8 && maxRaiseTo > 0 && (stack <= pot * 1.6 || rng() < 0.4)) {
-      return { type: 'raise', amount: maxRaiseTo };
-    }
-    return makeRaise(betFraction);
-  }
-  if (rng() < profile.bluff * tuning.bluffMul * 0.5 * (0.5 + profile.aggro)) return makeRaise(betFraction * 0.8);
-  return { type: 'call' };
+  const profile = styleProfile(resolveStyle(styleId, rng));
+  return decideFromRanges({ hand, playerIndex, holeCards, profile, tuning, rng });
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { money, parseAmount, bettingFrozen } from '@/lib/poker';
+import { bettingFrozen, mandatoryCallBlocker, money, parseAmount } from '@/lib/poker';
 
 function KeyBadge({ label }) {
   return (
@@ -50,8 +50,8 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
   const canReopenRaise = cp ? (!hand.shortAllinOpen || !cp.hasActed || cp.currentBet < hand.currentBet) : false;
   const canRaise = cp ? (cp.stack > toCall && canReopenRaise && othersHaveChips) : false;
   const mustAllinToCall = cp ? (!canCheck && cp.stack < toCall) : false;
-  const isMandatory3BetPreflop = hand.street === 'preflop' && hand.variant === 'mandatory_3bet' && !hand.threeBetOccurred && (hand.raiseLevel || 1) < 3;
-  const disableCall = mustAllinToCall || isMandatory3BetPreflop;
+  const mandatoryBlock = mandatoryCallBlocker(hand);
+  const disableCall = mustAllinToCall || !!mandatoryBlock;
   const effectiveLiveBlind = (hand.street === 'preflop')
     ? (hand.anteType === 'four_blinds'
         ? (Number(hand.fourthBlind) || (hand.bigBlind * 4))
@@ -324,7 +324,7 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
           <button
             onClick={() => onAction('call')}
             disabled={disableCall}
-            title={isMandatory3BetPreflop ? 'Mandatory 3-Bet: Cannot call or limp preflop until a 3-bet occurs.' : ''}
+            title={mandatoryBlock ? mandatoryBlock.reason : ''}
             className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3.5 py-2 font-medium disabled:opacity-30 disabled:cursor-not-allowed flex items-center shadow cursor-pointer"
           >
             <span>{callLabel}</span>

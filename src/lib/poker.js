@@ -39,8 +39,11 @@ export const VARIANTS = {
   second_best: { label: '2nd Best', group: 'degen', holeSize: 2, deck: 'full' },
   three_two_one: { label: '3-2-1', group: 'degen', holeSize: 2, deck: 'full' },
   ocean: { label: 'Ocean', group: 'degen', holeSize: 2, deck: 'full' },
-  showtime: { label: "Naked Hold 'Em", group: 'degen', holeSize: 2, deck: 'full' },
-  mandatory_3bet: { label: 'Mandatory 3-Bet', group: 'degen', holeSize: 2, deck: 'full' },
+  showtime: { label: "Naked Hold 'Em", group: 'extra_info', holeSize: 2, deck: 'full' },
+  pirate_poker: { label: 'Pirate Poker', group: 'extra_info', holeSize: 2, deck: 'full', exposeOne: true },
+  mandatory_3bet: { label: 'Mandatory 3-Bet', group: 'mandatory', holeSize: 2, deck: 'full' },
+  mandatory_raise: { label: 'Mandatory Raise', group: 'mandatory', holeSize: 2, deck: 'full' },
+  mandatory_4bet: { label: 'Mandatory 4-Bet', group: 'mandatory', holeSize: 2, deck: 'full' },
   red_river: { label: 'Red River', group: 'degen', holeSize: 2, deck: 'full' },
   win_button: { label: 'Win the Button', group: 'degen', holeSize: 2, deck: 'full' },
   deuces_wild: { label: 'Deuces Wild', group: 'degen', holeSize: 2, deck: 'full' },
@@ -1154,6 +1157,49 @@ function applyOversizedCap(h) {
   }
 }
 
+const MANDATORY_LABEL = {
+  mandatory_3bet: 'Mandatory 3-Bet',
+  mandatory_raise: 'Mandatory Raise',
+  mandatory_4bet: 'Mandatory 4-Bet',
+};
+
+/**
+ * Mandatory-action variants forbid calling or limping until the required amount
+ * of aggression has happened. Returns null when calling is allowed, or an object
+ * with the reason it is not. An all-in bet may always be called, and a call that
+ * puts the caller all in is always allowed (there is nothing else to do).
+ */
+export function mandatoryCallBlocker(hand, playerIndex) {
+  if (!hand) return null;
+  const variant = hand.variant;
+  if (!MANDATORY_LABEL[variant]) return null;
+  const street = hand.street || 'preflop';
+  if (variant === 'mandatory_3bet' && street !== 'preflop') return null;
+  const level = Number(hand.raiseLevel) || (street === 'preflop' ? 1 : 0);
+  const need = street === 'preflop'
+    ? (variant === 'mandatory_3bet' ? 3 : variant === 'mandatory_raise' ? 2 : 4)
+    : (variant === 'mandatory_4bet' ? 4 : 1);
+  if (level >= need) return null;
+  if (variant === 'mandatory_3bet' && hand.threeBetOccurred) return null;
+  if (variant === 'mandatory_4bet' && hand.fourBetOccurred) return null;
+
+  const idx = playerIndex != null ? playerIndex : hand.currentPlayer;
+  const p = idx != null && idx >= 0 ? hand.players?.[idx] : null;
+  const toCall = p ? Math.max(0, (hand.currentBet || 0) - (p.currentBet || 0)) : 0;
+  if (p && toCall > 0 && toCall >= (p.stack || 0)) return null;
+  const betWasAllIn = (hand.players || []).some((o) => o.status !== 'folded'
+    && o.id !== (p && p.id)
+    && (o.stack || 0) === 0
+    && (o.currentBet || 0) === (hand.currentBet || 0)
+    && (hand.currentBet || 0) > 0);
+  if (betWasAllIn) return null;
+
+  const label = MANDATORY_LABEL[variant];
+  const what = variant === 'mandatory_3bet' ? 'a 3-bet' : variant === 'mandatory_raise' ? 'a raise' : 'a 4-bet';
+  const where = street === 'preflop' ? ' preflop' : ' on this street';
+  return { label, reason: `${label}: calling or limping is not allowed until there is ${what}${where}. Raise or fold.` };
+}
+
 export function applyAction(hand, playerId, type, amount) {
   const h = clone(hand);
   h._refundsApplied = false;
@@ -1188,11 +1234,8 @@ export function applyAction(hand, playerId, type, amount) {
     p.lastAction = { type: 'check' };
     p.hasActed = true;
   } else if (type === 'call') {
-    if (h.street === 'preflop' && h.variant === 'mandatory_3bet' && !h.threeBetOccurred && (h.raiseLevel || 1) < 3) {
-      if (p.stack > toCall) {
-        return { error: 'Mandatory 3-Bet: Flat calling or limping is not allowed preflop until there is a 3-bet. You must raise or fold.' };
-      }
-    }
+    const mandatoryBlock = mandatoryCallBlocker(h, h.players.findIndex((o) => o.id === playerId));
+    if (mandatoryBlock) return { error: mandatoryBlock.reason };
     const pay = Math.min(toCall, p.stack);
     p.stack -= pay;
     p.currentBet += pay;
@@ -1219,6 +1262,7 @@ export function applyAction(hand, playerId, type, amount) {
     if (increased) {
       h.raiseLevel = isRaise ? (h.raiseLevel || 1) + 1 : 1;
       if (h.raiseLevel >= 3) h.threeBetOccurred = true;
+    if (h.raiseLevel >= 4) h.fourBetOccurred = true;
       level = h.raiseLevel;
       h.lastRaiseAmount = p.currentBet - prevBet;
       h.currentBet = p.currentBet;
