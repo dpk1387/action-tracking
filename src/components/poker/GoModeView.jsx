@@ -35,6 +35,7 @@ import {
   effectiveHoleSize,
   isPotLimitVariant,
 } from '@/lib/poker';
+import { minChipForBlinds, roundToNearest } from '@/lib/tableRules';
 import {
   roundStack,
   sortGoHoleCards,
@@ -217,8 +218,11 @@ export default function GoModeView({
   const effectiveMaxRaise = isPL ? Math.min(maxRaise, rawPotRaiseTo) : maxRaise;
   const isPotCapped = isPL && rawPotRaiseTo < maxRaise;
 
-  // Lowest denomination in play (e.g. 25 in 25/50)
-  const stepSize = getLowestDenomination(hand);
+  // Smallest chip on the table for this level; bet steps are half a big blind
+  // rounded to that chip, and every size we produce is aligned to it.
+  const minChip = minChipForBlinds(hand?.bigBlind || getLowestDenomination(hand));
+  const stepSize = Math.max(minChip, roundToNearest((hand?.bigBlind || 0) / 2, minChip));
+  const alignToChip = (value) => roundToNearest(value, minChip);
 
   // Check if hand is currently in play
   const isHandActive = Boolean(
@@ -409,7 +413,7 @@ export default function GoModeView({
     if (!cp) return;
     const currentVal = raiseInput !== '' ? raiseInput : minRaise;
     const nextVal = stepBetAmount(currentVal, dir, stepSize, minRaise, effectiveMaxRaise);
-    setRaiseInput(String(nextVal));
+    setRaiseInput(String(alignToChip(nextVal)));
   };
 
   const handleExecuteRaise = () => {
@@ -534,10 +538,10 @@ export default function GoModeView({
         } else if (e.target === raiseInputRef.current && /^[+\-=]$/.test(e.key)) {
           // +/- resize the bet by half a big blind even while the box has focus.
           e.preventDefault();
-          const step = Math.max(1, Math.round((hand?.bigBlind || 0) / 2));
           const base = parseBetShorthand(raiseInput) || minRaise;
-          const next = e.key === '-' ? base - step : base + step;
-          setRaiseInput(String(Math.min(Math.max(next, minRaise), effectiveMaxRaise || next)));
+          const next = e.key === '-' ? base - stepSize : base + stepSize;
+          const aligned = alignToChip(next);
+          setRaiseInput(String(Math.min(Math.max(aligned, minRaise), effectiveMaxRaise || aligned)));
         }
         return;
       }
@@ -587,17 +591,17 @@ export default function GoModeView({
       } else if (key === '+' || key === '=' || key === '-') {
         // Bet size steps by half a big blind, clamped to the legal raise range.
         e.preventDefault();
-        const step = Math.max(1, Math.round((hand?.bigBlind || 0) / 2));
         const base = parseBetShorthand(raiseInput) || minRaise;
-        const next = key === '-' ? base - step : base + step;
-        const cap = effectiveMaxRaise || next;
-        setRaiseInput(String(Math.min(Math.max(next, minRaise), cap)));
+        const next = key === '-' ? base - stepSize : base + stepSize;
+        const aligned = alignToChip(next);
+        const cap = effectiveMaxRaise || aligned;
+        setRaiseInput(String(Math.min(Math.max(aligned, minRaise), cap)));
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cp, canCheck, disableCall, toCall, minRaise, effectiveMaxRaise, isPL, raiseInput, needsTurnAck, cpPin, pinUnlocked, pinPromptOpen, pinEntry, isAllInSituation]);
+  }, [cp, canCheck, disableCall, toCall, minRaise, effectiveMaxRaise, isPL, raiseInput, needsTurnAck, cpPin, pinUnlocked, pinPromptOpen, pinEntry, isAllInSituation, stepSize, minChip]);
 
   const isShowdownComplete = Boolean(
     isAllInSituation && (commCards.length >= targetBoardLen || hand?.phase === 'awarded' || hand?.phase === 'ended')
@@ -1285,7 +1289,7 @@ export default function GoModeView({
             <button
               type="button"
               onClick={() => submitGoAction('raise', effectiveMaxRaise)}
-              className="py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-sm cursor-pointer transition-all shadow-lg"
+              className="py-3 rounded-xl bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white font-black text-sm cursor-pointer transition-all shadow-lg shadow-rose-950/50 border border-rose-500/50"
               title="Shortcut: Shift + A"
             >
               {isPotCapped
