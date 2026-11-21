@@ -16,6 +16,7 @@ import VariantSetup from '@/pages/VariantSetup';
 import TVView from '@/pages/TVView';
 import Spectator from '@/pages/Spectator';
 import MTTDirector from '@/pages/MTTDirector';
+import BotsMode from '@/pages/BotsMode';
 
 const AuthenticatedApp = () => {
   const auth = useAuth() as {
@@ -55,6 +56,7 @@ const AuthenticatedApp = () => {
       <Route path="/history" element={<HandHistory />} />
       <Route path="/variant" element={<VariantSetup />} />
       <Route path="/tv" element={<TVView />} />
+      <Route path="/bots" element={<BotsMode />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );

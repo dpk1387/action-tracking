@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogIn, LogOut, Play, Clock, Users, Spade, Trash2, Trophy, FolderOpen, Calendar, Eye, Zap, Flame, ChevronRight, Smartphone, History } from 'lucide-react';
+import { LogIn, LogOut, Play, Clock, Users, Spade, Trash2, Trophy, FolderOpen, Calendar, Eye, Zap, Flame, ChevronRight, Smartphone, History, Bot } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { money, VARIANTS, formatSessionName } from '@/lib/poker';
 import { discardSavedSession, discardAllSavedSessions } from '@/lib/liveSync';
@@ -712,6 +712,30 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                       </div>
                       <p className="text-xs text-amber-200/70 mt-1 leading-relaxed">
                         Play wild NLH variants: 2nd Best, 3-2-1, Ocean, Naked Hold 'Em, Mandatory 3-Bet, Red River, Win the Button, or Deuces Wild!
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => navigate('/bots')}
+                  className="p-4 rounded-xl bg-slate-800/50 hover:bg-slate-800/80 border border-slate-600/50 hover:border-emerald-500/60 transition-all cursor-pointer group shadow"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center text-emerald-300 group-hover:scale-105 transition-transform shrink-0">
+                      <Bot size={20} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-bold text-slate-100 group-hover:text-white transition-colors">
+                          Play Bots
+                        </span>
+                        <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          Solo <ChevronRight size={12} />
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                        Practice heads-up to 10-max against bots — pick a difficulty, a playstyle, a starting stack and a blind speed.
                       </p>
                     </div>
                   </div>

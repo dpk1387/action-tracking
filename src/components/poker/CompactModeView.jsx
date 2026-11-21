@@ -1323,7 +1323,7 @@ export default function CompactModeView({
               onClick={() => onAction('call')}
               disabled={disableCall}
               title={isMandatory3BetPreflop ? 'Mandatory 3-Bet: Cannot call or limp preflop until a 3-bet occurs.' : ''}
-              className="py-3 px-2 rounded-xl bg-emerald-800 hover:bg-emerald-700 disabled:opacity-25 disabled:cursor-not-allowed text-white font-bold text-sm transition-all shadow-md flex items-center justify-center border border-emerald-600/60 cursor-pointer truncate"
+              className="py-3 px-2 rounded-xl bg-emerald-800 hover:bg-emerald-700 disabled:opacity-25 disabled:cursor-not-allowed text-white font-medium text-sm transition-all shadow-md flex items-center justify-center border border-emerald-600/60 cursor-pointer truncate"
             >
               <span className="truncate">{callLabel}</span>
               <KeyBadge label="C" />

@@ -681,8 +681,16 @@ export function startHand(config, buttonSeat, handNumber) {
   const buttonIndex = players.findIndex((p) => p.seat === buttonSeat);
   const isThreeBlinds = config.anteType === 'three_blinds' && n >= 3;
   const isFourBlinds = config.anteType === 'four_blinds' && n >= 4;
-  const sbIndex = n === 2 ? buttonIndex : (buttonIndex + 1) % n;
-  const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
+  // Explicit blind seats let callers model a dead button / dead small blind: a
+  // seat that is no longer occupied simply posts nothing.
+  const blindCfg = config.blindSeats || null;
+  const resolveSeat = (seat) => (seat == null ? -1 : players.findIndex((p) => Number(p.seat) === Number(seat)));
+  const sbIndex = blindCfg && blindCfg.sbSeat != null
+    ? resolveSeat(blindCfg.sbSeat)
+    : (n === 2 ? buttonIndex : (buttonIndex + 1) % n);
+  const bbIndex = blindCfg && blindCfg.bbSeat != null
+    ? resolveSeat(blindCfg.bbSeat)
+    : (n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n);
   const tbIndex = (isThreeBlinds || isFourBlinds) ? (buttonIndex + 3) % n : -1;
   const fbIndex = isFourBlinds ? (buttonIndex + 4) % n : -1;
 
@@ -711,6 +719,8 @@ export function startHand(config, buttonSeat, handNumber) {
   const common = {
     players,
     buttonSeat,
+    sbSeat: sbIndex >= 0 ? players[sbIndex].seat : (blindCfg ? Number(blindCfg.sbSeat) : null),
+    bbSeat: bbIndex >= 0 ? players[bbIndex].seat : (blindCfg ? Number(blindCfg.bbSeat) : null),
     smallBlind: config.smallBlind,
     bigBlind: config.bigBlind,
     thirdBlind: config.thirdBlind != null ? Number(config.thirdBlind) : (config.bigBlind * 2),
@@ -896,17 +906,22 @@ export function startHand(config, buttonSeat, handNumber) {
     });
   }
 
-  const sb = Math.min(config.smallBlind, players[sbIndex].stack);
-  players[sbIndex].stack -= sb;
-  players[sbIndex].currentBet = sb;
-  players[sbIndex].totalBet += sb;
-  players[sbIndex].lastAction = { type: 'sb', amount: sb };
+  if (sbIndex >= 0) {
+    const sb = Math.min(config.smallBlind, players[sbIndex].stack);
+    players[sbIndex].stack -= sb;
+    players[sbIndex].currentBet = sb;
+    players[sbIndex].totalBet += sb;
+    players[sbIndex].lastAction = { type: 'sb', amount: sb };
+  }
 
-  const bb = Math.min(config.bigBlind, players[bbIndex].stack);
-  players[bbIndex].stack -= bb;
-  players[bbIndex].currentBet = bb;
-  players[bbIndex].totalBet += bb;
-  players[bbIndex].lastAction = { type: 'bb', amount: bb };
+  let bb = config.bigBlind;
+  if (bbIndex >= 0) {
+    bb = Math.min(config.bigBlind, players[bbIndex].stack);
+    players[bbIndex].stack -= bb;
+    players[bbIndex].currentBet = bb;
+    players[bbIndex].totalBet += bb;
+    players[bbIndex].lastAction = { type: 'bb', amount: bb };
+  }
 
   if (isFourBlinds && tbIndex >= 0 && fbIndex >= 0) {
     const tbTarget = Number(config.thirdBlind) || (config.bigBlind * 2);
@@ -931,7 +946,7 @@ export function startHand(config, buttonSeat, handNumber) {
     players[tbIndex].lastAction = { type: '3b', amount: tb };
   }
 
-  if (bba && ante > 0) {
+  if (bba && ante > 0 && bbIndex >= 0) {
     const a = Math.min(ante, players[bbIndex].stack);
     players[bbIndex].stack -= a;
     players[bbIndex].totalBet += a;
@@ -943,7 +958,7 @@ export function startHand(config, buttonSeat, handNumber) {
     players[buttonIndex].totalBet += a;
     players[buttonIndex].antePaid = (players[buttonIndex].antePaid || 0) + a;
   }
-  if (isSBHalfAnte && ante > 0) {
+  if (isSBHalfAnte && ante > 0 && bbIndex >= 0) {
     const a = Math.min(ante, players[bbIndex].stack);
     players[bbIndex].stack -= a;
     players[bbIndex].totalBet += a;
@@ -963,7 +978,7 @@ export function startHand(config, buttonSeat, handNumber) {
   let currentBet = bb;
   let lastRaiseAmount = config.bigBlind;
   let raiseLevel = 1;
-  let first = firstActiveAfter(players, bbIndex);
+  let first = bbIndex >= 0 ? firstActiveAfter(players, bbIndex) : firstActiveAfter(players, buttonIndex);
 
   if (isFourBlinds && fbIndex >= 0) {
     currentBet = players[fbIndex].currentBet || (Number(config.fourthBlind) || (config.bigBlind * 4));
@@ -2235,6 +2250,12 @@ export function awardPots(hand, winnersMap, options = {}) {
       wonPots = new Set();
     }
   }
+  // A player can hold chips after a capped shove is refunded, or when they win a
+  // side pot while short; such a player is not all-in any more, and leaving status
+  // 'allin' shows a leftover stack next to an all-in badge.
+  h.players.forEach((p) => {
+    if (p.status === 'allin' && Math.round((p.stack || 0) * 100) / 100 > 0) p.status = 'active';
+  });
   h.wonPots = [...wonPots];
   h.phase = 'awarded';
   return h;
