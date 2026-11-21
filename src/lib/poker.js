@@ -61,6 +61,14 @@ export function isPotLimitVariant(v) {
   return variantMeta(v).group === 'omaha' || variantMeta(v).group === 'dramaha';
 }
 
+// Degen / extra-information / mandatory-action variants are Action Tracking
+// only for now: their special rules have no GO Mode handling.
+export const GO_UNSUPPORTED_GROUPS = ['degen', 'extra_info', 'mandatory'];
+
+export function goModeSupported(v) {
+  return !GO_UNSUPPORTED_GROUPS.includes(variantMeta(v).group);
+}
+
 // Pineapple games are dealt three cards and discard one at some point:
 // Pineapple before the flop, Crazy Pineapple after the flop, Lazy Pineapple on the river.
 export function goDiscardStage(hand) {

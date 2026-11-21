@@ -45,7 +45,7 @@ import { saveHandHistory, findHandHistoryByCode, deleteHandHistory } from '@/lib
 import {
   startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots, nextHand,
   positionForSeat, getButtonIndex, money, formatPotAmount, formatPotOutcome, formatSessionName, getMultipleBoardWinPercentages, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone, calcAnteForType,
-  goDiscardStage, rebuyBlocker, isPotLimitVariant,
+  goDiscardStage, rebuyBlocker, isPotLimitVariant, goModeSupported,
 } from '@/lib/poker';
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
@@ -673,7 +673,7 @@ export default function PokerTracker() {
       const exists = pool.some((p) => p.seat === chosenSeat);
       btn = exists ? chosenSeat : pool[0].seat;
     }
-    if (cfg.isGoMode !== undefined) setIsGoMode(cfg.isGoMode);
+    if (cfg.isGoMode !== undefined) setIsGoMode(cfg.isGoMode && goModeSupported(cfg.variant));
     if (cfg.stackRounding !== undefined) setStackRounding(cfg.stackRounding);
     // A fresh game starts everyone on the defaults: chips, 2-color deck, PIN off.
     setGoPlayerPrefs({});
@@ -2003,7 +2003,7 @@ export default function PokerTracker() {
     const cfg = saved.config || null;
     setConfig(cfg);
     const restoredIsGo = saved.isGoMode ?? saved.config?.isGoMode ?? saved.hand?.isGoMode ?? false;
-    setIsGoMode(restoredIsGo);
+    setIsGoMode(restoredIsGo && goModeSupported(saved.hand?.variant ?? saved.config?.variant));
     const restoredHand = saved.hand.levelConfig ? saved.hand : { ...saved.hand, levelConfig: cfg?.levelConfig || undefined, levelStartEpoch: saved.hand.levelStartEpoch || Date.now(), levelHandsCompleted: saved.hand.levelHandsCompleted || 0, levelCount: saved.hand.levelCount || Math.max(1, (saved.hand.players || []).length) };
     setHand(restoredHand);
     setGameOver(saved.gameOver || null);
@@ -2041,7 +2041,7 @@ export default function PokerTracker() {
       const cfg = res.saved.config || null;
       setConfig(cfg);
       const restoredIsGo = res.saved.isGoMode ?? res.saved.config?.isGoMode ?? res.saved.hand?.isGoMode ?? false;
-      setIsGoMode(restoredIsGo);
+      setIsGoMode(restoredIsGo && goModeSupported(res.saved.hand?.variant ?? res.saved.config?.variant));
       const restoredHand = res.saved.hand?.levelConfig ? res.saved.hand : { ...res.saved.hand, levelConfig: cfg?.levelConfig || undefined, levelStartEpoch: res.saved.hand?.levelStartEpoch || Date.now(), levelHandsCompleted: res.saved.hand?.levelHandsCompleted || 0, levelCount: res.saved.hand?.levelCount || Math.max(1, (res.saved.hand?.players || []).length) };
       setHand(restoredHand);
       setGameOver(res.saved.gameOver || null);
@@ -2458,9 +2458,16 @@ export default function PokerTracker() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => setShowSwitchModeConfirm('go')}
-              className="rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95 border border-emerald-500/50"
-              title="Switch to GO Mode (fast live action with automatic card dealing & pot tracking)"
+              onClick={() => goModeSupported(hand?.variant) && setShowSwitchModeConfirm('go')}
+              disabled={!goModeSupported(hand?.variant)}
+              className={`rounded-lg text-white font-bold text-sm px-3 py-2 flex items-center gap-1.5 border transition-all ${
+                goModeSupported(hand?.variant)
+                  ? 'bg-emerald-700 hover:bg-emerald-600 cursor-pointer shadow-md active:scale-95 border-emerald-500/50'
+                  : 'bg-[#2a2f37] border-slate-700/60 opacity-50 cursor-not-allowed'
+              }`}
+              title={goModeSupported(hand?.variant)
+                ? 'Switch to GO Mode (fast live action with automatic card dealing & pot tracking)'
+                : `${variantMeta(hand?.variant).label} is Action Tracking only for now.`}
             >
               <Zap size={16} /> GO Mode
             </button>
@@ -3239,7 +3246,7 @@ export default function PokerTracker() {
               <button
                 type="button"
                 onClick={() => {
-                  setIsGoMode(showSwitchModeConfirm === 'go');
+                  if (showSwitchModeConfirm !== 'go' || goModeSupported(hand?.variant)) setIsGoMode(showSwitchModeConfirm === 'go');
                   setShowSwitchModeConfirm(null);
                 }}
                 className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg cursor-pointer transition-all"
