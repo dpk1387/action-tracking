@@ -22,11 +22,15 @@ export const BOT_STYLES = [
 ];
 
 export const BOT_SPEEDS = [
-  { id: 'slow', label: 'Slow', handsPerPlayer: 4.5, thinkMs: 1500 },
-  { id: 'regular', label: 'Regular', handsPerPlayer: 3, thinkMs: 800 },
-  { id: 'turbo', label: 'Turbo', handsPerPlayer: 1.75, thinkMs: 320 },
-  { id: 'hyper', label: 'Hyper-turbo', handsPerPlayer: 1, thinkMs: 110 },
+  { id: 'slow', label: 'Slow', handsPerPlayer: 4.5 },
+  { id: 'regular', label: 'Regular', handsPerPlayer: 3 },
+  { id: 'turbo', label: 'Turbo', handsPerPlayer: 1.75 },
+  { id: 'hyper', label: 'Hyper-turbo', handsPerPlayer: 1 },
 ];
+
+// Every bot move takes the same 0.8s; the speed choice only changes how many
+// hands each blind level lasts.
+export const BOT_THINK_MS = 800;
 
 const STANDARD_BLINDS = [
   [25, 50], [50, 100], [75, 150], [100, 200], [150, 300], [200, 400], [250, 500],
@@ -50,9 +54,8 @@ export function handsPerLevel(speedId, playerCount) {
   return Math.max(1, Math.round(speed.handsPerPlayer * Math.max(2, playerCount)));
 }
 
-export function thinkDelay(speedId) {
-  const speed = BOT_SPEEDS.find((s) => s.id === speedId) || BOT_SPEEDS[1];
-  return speed.thinkMs;
+export function thinkDelay() {
+  return BOT_THINK_MS;
 }
 
 /** Index of the level to start on for a stack of `bb` big blinds. */
@@ -78,10 +81,12 @@ export function nextBlindSeats({ ring, activeSeats, buttonSeat, sbSeat, bbSeat }
   const active = new Set(activeSeats);
   if (active.size <= 1) return { buttonSeat, sbSeat, bbSeat };
   if (active.size === 2) {
-    // Heads-up: the button posts the small blind and changes hands every hand,
-    // so the seat that just posted the big blind becomes the new button.
+    // Heads-up: the button posts the small blind, so the seat that just posted
+    // the big blind becomes the new button. This also covers the 3-handed to
+    // heads-up changeover: the two survivors did not both pay the BB, and the
+    // ex-BB takes the button/SB while the other posts the BB.
     const others = ring.filter((s) => active.has(s));
-    const newButton = bbSeat != null && active.has(bbSeat) ? bbSeat : others[0];
+    const newButton = [bbSeat, sbSeat].find((s) => s != null && active.has(s)) ?? others[0];
     const other = others.find((s) => s !== newButton);
     return { buttonSeat: newButton, sbSeat: newButton, bbSeat: other, deadSb: false, deadBb: false, headsUp: true };
   }
