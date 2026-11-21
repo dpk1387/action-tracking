@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogIn, LogOut, Play, Clock, Users, Spade, Trash2, Trophy, FolderOpen, Calendar, Eye, Zap, Flame, ChevronRight, Smartphone, History, Bot } from 'lucide-react';
+import { LogIn, LogOut, Play, Clock, Users, Spade, Trash2, Trophy, FolderOpen, Calendar, Eye, Zap, Flame, ChevronRight, Smartphone, History, Bot, Layers } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { money, VARIANTS, formatSessionName } from '@/lib/poker';
 import { discardSavedSession, discardAllSavedSessions } from '@/lib/liveSync';
@@ -29,6 +29,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   const [deletingCode, setDeletingCode] = useState(null);
   const [showModeModal, setShowModeModal] = useState(false);
   const [showDegenSubmenu, setShowDegenSubmenu] = useState(false);
+  const [degenCategory, setDegenCategory] = useState(null);
   const [showDirectorTournamentsModal, setShowDirectorTournamentsModal] = useState(false);
   const [activeTournaments, setActiveTournaments] = useState(() => mttStore.getTournaments().filter((t) => t.active));
 
@@ -45,12 +46,34 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
     { key: 'second_best', title: '2nd Best', desc: '2nd best hand AT SHOWDOWN wins the pot.' },
     { key: 'three_two_one', title: '3-2-1', desc: '3 flop cards, 2 turn cards, 1 river card.' },
     { key: 'ocean', title: 'Ocean', desc: 'After river betting, 6th street (Ocean) is dealt with one more betting round.' },
-    { key: 'showtime', title: "Naked Hold 'Em", desc: 'All folded cards are shown face up and factored into equity.' },
-    { key: 'mandatory_3bet', title: 'Mandatory 3-Bet', desc: 'Preflop flat calling/limping is prohibited until a 3-bet occurs.' },
     { key: 'red_river', title: 'Red River', desc: 'If river card is red (♦/♥), deal another river card after betting until a black card (♠/♣) lands.' },
     { key: 'win_button', title: 'Win the Button', desc: 'The winner of each hand takes the Button position for the next hand.' },
     { key: 'deuces_wild', title: 'Deuces Wild', desc: 'All 2s are wild! Dealt 22 forces instant reveal, redeal, and collects blinds/antes.' },
   ];
+
+  // Variants that share a theme live behind one card with its own submenu.
+  const degenCategories = [
+    {
+      key: 'extra_info',
+      title: 'Extra Information',
+      desc: "Games that put cards on the table you would not normally see.",
+      variants: [
+        { key: 'showtime', title: "Naked Hold 'Em", desc: 'All folded cards are shown face up and factored into equity.' },
+        { key: 'pirate_poker', title: 'Pirate Poker', desc: 'When you are dealt your hole cards you must expose one of them to the table.' },
+      ],
+    },
+    {
+      key: 'mandatory_action',
+      title: 'Mandatory Action',
+      desc: 'Calling and limping are banned until enough aggression has happened.',
+      variants: [
+        { key: 'mandatory_3bet', title: 'Mandatory 3-Bet', desc: 'Preflop flat calling/limping is prohibited until a 3-bet occurs.' },
+        { key: 'mandatory_raise', title: 'Mandatory Raise', desc: 'On every street you must raise rather than call or limp until a raise has occurred.' },
+        { key: 'mandatory_4bet', title: 'Mandatory 4-Bet', desc: 'Calling and limping are prohibited until a 4-bet occurs.' },
+      ],
+    },
+  ];
+  const degenVariantCount = degenVariants.length + degenCategories.reduce((n, c) => n + c.variants.length, 0);
 
   useEffect(() => {
     setActiveTournaments(mttStore.getTournaments().filter((t) => t.active));
@@ -707,11 +730,11 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                           Degen Variants (NLH)
                         </span>
                         <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                          {degenVariants.length} Variants <ChevronRight size={12} />
+                          {degenVariantCount} Variants <ChevronRight size={12} />
                         </span>
                       </div>
                       <p className="text-xs text-amber-200/70 mt-1 leading-relaxed">
-                        Play wild NLH variants: 2nd Best, 3-2-1, Ocean, Naked Hold 'Em, Mandatory 3-Bet, Red River, Win the Button, or Deuces Wild!
+                        Play wild NLH variants: 2nd Best, 3-2-1, Ocean, Red River, Win the Button, Deuces Wild, plus Extra Information and Mandatory Action games!
                       </p>
                     </div>
                   </div>
@@ -745,31 +768,76 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
               <div className="space-y-2.5">
                 <button
                   type="button"
-                  onClick={() => setShowDegenSubmenu(false)}
+                  onClick={() => {
+                    if (degenCategory) { setDegenCategory(null); return; }
+                    setShowDegenSubmenu(false);
+                  }}
                   className="text-xs text-amber-400 hover:text-amber-300 mb-2 font-semibold flex items-center gap-1 cursor-pointer"
                 >
-                  ← Back to Modes
+                  ← {degenCategory ? 'Back to Degen Variants' : 'Back to Modes'}
                 </button>
-                {degenVariants.map((v) => (
-                  <div
-                    key={v.key}
-                    onClick={() => handleLaunchDegen(v.key)}
-                    className="p-3.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-500/60 transition-all cursor-pointer group"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold text-white group-hover:text-amber-300 flex items-center gap-2">
-                        <Zap size={14} className="text-amber-400" />
-                        {v.title}
-                      </span>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950 border border-amber-500/40 text-amber-300 uppercase">
-                        NLH Variant
-                      </span>
+                {degenCategory ? (
+                  degenCategories.filter((c) => c.key === degenCategory).map((cat) => cat.variants.map((v) => (
+                    <div
+                      key={v.key}
+                      onClick={() => handleLaunchDegen(v.key)}
+                      className="p-3.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-500/60 transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-bold text-white group-hover:text-amber-300 flex items-center gap-2">
+                          <Zap size={14} className="text-amber-400" />
+                          {v.title}
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950 border border-amber-500/40 text-amber-300 uppercase">
+                          {cat.title}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1 leading-relaxed">{v.desc}</p>
                     </div>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                      {v.desc}
-                    </p>
-                  </div>
-                ))}
+                  )))
+                ) : (
+                  <>
+                    {degenVariants.map((v) => (
+                      <div
+                        key={v.key}
+                        onClick={() => handleLaunchDegen(v.key)}
+                        className="p-3.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-500/60 transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-bold text-white group-hover:text-amber-300 flex items-center gap-2">
+                            <Zap size={14} className="text-amber-400" />
+                            {v.title}
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950 border border-amber-500/40 text-amber-300 uppercase">
+                            NLH Variant
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                          {v.desc}
+                        </p>
+                      </div>
+                    ))}
+                    {degenCategories.map((cat) => (
+                      <div
+                        key={cat.key}
+                        data-testid={`degen-cat-${cat.key}`}
+                        onClick={() => setDegenCategory(cat.key)}
+                        className="p-3.5 rounded-xl bg-amber-950/40 hover:bg-amber-900/50 border border-amber-600/50 hover:border-amber-400 transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-bold text-amber-200 group-hover:text-amber-100 flex items-center gap-2">
+                            <Layers size={14} className="text-amber-300" />
+                            {cat.title}
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-200 uppercase flex items-center gap-1">
+                            {cat.variants.length} Games <ChevronRight size={10} />
+                          </span>
+                        </div>
+                        <p className="text-xs text-amber-200/70 mt-1 leading-relaxed">{cat.desc}</p>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             )}
 

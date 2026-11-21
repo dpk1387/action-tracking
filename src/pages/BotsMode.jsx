@@ -48,7 +48,7 @@ function sortHole(cards) {
 
 const ACTION_LABEL = { fold: 'Fold', check: 'Check', call: 'Call', bet: 'Bet', raise: 'Raise', allin: 'All-in', sb: 'SB', bb: 'BB' };
 
-function CardChip({ card, fourColor = false }) {
+function CardChip({ card, fourColor = false, delay = 0 }) {
   if (!card) {
     return (
       <span className="inline-flex items-center justify-center w-7 h-10 sm:w-8 sm:h-11 rounded-md bg-[#0f1319] border border-slate-700/70" />
@@ -62,7 +62,10 @@ function CardChip({ card, fourColor = false }) {
         : card.suit === 'c' ? 'text-emerald-600'
           : 'text-slate-900';
   return (
-    <span className="inline-flex items-center justify-center w-7 h-10 sm:w-8 sm:h-11 rounded-md bg-white border border-slate-300 shadow-sm text-sm font-black leading-none">
+    <span
+      className="inline-flex items-center justify-center w-7 h-10 sm:w-8 sm:h-11 rounded-md bg-white border border-slate-300 shadow-sm text-sm font-black leading-none"
+      style={{ animation: 'lcDealIn 200ms ease-out both', animationDelay: `${delay}ms` }}
+    >
       <span className={color}>{cardText(card)}</span>
     </span>
   );
@@ -134,14 +137,14 @@ export default function BotsMode() {
     const anySpec = Object.values(specs).some((v) => String(v ?? '').trim() !== '');
     let botStyles;
     if (!anySpec) {
-      botStyles = Array.from({ length: botCount }, () => 'random');
+      botStyles = Array.from({ length: botCount }, () => resolveStyle('random'));
     } else {
       const assigned = assignStyles(specs, botCount);
       if (assigned.error) {
         setSetupError(assigned.error);
         return;
       }
-      botStyles = assigned.styles;
+      botStyles = assigned.styles.map((id) => resolveStyle(id));
     }
     setSetupError(null);
     const seats = [];
@@ -346,14 +349,15 @@ export default function BotsMode() {
       const t = setTimeout(() => finishHand(hand), 700);
       return () => clearTimeout(t);
     }
+    // Fill the street straight away; rendering drops hidden placeholders, so
+    // the new cards appear once with their deal-in animation instead of a
+    // blank frame followed by a second, sudden render.
     const hidden = (hand.communityCards || []).filter((c) => c && c.hidden).length;
     if (hidden > 0) {
-      const t = setTimeout(() => {
-        const cards = deckRef.current.splice(0, hidden);
-        const res = fillBoard(hand, cards);
-        if (!res.error) setHand(res.hand);
-      }, 450);
-      return () => clearTimeout(t);
+      const cards = deckRef.current.splice(0, hidden);
+      const res = fillBoard(hand, cards);
+      if (!res.error) setHand(res.hand);
+      return undefined;
     }
     if (hand.currentPlayer !== -1) return undefined;
     if (hand.street !== 'river') {
@@ -453,7 +457,7 @@ export default function BotsMode() {
     }
     const board = (hand.communityCards || []).filter((c) => c && !c.hidden);
     const t = setTimeout(() => {
-      const { results } = calcEquity(holeArrays, board, 4000, 'nlh');
+      const { results } = calcEquity(holeArrays, board, 1500, 'nlh');
       const next = {};
       ids.forEach((id, i) => { next[id] = results[i]?.win ?? 0; });
       setEquity(next);
@@ -549,6 +553,27 @@ export default function BotsMode() {
 
   const levelLabel = formatBlindLevel(levels, game?.levelIndex || 0);
 
+  // One line for the award banner, with the amount each player actually took
+  // across all side pots and correct grammar for the hero.
+  const winSummary = useMemo(() => {
+    if (!hand || hand.phase !== 'awarded') return null;
+    const byPlayer = new Map();
+    for (const w of hand.winners || []) {
+      const p = hand.players.find((x) => x.id === w.playerId);
+      if (!p) continue;
+      const entry = byPlayer.get(p.id) || { name: p.name, isHero: p.seat === heroSeatNo, amount: 0 };
+      entry.amount += w.amount || 0;
+      byPlayer.set(p.id, entry);
+    }
+    const list = [...byPlayer.values()].sort((a, b) => b.amount - a.amount);
+    if (!list.length) return { text: 'Hand complete' };
+    if (list.length === 1) {
+      const w = list[0];
+      return { text: `${w.isHero ? 'You win' : `${w.name} wins`} ${betLabel(w.amount)}` };
+    }
+    return { text: list.map((w) => `${w.isHero ? 'You win' : `${w.name} wins`} ${betLabel(w.amount)}`).join(' · ') };
+  }, [hand, betLabel, heroSeatNo]);
+
   const styleFill = useMemo(() => {
     const specs = Object.values(setupDraft.styleSpecs || {});
     if (!specs.some((v) => String(v ?? '').trim() !== '')) return 'blank';
@@ -575,7 +600,7 @@ export default function BotsMode() {
     const fillOk = styleFill === 'blank' || (styleFill !== 'invalid' && styleFill.min <= botCount);
     return (
       <div className="min-h-screen bg-[#121417] text-white p-4 sm:p-6">
-        <div className="w-full max-w-xl mx-auto space-y-4">
+        <div className="w-full max-w-xl lg:max-w-4xl xl:max-w-6xl mx-auto space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-black tracking-tight text-white">Play Bots</h1>
@@ -603,7 +628,7 @@ export default function BotsMode() {
               </div>
             </div>
 
-            <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl sm:col-span-2">
+            <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl">
               <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Game type</div>
               <div className="grid grid-cols-2 gap-2">
                 {GAME_TYPES.map((gt) => (
@@ -694,7 +719,7 @@ export default function BotsMode() {
 
             <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl sm:col-span-2">
               <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Bot playstyles</div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2">
                 {STYLE_CHOICES.map((st) => (
                   <label key={st.id} title={st.desc} className="flex items-center justify-between gap-2 rounded-xl bg-[#19202b] border border-slate-700/70 px-2.5 py-1.5">
                     <span className="text-[11px] font-semibold text-slate-300 truncate">{st.label}</span>
@@ -730,7 +755,7 @@ export default function BotsMode() {
 
   return (
     <div className="h-[100dvh] min-h-[560px] bg-[#121417] text-white flex flex-col overflow-hidden">
-      <div className="w-full max-w-xl mx-auto flex-1 min-h-0 flex flex-col gap-2 p-2 sm:p-3">
+      <div className="w-full max-w-6xl mx-auto flex-1 min-h-0 flex flex-col gap-2 p-2 sm:p-3 lg:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 bg-[#151921] border border-slate-800 rounded-2xl px-3.5 py-2.5 shadow-xl">
           <div className="flex items-center gap-3">
             <span className="text-xs font-black uppercase tracking-widest text-emerald-400">Play Bots · {BOT_DIFFICULTIES.find((d) => d.id === setup.difficulty)?.label}</span>
@@ -764,7 +789,8 @@ export default function BotsMode() {
             </div>
           </div>
         ) : (
-          <>
+          <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-2 lg:gap-3">
+            <div className="flex-1 min-h-0 min-w-0 flex flex-col gap-2">
             <div data-testid="table" className="relative w-full flex-1 min-h-[280px] bg-[#11141b] border border-slate-800/90 rounded-2xl shadow-md overflow-hidden">
               <div className="absolute inset-[11%] rounded-[50%] border border-emerald-900/60 bg-[radial-gradient(ellipse_at_center,_#17332b_0%,_#0d1a17_75%)] shadow-[inset_0_0_40px_rgba(0,0,0,0.55)]" />
 
@@ -775,43 +801,49 @@ export default function BotsMode() {
                     <div className="text-xl sm:text-2xl font-black text-white font-mono leading-tight">{formatChips(pot, unit, hand?.bigBlind)}</div>
                   </>
                 )}
-                <div data-testid="board" className="flex justify-center gap-1 mt-1 min-h-[40px] items-center">
-                  {(hand?.communityCards || []).map((c, i) => (
-                    <CardChip key={i} card={c && c.hidden ? null : c} fourColor={fourColor} size="sm" />
+                <div data-testid="board" className="flex justify-center gap-1 sm:gap-1.5 mt-1 min-h-[44px] items-center">
+                  {(hand?.communityCards || []).filter((c) => c && !c.hidden).map((c, i) => (
+                    <CardChip key={`${i}-${c.rank}${c.suit}`} card={c} fourColor={fourColor} delay={Math.min(i, 5) * 55} />
                   ))}
                 </div>
                 <div className="text-[9px] text-slate-500 font-mono">Hand #{hand?.handNumber || 0}</div>
               </div>
 
               {orderedPlayers.map((p) => {
-                const showAll = allInSpot && hand.phase === 'playing';
+                // Cards stay hidden through an all-in until the betting is over,
+                // then only the players who are all in turn them over.
+                const bettingOver = hand.currentPlayer === -1 || hand.phase !== 'playing';
                 const seat = game.seats.find((s) => s.seat === p.seat);
                 const isTurn = hand.currentPlayer === p.id && hand.phase === 'playing';
                 const folded = p.status === 'folded';
-                const reveal = Boolean(seat?.isHero) || showAll || hand.phase === 'awarded';
+                const reveal = Boolean(seat?.isHero)
+                  || (p.status === 'allin' && bettingOver)
+                  || (hand.phase === 'awarded' && !folded);
                 return (
-                  <div key={p.id} data-testid={`seat-${p.seat}`} data-status={p.status} className="absolute -translate-x-1/2 -translate-y-1/2" style={seatPosition(p)}>
-                    <div className={`w-[74px] sm:w-[94px] rounded-xl border px-1 py-1 text-center ${isTurn ? 'border-amber-400 bg-amber-500/15 ring-2 ring-amber-400/40' : folded ? 'border-slate-800 bg-[#141922]/90 opacity-45' : 'border-slate-700/80 bg-[#19202b]/95'}`}>
-                      <div className="flex items-center justify-center gap-0.5">
-                        {p.seat === hand.buttonSeat && <span className="text-[8px] px-0.5 rounded bg-white text-black font-black leading-tight">D</span>}
-                        {p.seat === hand.sbSeat && p.seat !== hand.bbSeat && <span className="text-[8px] px-0.5 rounded bg-sky-500/30 text-sky-200 font-bold leading-tight">SB</span>}
-                        {p.seat === hand.bbSeat && <span className="text-[8px] px-0.5 rounded bg-rose-500/30 text-rose-200 font-bold leading-tight">BB</span>}
-                        <span className="text-[10px] font-bold text-white truncate">{p.name}</span>
-                      </div>
-                      {showStyle && seat?.styleId && (
-                        <div data-testid={`style-${p.seat}`} className="text-[9px] text-slate-500 leading-tight">{STYLE_SHORT[seat.styleId] || seat.styleId}</div>
-                      )}
-                      <div data-testid={`stack-${p.seat}`} className="text-[11px] font-mono text-emerald-300 leading-tight">{stackLabel(p, seat)}</div>
-                      <div className="flex items-center justify-center gap-0.5 min-h-[32px] mt-0.5">
+                  <div key={p.id} data-testid={`seat-${p.seat}`} data-status={p.status} className="absolute -translate-x-1/2 -translate-y-1/2 z-10" style={seatPosition(p)}>
+                    <div className={`flex flex-col items-center ${folded ? 'opacity-45' : ''}`}>
+                      <div data-testid={`cards-${p.seat}`} className="flex items-end justify-center gap-0.5 h-[34px] sm:h-[40px] -mb-2 z-20 relative">
                         {reveal
-                          ? sortHole(holes[p.id]).map((c, i) => <CardChip key={i} card={c} fourColor={fourColor} size="sm" />)
-                          : <span className="text-[10px] text-slate-600">—</span>}
+                          ? sortHole(holes[p.id]).map((c, i) => <CardChip key={`${i}-${c?.rank}${c?.suit}`} card={c} fourColor={fourColor} delay={i * 70} />)
+                          : !folded ? <span className="text-[10px] text-slate-600">—</span> : null}
                       </div>
-                      <div className="flex items-center justify-center gap-1 text-[9px] min-h-[12px]">
-                        {p.currentBet > 0 && <span className="font-mono text-amber-300">{betLabel(p.currentBet)}</span>}
-                        {equity && equity[p.id] != null && <span className="font-mono text-sky-300">{equity[p.id].toFixed(0)}%</span>}
+                      <div className={`w-[80px] sm:w-[98px] lg:w-[110px] rounded-xl border px-1 pt-2.5 pb-1 text-center shadow-lg ${isTurn ? 'border-amber-400 bg-amber-500/15 ring-2 ring-amber-400/40' : 'border-slate-700/80 bg-[#19202b]/95'}`}>
+                        <div className="flex items-center justify-center gap-0.5">
+                          {p.seat === hand.buttonSeat && <span className="text-[8px] px-0.5 rounded bg-white text-black font-black leading-tight">D</span>}
+                          {p.seat === hand.sbSeat && p.seat !== hand.bbSeat && <span className="text-[8px] px-0.5 rounded bg-sky-500/30 text-sky-200 font-bold leading-tight">SB</span>}
+                          {p.seat === hand.bbSeat && <span className="text-[8px] px-0.5 rounded bg-rose-500/30 text-rose-200 font-bold leading-tight">BB</span>}
+                          <span className="text-[10px] font-bold text-white truncate">{p.name}</span>
+                        </div>
+                        {showStyle && seat?.styleId && (
+                          <div data-testid={`style-${p.seat}`} className="text-[9px] text-slate-500 leading-tight">{STYLE_SHORT[seat.styleId] || seat.styleId}</div>
+                        )}
+                        <div data-testid={`stack-${p.seat}`} className="text-[11px] font-mono text-emerald-300 leading-tight">{stackLabel(p, seat)}</div>
+                        <div className="flex items-center justify-center gap-1 text-[9px] min-h-[12px]">
+                          {p.currentBet > 0 && <span className="font-mono text-amber-300">{betLabel(p.currentBet)}</span>}
+                          {equity && equity[p.id] != null && <span className="font-mono text-sky-300">{equity[p.id].toFixed(0)}%</span>}
+                        </div>
+                        {p.lastAction?.type && <div className="text-[9px] text-slate-500 leading-tight">{ACTION_LABEL[p.lastAction.type] || p.lastAction.type}</div>}
                       </div>
-                      {p.lastAction?.type && <div className="text-[9px] text-slate-500 leading-tight">{ACTION_LABEL[p.lastAction.type] || p.lastAction.type}</div>}
                     </div>
                   </div>
                 );
@@ -821,8 +853,8 @@ export default function BotsMode() {
             <div className="shrink-0 bg-[#0f1319]/95 border border-slate-800 rounded-2xl shadow-xl">
               <div className="w-full p-2 sm:p-2.5 space-y-2">
                 {hand?.phase === 'awarded' ? (
-                  <div className="text-center text-sm font-bold text-amber-300">
-                    {[...new Set(hand.winners.map((w) => hand.players.find((p) => p.id === w.playerId)?.name))].join(', ')} wins {betLabel(hand.winners.reduce((s, w) => s + (w.amount || 0), 0))}
+                  <div data-testid="winner-banner" className="text-center text-sm font-bold text-amber-300">
+                    {winSummary?.text || 'Hand complete'}
                   </div>
                 ) : isHeroTurn ? (
                   <>
@@ -878,7 +910,36 @@ export default function BotsMode() {
                 )}
               </div>
             </div>
-          </>
+            </div>
+
+            <aside className="hidden lg:flex w-60 xl:w-72 shrink-0 flex-col gap-2 min-h-0">
+              <div className="bg-[#151921] border border-slate-800 rounded-2xl p-3 shadow-xl">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Recent hands</div>
+                {history.length === 0 ? (
+                  <p className="text-[11px] text-slate-500">No hands played yet.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-[45vh] overflow-y-auto pr-1">
+                    {history.slice(0, 12).map((h, i) => (
+                      <div key={`${h.handNumber}-${i}`} className="rounded-lg bg-[#19202b] border border-slate-800 px-2 py-1.5">
+                        <div className="flex items-center justify-between text-[10px] text-slate-500">
+                          <span>#{h.handNumber}</span>
+                          <span className="font-mono text-amber-300">{formatChips(h.maxWon, unit, hand?.bigBlind)}</span>
+                        </div>
+                        <div className="text-[11px] text-white font-semibold truncate">{h.winners.join(', ')}</div>
+                        {h.board && <div className="text-[10px] font-mono text-slate-500 truncate">{h.board}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="bg-[#151921] border border-slate-800 rounded-2xl p-3 shadow-xl text-[11px] text-slate-400 space-y-1">
+                <div className="flex justify-between"><span>Level</span><span className="font-mono text-slate-200">{levelLabel}</span></div>
+                <div className="flex justify-between"><span>Hands this level</span><span className="font-mono text-slate-200">{game.handsThisLevel}/{game.handsTarget}</span></div>
+                <div className="flex justify-between"><span>Players left</span><span className="font-mono text-slate-200">{game.seats.filter((x) => !x.eliminated).length}</span></div>
+                <div className="flex justify-between"><span>Big blind ante</span><span className="font-mono text-slate-200">{formatChips(hand?.ante || 0, unit, hand?.bigBlind)}</span></div>
+              </div>
+            </aside>
+          </div>
         )}
       </div>
 
