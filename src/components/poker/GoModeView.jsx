@@ -130,6 +130,8 @@ export default function GoModeView({
   const [pinPromptOpen, setPinPromptOpen] = useState(false);
   const [pinEntry, setPinEntry] = useState('');
   const [pinError, setPinError] = useState('');
+  const [pinFails, setPinFails] = useState(0);
+  const [pinLockedUntil, setPinLockedUntil] = useState(0);
   const [pinUnlocked, setPinUnlocked] = useState(false);
   const [digitOrder, setDigitOrder] = useState(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
   const [holdProgress, setHoldProgress] = useState(0);
@@ -165,6 +167,7 @@ export default function GoModeView({
     setPinEntry('');
     setPinError('');
     setPinUnlocked(false);
+    setPinFails(0);
     setHoldProgress(0);
   }, [hand?.handNumber, hand?.street, hand?.currentPlayer, hand?.actionHistory?.length]);
 
@@ -426,9 +429,13 @@ export default function GoModeView({
 
   const needsTurnAck = Boolean(cp && !turnVerified && !isAllInSituation);
 
+  // Three wrong PINs in a row lock the keypad for 30s, so a neighbour cannot brute-force 3 digits.
+  const pinLockRemaining = Math.max(0, Math.ceil((pinLockedUntil - now) / 1000));
+  const pinLocked = pinLockRemaining > 0;
+
   // 3-digit card PIN: only the hole cards are locked, stacks and bets stay readable.
   const handlePinDigit = (digit) => {
-    if (!cpPin || pinEntry.length >= 3) return;
+    if (!cpPin || pinEntry.length >= 3 || pinLocked) return;
     const next = pinEntry + digit;
     setPinEntry(next);
     setPinError('');
@@ -438,14 +445,31 @@ export default function GoModeView({
         setPinPromptOpen(false);
         setPinEntry('');
         setPeekCards(true);
+        setPinFails(0);
       } else {
-        setPinError('Wrong PIN');
+        const fails = pinFails + 1;
+        setPinFails(fails);
+        if (fails >= 3) {
+          setPinLockedUntil(Date.now() + 30000);
+          setPinError('3 wrong PINs — locked for 30s');
+        } else {
+          setPinError(`Wrong PIN (${3 - fails} left)`);
+        }
         setTimeout(() => setPinEntry(''), 350);
+        shuffleKeypad();
       }
     }
   };
 
   // Cards stay hidden until the acting player unlocks them with their PIN (if they set one).
+  // Cards re-hide on their own after the player's chosen peek window (Settings → Hide Cards After).
+  const cardTimeout = Number(cpPrefs.cardTimeout ?? 10);
+  useEffect(() => {
+    if (!peekCards || !cardTimeout) return;
+    const t = setTimeout(() => setPeekCards(false), cardTimeout * 1000);
+    return () => clearTimeout(t);
+  }, [peekCards, cardTimeout, hand?.currentPlayer, hand?.street]);
+
   const togglePeekCards = () => {
     if (!peekCards && cpPin && !pinUnlocked) {
       setPinPromptOpen(true);
@@ -715,7 +739,7 @@ export default function GoModeView({
                 title="Tournament rebuy / add-on"
               >
                 <RotateCcw size={13} />
-                <span className="hidden sm:inline">Rebuy</span>
+                <span>Rebuy</span>
               </button>
             )}
 
@@ -727,7 +751,7 @@ export default function GoModeView({
                 title="Re-enter a busted player"
               >
                 <UserPlus size={13} />
-                <span className="hidden sm:inline">Re-entry</span>
+                <span>Re-entry</span>
               </button>
             )}
 
@@ -1072,7 +1096,16 @@ export default function GoModeView({
             {/* CENTER-RIGHT: Pot Size + Last Raise Info & Community Board */}
             <div className="space-y-3 text-center md:text-right md:pl-2">
               <div className="flex flex-wrap items-start justify-center md:justify-end gap-4">
-                {/* Last Raise / Bet Info (left of Current Pot) */}
+                <div>
+                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Current Pot
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
+                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
+                  </div>
+                </div>
+
+                {/* Last Raise / Bet Info (right of Current Pot) */}
                 <div className="bg-[#19202b] border border-slate-700/80 rounded-2xl px-3 py-2 text-left min-w-[130px]">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
                     Last Raise
@@ -1096,15 +1129,6 @@ export default function GoModeView({
                   ) : (
                     <div className="text-xs font-semibold text-slate-500">None</div>
                   )}
-                </div>
-
-                <div>
-                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Current Pot
-                  </div>
-                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
-                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
-                  </div>
                 </div>
 
               </div>
@@ -1510,7 +1534,13 @@ export default function GoModeView({
               })}
             </div>
 
-            {pinError && <div className="text-xs font-bold text-rose-400">{pinError}</div>}
+            {pinLocked ? (
+              <div className="text-xs font-bold text-rose-400" data-testid="pin-lockout">
+                Too many wrong PINs — try again in {pinLockRemaining}s
+              </div>
+            ) : (
+              pinError && <div className="text-xs font-bold text-rose-400">{pinError}</div>
+            )}
 
             <div className="flex items-center justify-end">
               <button
@@ -1527,8 +1557,11 @@ export default function GoModeView({
                 <button
                   key={d}
                   type="button"
+                  disabled={pinLocked}
                   onClick={() => handlePinDigit(d)}
-                  className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-black text-lg border border-slate-700 cursor-pointer transition-all"
+                  className={`py-3 rounded-xl text-white font-black text-lg border border-slate-700 transition-all ${
+                    pinLocked ? 'bg-slate-900 text-slate-600 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 active:scale-95 cursor-pointer'
+                  }`}
                 >
                   {d}
                 </button>
@@ -1543,7 +1576,10 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={() => handlePinDigit('0')}
-                className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-black text-lg border border-slate-700 cursor-pointer transition-all"
+                disabled={pinLocked}
+                className={`py-3 rounded-xl text-white font-black text-lg border border-slate-700 transition-all ${
+                  pinLocked ? 'bg-slate-900 text-slate-600 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 active:scale-95 cursor-pointer'
+                }`}
               >
                 0
               </button>
