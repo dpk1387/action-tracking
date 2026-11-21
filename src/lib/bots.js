@@ -19,7 +19,22 @@ export const BOT_STYLES = [
   { id: 'nit', label: 'Nit', desc: 'Extremely tight' },
   { id: 'fish', label: 'Fish', desc: 'Weak, spazzy play' },
   { id: 'shark', label: 'Shark', desc: 'Strong, aggressive, tricky' },
+  { id: 'rec', label: 'REC', desc: 'Recreational: plays too many hands, calls wide, rarely raises' },
 ];
+
+// Short badges used when playstyles are shown at the table.
+export const STYLE_SHORT = {
+  lag: 'LAG',
+  tag: 'TAG',
+  loose_passive: 'LP',
+  tight_passive: 'TP',
+  calling_station: 'CS',
+  nit: 'NIT',
+  fish: 'FISH',
+  shark: 'SHARK',
+  rec: 'REC',
+  random: 'MIX',
+};
 
 export const BOT_SPEEDS = [
   { id: 'slow', label: 'Slow', handsPerPlayer: 4.5 },
@@ -28,9 +43,9 @@ export const BOT_SPEEDS = [
   { id: 'hyper', label: 'Hyper-turbo', handsPerPlayer: 1 },
 ];
 
-// Every bot move takes the same 0.8s; the speed choice only changes how many
+// Every bot move takes the same 0.7s; the speed choice only changes how many
 // hands each blind level lasts.
-export const BOT_THINK_MS = 800;
+export const BOT_THINK_MS = 700;
 
 const STANDARD_BLINDS = [
   [25, 50], [50, 100], [75, 150], [100, 200], [150, 300], [200, 400], [250, 500],
@@ -122,6 +137,7 @@ const STYLE_PROFILES = {
   nit: { open: 0.62, call: 0.58, raise: 0.74, bluff: 0.01, size: 0.6, callBonus: -0.05, aggro: 0.25 },
   fish: { open: 0.3, call: 0.38, raise: 0.52, bluff: 0.13, size: 0.5, callBonus: 0.12, extraNoise: 0.05, aggro: 0.4 },
   shark: { open: 0.46, call: 0.44, raise: 0.56, bluff: 0.17, size: 0.78, callBonus: 0, aggro: 0.7 },
+  rec: { open: 0.26, call: 0.34, raise: 0.84, bluff: 0.06, size: 0.45, callBonus: 0.14, extraNoise: 0.04, aggro: 0.12 },
 };
 
 const DIFFICULTY_TUNING = {
@@ -137,6 +153,59 @@ export function resolveStyle(styleId, rng = Math.random) {
   if (styleId && styleId !== 'random' && STYLE_PROFILES[styleId]) return styleId;
   const ids = Object.keys(STYLE_PROFILES);
   return ids[Math.floor(rng() * ids.length)];
+}
+
+/** Parse one style count: "2" (exact) or "2-3" (range). Blank means 0. */
+export function parseStyleSpec(text) {
+  const t = String(text ?? '').trim();
+  if (!t) return { min: 0, max: 0 };
+  const m = t.match(/^(\d+)\s*(?:-\s*(\d+))?$/);
+  if (!m) return null;
+  const min = Number(m[1]);
+  const max = m[2] == null ? min : Number(m[2]);
+  if (max < min) return null;
+  return { min, max };
+}
+
+/**
+ * Turn per-style counts/ranges into one style per bot.
+ * Returns { styles } or { error } when the numbers cannot fill the table.
+ */
+export function assignStyles(specs, count, rng = Math.random) {
+  const parsed = {};
+  let minSum = 0;
+  let maxSum = 0;
+  for (const [id, text] of Object.entries(specs || {})) {
+    const spec = parseStyleSpec(text);
+    const label = BOT_STYLES.find((s) => s.id === id)?.label || id;
+    if (!spec) return { error: `${label}: use a number like 2 or a range like 2-3.` };
+    parsed[id] = spec;
+    minSum += spec.min;
+    maxSum += spec.max;
+  }
+  if (count < minSum || count > maxSum) {
+    return { error: `Those counts allow ${minSum}-${maxSum} bots, but the table needs ${count}.` };
+  }
+  const counts = {};
+  Object.entries(parsed).forEach(([id, spec]) => { counts[id] = spec.min; });
+  let budget = count - minSum;
+  // Spread the leftover bots randomly across the styles that still have room.
+  const open = Object.keys(parsed).filter((id) => parsed[id].max > parsed[id].min || budget === 0);
+  let guard = 0;
+  while (budget > 0 && guard++ < 1000) {
+    const room = open.filter((id) => counts[id] < parsed[id].max);
+    if (!room.length) break;
+    const pick = room[Math.floor(rng() * room.length)];
+    counts[pick] += 1;
+    budget -= 1;
+  }
+  const pool = [];
+  Object.entries(counts).forEach(([id, n]) => { for (let i = 0; i < n; i++) pool.push(id); });
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return { styles: pool };
 }
 
 export function styleProfile(styleId) {
