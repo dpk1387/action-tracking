@@ -5,6 +5,8 @@ const CHEN_HIGH = {
 };
 const RANK_ORDER = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
 
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
 /** Bill Chen's preflop power score for two hole cards. */
 export function chenScore(cards) {
   if (!Array.isArray(cards) || cards.length < 2) return 0;
@@ -89,67 +91,268 @@ function raiseTarget(hand, cp, desiredTo) {
   return target;
 }
 
+/** Did this player make the last aggressive action on an earlier street? */
+function isLastAggressor(hand, cp) {
+  const history = hand.actionHistory || [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const e = history[i];
+    if (e.street === hand.street) continue;
+    return e.player === cp.name && /bet|raise|all/i.test(e.action || '');
+  }
+  return false;
+}
+
+/**
+ * How coordinated the board is. Dry boards (paired, rainbow, disconnected) are
+ * good to c-bet; wet boards (two-tone, connected, high cards) are not.
+ */
+function boardTexture(board) {
+  const empty = { wet: 0, flushDraw: false, straightDraw: false, paired: false, high: false, broadway: false };
+  if (!board || board.length < 3) return empty;
+  const suitCount = {};
+  board.forEach((c) => { suitCount[c.suit] = (suitCount[c.suit] || 0) + 1; });
+  const flushDraw = Math.max(...Object.values(suitCount)) >= 2;
+  const ranks = board.map((c) => RANK_ORDER.indexOf(c.rank)).sort((a, b) => a - b);
+  let straightDraw = false;
+  for (let i = 0; i + 2 < ranks.length; i++) {
+    if (ranks[i + 2] - ranks[i] <= 4) straightDraw = true;
+  }
+  const paired = board.some((c, i) => board.some((d, j) => j > i && c.rank === d.rank));
+  const high = board.filter((c) => RANK_ORDER.indexOf(c.rank) <= 3).length >= 2;
+  const broadway = board.filter((c) => RANK_ORDER.indexOf(c.rank) <= 4).length >= 3;
+  const wet = Math.min(1, (flushDraw ? 0.4 : 0) + (straightDraw ? 0.4 : 0) + (paired ? 0.15 : 0) + (high ? 0.1 : 0));
+  return { wet, flushDraw, straightDraw, paired, high, broadway };
+}
+
+/** Draws and outs available to a hole-card hand on the current board. */
+function drawInfo(holeCards, board) {
+  const info = { flushDraw: false, straightDraw: false, gutshot: false, overcards: 0, outs: 0, pair: false };
+  if (!board || board.length < 3) return info;
+  const cards = [...holeCards, ...board];
+  const suitCount = {};
+  cards.forEach((c) => { suitCount[c.suit] = (suitCount[c.suit] || 0) + 1; });
+  info.flushDraw = Math.max(...Object.values(suitCount)) === 4;
+  const ranks = [...new Set(cards.map((c) => RANK_ORDER.indexOf(c.rank)))].sort((a, b) => a - b);
+  for (let i = 0; i + 3 < ranks.length; i++) {
+    if (ranks[i + 3] - ranks[i] <= 4) info.straightDraw = true;
+  }
+  if (!info.straightDraw) {
+    for (let i = 0; i + 2 < ranks.length; i++) {
+      if (ranks[i + 2] - ranks[i] <= 4) info.gutshot = true;
+    }
+  }
+  const boardMin = Math.min(...board.map((b) => RANK_ORDER.indexOf(b.rank)));
+  info.overcards = holeCards.filter((c) => RANK_ORDER.indexOf(c.rank) < boardMin).length;
+  info.outs = (info.flushDraw ? 9 : 0) + (info.straightDraw ? 8 : 0) + (info.gutshot ? 4 : 0) + info.overcards * 2;
+  return info;
+}
+
+/**
+ * How much the hole cards block the board's draws: an ace of the flush suit or
+ * a card that fills the straight removes opponent combos. Pro uses this to
+ * bluff more on boards its own hand blocks.
+ */
+function blockerBonus(holeCards, board) {
+  if (!board || board.length < 3 || !holeCards?.length) return 0;
+  const suitCount = {};
+  board.forEach((c) => { suitCount[c.suit] = (suitCount[c.suit] || 0) + 1; });
+  const flushSuit = Object.keys(suitCount).find((s) => suitCount[s] >= 2);
+  let bonus = 0;
+  if (flushSuit && holeCards.some((c) => c.suit === flushSuit)) {
+    const rank = holeCards.find((c) => c.suit === flushSuit).rank;
+    bonus += RANK_ORDER.indexOf(rank) <= 2 ? 0.12 : 0.06;
+  }
+  const ranks = new Set([...holeCards, ...board].map((c) => RANK_ORDER.indexOf(c.rank)));
+  if (ranks.size >= 5) bonus += 0.03;
+  return bonus;
+}
+
+/** Approximate cEV push range for a short stack facing N players behind. */
+function nashPushPct(stackBB, behind) {
+  let base;
+  if (stackBB <= 2) base = 0.95;
+  else if (stackBB <= 4) base = 0.75;
+  else if (stackBB <= 6) base = 0.55;
+  else if (stackBB <= 8) base = 0.42;
+  else if (stackBB <= 10) base = 0.34;
+  else if (stackBB <= 12) base = 0.28;
+  else if (stackBB <= 15) base = 0.22;
+  else if (stackBB <= 20) base = 0.16;
+  else base = 0.12;
+  return Math.min(0.95, base * Math.max(0.35, 1 - 0.12 * Math.max(0, behind)));
+}
+
+/** Rough call range against a shove: about the pot odds plus a small edge. */
+function nashCallPct(potOdds) {
+  return clamp(potOdds * 1.15 + 0.04, 0.08, 0.7);
+}
+
+/**
+ * Read an opponent's HUD stats. Returns null when the tier ignores HUD reads or
+ * the sample is too small; otherwise multipliers the caller folds into ranges.
+ */
+function hudReads(hud, tuning) {
+  if (!hud || !tuning.hud || tuning.hud === 'none') return null;
+  const hands = Number(hud.hands) || 0;
+  if (hands < (Number(tuning.hudMinHands) || 0)) return null;
+  const vpip = Number.isFinite(hud.vpip) ? hud.vpip : null;
+  const pfr = Number.isFinite(hud.pfr) ? hud.pfr : null;
+  const threeBet = Number.isFinite(hud.threeBet) ? hud.threeBet : null;
+  const foldToCbet = Number.isFinite(hud.foldToCbet) ? hud.foldToCbet : null;
+  const ats = Number.isFinite(hud.ats) ? hud.ats : null;
+  const showdown = Number.isFinite(hud.showdown) ? hud.showdown : null;
+  const fish = vpip != null && vpip >= 60;
+  const nit = vpip != null && vpip > 0 && vpip <= 12;
+  if (tuning.hud === 'outliers') {
+    if (!fish && !nit) return null;
+    return { fish, nit, bluffMul: fish ? 0.35 : 1, openMul: nit ? 0.85 : 1, callMul: fish ? 1.15 : 1, valueBias: fish ? 0.08 : 0 };
+  }
+  // core / full: use every stat the sample supports.
+  return {
+    fish, nit,
+    bluffMul: foldToCbet != null ? clamp(0.6 + (foldToCbet - 45) / 60, 0.3, 1.6) : 1,
+    openMul: vpip != null ? clamp(0.7 + (vpip - 25) / 80, 0.5, 1.4) : 1,
+    threeBetMul: threeBet != null ? clamp(0.7 + (threeBet - 7) / 30, 0.4, 1.5) : 1,
+    callMul: vpip != null ? clamp(0.75 + (vpip - 25) / 100, 0.5, 1.3) : 1,
+    stealMul: ats != null ? clamp(0.8 + (ats - 30) / 100, 0.5, 1.4) : 1,
+    showdown,
+    pfr,
+  };
+}
+
+/** Bet size as a fraction of the pot for the tier's sizing mode. */
+function betFraction(tuning, texture, rng, streetsLeft = 1) {
+  if (tuning.sizing === 'erratic') {
+    const choices = [0.33, 0.5, 0.75, 1.1, 1.6];
+    return choices[Math.floor(rng() * choices.length)];
+  }
+  if (tuning.sizing === 'standard') return 0.5 + rng() * 0.2;
+  if (tuning.sizing === 'stack_scaled') {
+    if (texture.wet >= 0.7) return 0.75;
+    if (texture.wet >= 0.4) return 0.55;
+    return 0.33;
+  }
+  // geometric: size so the pot grows to a stack shove by the river.
+  return clamp(0.55 + 0.12 * streetsLeft, 0.4, 0.95);
+}
+
 /**
  * Decide one bot action from range strength (preflop) and equity plus made-hand
  * strength (postflop). Postflop each style carries its own raise count and a
  * rising strength bar per extra raise, so a nit raises once while a maniac can
- * go to war - but only with a hand that keeps getting stronger.
+ * go to war - but only with a hand that keeps getting stronger. The tuning
+ * flags decide how much position, stack depth, texture, draws, sizing and HUD
+ * reads the tier actually uses.
  */
-export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile, tuning, rng = Math.random }) {
+export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile, tuning, hud = null, rng = Math.random }) {
   const cp = hand.players[playerIndex];
   if (!cp || !holeCards || holeCards.length === 0) return { type: 'check' };
   const pot = hand.players.reduce((s, p) => s + (p.totalBet || 0), 0);
   const toCall = Math.max(0, (hand.currentBet || 0) - (cp.currentBet || 0));
   const stack = cp.stack || 0;
   const bb = hand.bigBlind || 1;
+  const stackBB = stack / bb;
   const street = hand.street || 'preflop';
   const raiseLevel = hand.raiseLevel || (street === 'preflop' ? 1 : 0);
   const canRaise = cp.stack > toCall && hand.players.filter((p) => p.id !== cp.id && p.status !== 'folded').some((p) => (p.stack || 0) > 0);
   const allInBet = lastAggressionWasAllIn(hand);
   const board = (hand.communityCards || []).filter((c) => c && !c.hidden);
+  const behind = playersBehind(hand, playerIndex);
+  const reads = hudReads(hud, tuning);
+  const positionAware = tuning.positionAware !== false;
 
   const shove = () => (canRaise ? { type: 'raise', amount: (cp.currentBet || 0) + stack } : { type: 'call' });
 
+  const cap = Math.min(Number(tuning.maxRaises) || 2, Math.max(1, Math.min(4, Number(profile.maxRaises) || 2)));
+  const raisesSoFar = Math.max(0, (raiseLevel || 0) - 1);
   if (tuning.mistake > 0 && rng() < tuning.mistake) {
     const roll = rng();
+    const mayRaise = canRaise && raisesSoFar < cap;
     if (toCall <= 0) {
-      const reckless = raiseLevel < 2 && canRaise ? raiseTarget(hand, cp, (hand.currentBet || 0) + pot * 0.6) : null;
+      const reckless = mayRaise ? raiseTarget(hand, cp, (hand.currentBet || 0) + pot * 0.6) : null;
       return roll < 0.6 || !reckless ? { type: 'check' } : { type: 'raise', amount: reckless };
     }
     if (roll < 0.4) return { type: 'fold' };
-    if (roll < 0.85 || !canRaise) return { type: 'call' };
+    if (roll < 0.85 || !mayRaise) return { type: 'call' };
     const wild = raiseTarget(hand, cp, (hand.currentBet || 0) * 2.5);
     return wild ? { type: 'raise', amount: wild } : { type: 'call' };
   }
 
   if (street === 'preflop') {
-    const behind = playersBehind(hand, playerIndex);
-    const posFactor = behind <= 1 ? 1.35 : behind <= 2 ? 1.15 : behind <= 3 ? 1 : 0.8;
+    const posFactor = positionAware ? (behind <= 1 ? 1.35 : behind <= 2 ? 1.15 : behind <= 3 ? 1 : 0.8) : 1;
     const top = topPercent(holeCards);
-    const openPct = Math.min(0.9, profile.openPct * posFactor);
+    const stealMul = behind <= 1 && raiseLevel <= 1 ? (reads?.stealMul || 1) : 1;
+    const openPct = Math.min(0.92, profile.openPct * posFactor * (reads?.openMul || 1) * stealMul);
+    const threeBetPct = Math.min(0.5, profile.threeBetPct * posFactor * (reads?.threeBetMul || 1));
+    const short = tuning.shortStack || 'none';
+    const inPosition = behind <= 1;
+
+    // --- Short stack: each tier handles it differently. ---
+    if (stackBB <= 20) {
+      if (short === 'none') {
+        // Easy: never shoves short - it limps or min-raises instead.
+        if (raiseLevel <= 1 && toCall <= bb && top <= openPct && canRaise) {
+          const amount = raiseTarget(hand, cp, bb * 2);
+          if (amount) return { type: 'raise', amount };
+        }
+        if (toCall > 0 && top <= openPct * 1.2) return { type: 'call' };
+        return toCall === 0 ? { type: 'check' } : { type: 'fold' };
+      }
+      if (short === 'shove_fold') {
+        // Medium: all in or fold once the stack is short.
+        if (raiseLevel <= 1) {
+          if (top <= openPct && canRaise) return shove();
+          return toCall === 0 ? { type: 'check' } : { type: 'fold' };
+        }
+        if (top <= openPct * 0.75 && canRaise) return shove();
+        if (top <= openPct * 1.1 && toCall <= stack) return { type: 'call' };
+        return { type: 'fold' };
+      }
+      // Hard / pro: push-fold charts, re-shove and iso-shove math.
+      const pushPct = nashPushPct(stackBB, behind);
+      if (raiseLevel <= 1) {
+        const iso = short === 'charts_iso' && toCall > 0 && toCall <= bb * 2;
+        if (top <= pushPct * (iso ? 1.15 : 1) && canRaise) return shove();
+        if (top <= openPct * 0.9 && toCall <= bb) return { type: 'call' };
+        return toCall === 0 ? { type: 'check' } : { type: 'fold' };
+      }
+      if (raiseLevel === 2) {
+        if (top <= pushPct * 0.8 && canRaise) return shove();
+        const callPct = nashCallPct(toCall / Math.max(1, pot + toCall));
+        if (top <= callPct && toCall <= stack) return { type: 'call' };
+        if (short === 'charts_iso' && stackBB >= 12 && stackBB <= 25 && inPosition && top <= 0.12 && toCall < stack * 0.35) {
+          return { type: 'call' }; // stop-and-go: call, then shove the flop
+        }
+        return { type: 'fold' };
+      }
+      if (top <= pushPct * 0.55 && toCall <= stack) return stack <= toCall ? shove() : { type: 'call' };
+      return { type: 'fold' };
+    }
+
     if (raiseLevel <= 1) {
       // Unopened (or limped) pot: raise the opening range, otherwise limp or fold.
       if (top <= openPct && canRaise) {
-        // Total open size in big blinds (2.2x, 2.5x with limpers), not added on
-        // top of the big blind, so a 2.2x open really is 2.2 big blinds.
         const limpers = hand.players.filter((p) => p.status !== 'folded' && p.id !== cp.id && (p.currentBet || 0) >= bb).length;
-        const size = bb * (2.2 + 0.3 * Math.max(0, limpers - 1) + (profile.size >= 0.75 ? 0.2 : 0));
+        let size;
+        if (tuning.sizing === 'erratic') size = bb * (2 + rng() * 2);
+        else if (tuning.sizing === 'stack_scaled') size = bb * (stackBB >= 40 ? 2.2 : stackBB >= 20 ? 2.5 : 2.0);
+        else size = bb * (2.2 + 0.3 * Math.max(0, limpers - 1) + (profile.size >= 0.75 ? 0.2 : 0));
         const amount = raiseTarget(hand, cp, size);
         if (amount) return { type: 'raise', amount };
       }
       if (top <= openPct && toCall === 0) return { type: 'check' };
-      if (toCall > 0 && top <= Math.min(0.95, profile.openPct * posFactor + profile.limpPct)) return { type: 'call' };
+      if (toCall > 0 && top <= Math.min(0.95, openPct + profile.limpPct * (reads?.callMul || 1))) return { type: 'call' };
       return toCall === 0 ? { type: 'check' } : { type: 'fold' };
     }
     if (raiseLevel === 2) {
-      if (top <= profile.threeBetPct * posFactor && canRaise) {
-        if (stack <= bb * 25 && top <= profile.threeBetPct * 0.6) return shove();
+      if (top <= threeBetPct && canRaise) {
+        if (stack <= bb * 25 && top <= threeBetPct * 0.6) return shove();
         const amount = raiseTarget(hand, cp, Math.max((hand.currentBet || 0) * 3, (hand.currentBet || 0) + pot * 0.9));
         if (amount) return { type: 'raise', amount };
       }
       // Cold-calling range scales with the style's opening range, so a TAG
       // defends a normal share against an open instead of folding everything.
-      const defendPct = Math.min(0.95, Math.max(profile.coldCallPct, profile.openPct * 0.45) * posFactor);
+      const defendPct = Math.min(0.95, Math.max(profile.coldCallPct, profile.openPct * 0.45) * posFactor * (reads?.callMul || 1));
       if (top <= defendPct) return { type: 'call' };
       if (allInBet && top <= defendPct * 1.6 && toCall <= stack) return { type: 'call' };
       if (toCall >= stack * 0.5) return { type: 'fold' };
@@ -161,7 +364,7 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
         const amount = raiseTarget(hand, cp, (hand.currentBet || 0) * 2.3);
         if (amount) return { type: 'raise', amount };
       }
-      if (top <= profile.callVs3Bet) return { type: 'call' };
+      if (top <= profile.callVs3Bet * (reads?.callMul || 1)) return { type: 'call' };
       return { type: 'fold' };
     }
     // Facing a 4-bet or more: only continue with the top of the range.
@@ -171,6 +374,8 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
 
   // Postflop: equity against the remaining players plus the made-hand category.
   const opponents = hand.players.filter((p) => p.id !== cp.id && p.status !== 'folded');
+  const texture = boardTexture(board);
+  const draw = drawInfo(holeCards, board);
   let rawEquity;
   try {
     const res = calcEquity([holeCards, ...opponents.map(() => null)], board, tuning.iters, hand.variant || 'nlh');
@@ -187,35 +392,71 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
     cat = Array.isArray(score) ? score[0] : 0;
   } catch (_) { cat = 0; }
   // Pair-or-better bonus, so a made hand bets even when equity is close.
-  const strength = Math.min(0.99, equity + (cat >= 3 ? 0.12 : cat >= 1 ? 0.05 : 0));
+  let strength = Math.min(0.99, equity + (cat >= 3 ? 0.12 : cat >= 1 ? 0.05 : 0));
+  // Easy overvalues any pair and ignores draws.
+  if (tuning.overvaluePairs && cat >= 1) strength = Math.min(0.99, strength + 0.15);
   const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
-  // How many raises this style will put in on one street. A bet (level 1) does
-  // not count, so the nit raises once, the maniac can go to war. Each extra
-  // raise also needs a stronger hand, which is what stops low-equity wars.
-  const maxRaises = Math.max(1, Math.min(4, Number(profile.maxRaises) || 2));
+  const streetsLeft = street === 'flop' ? 2 : street === 'turn' ? 1 : 0;
+
+  // Fit-or-fold: no pair and no real draw means giving up against a bet.
+  if (tuning.fitOrFold && toCall > 0 && cat < 1 && !draw.flushDraw && !draw.straightDraw) {
+    return { type: 'fold' };
+  }
+
+  const maxRaises = Math.min(Number(tuning.maxRaises) || 2, Math.max(1, Math.min(4, Number(profile.maxRaises) || 2)));
   const raisesMade = Math.max(0, (raiseLevel || 0) - 1);
   const raiseStep = profile.reRaiseStep ?? 0.06 + (1 - (profile.aggro || 0)) * 0.08;
   const raiseStrengthNeed = Math.min(0.96, profile.betLine + raiseStep * raisesMade);
   const raiseOdds = Math.max(0.06, 0.38 + (profile.aggro || 0) * 0.5 - raisesMade * 0.1);
+  const showdownMul = reads?.showdown != null
+    ? clamp(1.25 - (reads.showdown - 20) / 60, 0.55, 1.35)
+    : 1;
+  const bluffMul = (tuning.bluffMul || 1) * (reads?.bluffMul || 1) * showdownMul;
+  const blockers = tuning.hud === 'full' ? blockerBonus(holeCards, board) : 0;
+
+  const sizeTo = (fraction) => {
+    const base = Math.max(bb, pot * fraction);
+    return raiseTarget(hand, cp, (hand.currentBet || 0) + base);
+  };
 
   if (toCall <= 0) {
-    const betSize = Math.max(cp.currentBet || 0, 0) + Math.max(bb, pot * profile.size * (0.7 + rng() * 0.5));
+    const aggressor = isLastAggressor(hand, cp);
+    let fraction = betFraction(tuning, texture, rng, streetsLeft);
+    // C-bet logic: medium+ checks wet boards and bets dry ones.
+    if (tuning.texture !== 'none' && aggressor && raisesMade === 0) {
+      if (tuning.texture === 'basic') {
+        if (texture.wet >= 0.55 && strength < 0.7) return { type: 'check' };
+        if (texture.wet < 0.55 && strength >= 0.35) fraction = 0.5;
+      } else if (tuning.texture === 'sized') {
+        fraction = texture.wet >= 0.7 ? 0.75 : texture.wet >= 0.4 ? 0.55 : 0.33;
+        if (texture.wet >= 0.7 && strength < 0.62) return { type: 'check' };
+      } else if (tuning.texture === 'advanced') {
+        fraction = texture.wet >= 0.7 ? 0.8 : texture.wet >= 0.4 ? 0.6 : 0.33;
+        // Protect the checking range: sometimes check a strong hand.
+        if (strength >= 0.78 && rng() < 0.22) return { type: 'check' };
+      }
+    }
     if (strength >= profile.betLine && canRaise && raisesMade < maxRaises) {
-      const amount = raiseTarget(hand, cp, (hand.currentBet || 0) + Math.max(bb, pot * Math.max(0.45, profile.size)));
+      const amount = sizeTo(fraction);
       if (amount) {
         if (strength > 0.85 && stack <= pot * 1.4) return shove();
         return { type: 'raise', amount };
       }
     }
     // Bluffs only open the betting; nobody bluffs into a street that is already raised.
-    if (rng() < profile.bluff * (tuning.bluffMul || 1) * (opponents.length <= 2 ? 1 : 0.55) && raisesMade === 0 && canRaise) {
-      const amount = raiseTarget(hand, cp, (hand.currentBet || 0) + Math.max(bb, betSize * 0.7));
+    const bluffFreq = profile.bluff * bluffMul * (opponents.length <= 2 ? 1 : 0.55) * (1 + blockers);
+    if (rng() < bluffFreq && raisesMade === 0 && canRaise) {
+      const amount = sizeTo(fraction * 0.7);
       if (amount) return { type: 'raise', amount };
     }
     return { type: 'check' };
   }
 
-  const callThreshold = potOdds - profile.callBonus;
+  // Draws: without draw awareness the call bar ignores the price entirely.
+  const drawEquity = draw.outs > 0 ? Math.min(0.45, draw.outs / 40) : 0;
+  const callThreshold = tuning.drawOdds
+    ? Math.max(0.02, potOdds - profile.callBonus - drawEquity * 0.25)
+    : 0.45 - profile.callBonus;
   if (strength < callThreshold) {
     if (strength < callThreshold - 0.15) return { type: 'fold' };
     return rng() < 0.2 ? { type: 'call' } : { type: 'fold' };
@@ -225,12 +466,12 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
   const raiseLine = Math.max(profile.betLine, callThreshold + 0.14, raiseStrengthNeed);
   if (canRaiseMore && strength >= raiseLine && rng() < raiseOdds) {
     if (strength > 0.82 && stack <= pot * 1.3) return shove();
-    const amount = raiseTarget(hand, cp, (hand.currentBet || 0) * 2.4 + pot * 0.25);
+    const amount = sizeTo(betFraction(tuning, texture, rng, streetsLeft));
     if (amount) return { type: 'raise', amount };
   }
   // A bluff raise over a single bet only, and only when the hand has real equity.
-  if (canRaiseMore && raisesMade === 0 && strength >= raiseStrengthNeed - 0.1 && rng() < profile.bluff * 0.35 * (1 - profile.raiseGuard)) {
-    const amount = raiseTarget(hand, cp, (hand.currentBet || 0) * 2.3);
+  if (canRaiseMore && raisesMade === 0 && strength >= raiseStrengthNeed - 0.1 && rng() < profile.bluff * 0.35 * (1 - profile.raiseGuard) * bluffMul) {
+    const amount = sizeTo(0.6);
     if (amount) return { type: 'raise', amount };
   }
   if (toCall >= stack) return { type: 'call' };
