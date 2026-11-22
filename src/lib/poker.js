@@ -2114,6 +2114,7 @@ export function awardPots(hand, winnersMap, options = {}) {
     const aArr = arrOf(winnersMap[i]);
     const bArr = options.winnersB ? arrOf(options.winnersB[i]) : null;
     const cArr = options.winnersC ? arrOf(options.winnersC[i]) : null;
+    const lowArr = options.winnersLow ? arrOf(options.winnersLow[i]) : null;
 
     if (cArr && cArr.length && bArr && bArr.length) {
       const totalUnits = Math.round(pot.amount / unit);
@@ -2138,6 +2139,25 @@ export function awardPots(hand, winnersMap, options = {}) {
         const w = h.players.find((p) => p.id === s.playerId);
         if (w) w.stack += s.amount;
         h.winners.push({ potIndex: i, board: 'c', playerId: s.playerId, amount: s.amount });
+      });
+    } else if (lowArr && lowArr.length && aArr.length
+      && !(lowArr.length === aArr.length && aArr.every((id) => lowArr.includes(id)))) {
+      // Hi/Lo (PLO8): half the pot to the best high hand, half to the best low,
+      // with the odd chip going to the high half.
+      const totalUnits = Math.round(pot.amount / unit);
+      const lowUnits = Math.floor(totalUnits / 2);
+      const highUnits = totalUnits - lowUnits;
+      const highShares = chopSplit(highUnits * unit, aArr, h.players, h.buttonSeat, unit);
+      const lowShares = chopSplit(lowUnits * unit, lowArr, h.players, h.buttonSeat, unit);
+      highShares.forEach((s) => {
+        const w = h.players.find((p) => p.id === s.playerId);
+        if (w) w.stack += s.amount;
+        h.winners.push({ potIndex: i, playerId: s.playerId, amount: s.amount, part: 'high' });
+      });
+      lowShares.forEach((s) => {
+        const w = h.players.find((p) => p.id === s.playerId);
+        if (w) w.stack += s.amount;
+        h.winners.push({ potIndex: i, playerId: s.playerId, amount: s.amount, part: 'low' });
       });
     } else if (bArr && bArr.length) {
       const totalUnits = Math.round(pot.amount / unit);
@@ -2548,6 +2568,21 @@ export function formatPotOutcome(pot, potIndex, winners = [], players = [], curr
     return bySeat?.name || `Player ${pid}`;
   };
 
+  const hiWinners = potWinners.filter((w) => w.part === 'high');
+  const loWinners = potWinners.filter((w) => w.part === 'low');
+  if (hiWinners.length && loWinners.length) {
+    const fmtPart = (part, list) => {
+      const amt = list.reduce((sum, w) => sum + (Number(w.amount) || 0), 0);
+      const names = [...new Set(list.map((w) => w.playerId))]
+        .map((pid) => {
+          const n = list.filter((w) => w.playerId === pid).length;
+          return n > 1 ? `${getPlayerName(pid)} (${n}/${list.length})` : getPlayerName(pid);
+        });
+      return `${names.join(' & ')} ${part} ${money(amt, currency)}`;
+    };
+    return `${potLabel}: ${fmtPart('high', hiWinners)} · ${fmtPart('low', loWinners)}`;
+  }
+
   if (uniquePids.length === 1) {
     const winnerName = getPlayerName(uniquePids[0]);
     return `${potLabel}: ${winnerName} wins ${potFormatted}`;
@@ -2688,6 +2723,31 @@ export function evaluateLow(cards, acesLow, countSF) {
     }
   };
   combo(0, []);
+  return best;
+}
+
+const LOW8_RANKS = new Set(['A', '2', '3', '4', '5', '6', '7', '8']);
+
+// Omaha Hi/Lo low half: exactly two hole cards plus three board cards, five
+// unpaired ranks of eight or lower (aces low). Returns null when no low qualifies.
+export function omahaLowScore(hole, board) {
+  if (!hole || !board || hole.length < 2 || board.length < 3) return null;
+  let best = null;
+  for (let a = 0; a < hole.length - 1; a++) {
+    for (let b = a + 1; b < hole.length; b++) {
+      for (let x = 0; x < board.length - 2; x++) {
+        for (let y = x + 1; y < board.length - 1; y++) {
+          for (let z = y + 1; z < board.length; z++) {
+            const cards = [hole[a], hole[b], board[x], board[y], board[z]];
+            if (!cards.every((c) => c && LOW8_RANKS.has(c.rank))) continue;
+            if (new Set(cards.map((c) => c.rank)).size !== 5) continue;
+            const sc = evaluateLow(cards, true);
+            if (!best || cmpScore(sc, best) < 0) best = sc;
+          }
+        }
+      }
+    }
+  }
   return best;
 }
 
@@ -3509,7 +3569,7 @@ export function tryAutoWinners(hand, holeCards) {
   const holeSize = effectiveHoleSize(hand);
   const nonFolded = hand.players.filter((p) => p.status !== 'folded');
   if (nonFolded.length < 2) return null;
-  if (variant === 'crazy_pineapple' && hand.cpNeedsDiscard && !hand.cpDiscarded) return null;
+  if (['pineapple', 'crazy_pineapple', 'lazy_pineapple'].includes(variant) && hand.cpNeedsDiscard && !hand.cpDiscarded) return null;
   const lowGame = meta.group === 'low';
   const isTriple = (Number(hand.bombBoards) >= 3) || (hand.boardC && hand.boardC.length > 0) || (Number(hand.runTimes) >= 3);
   const isDouble = hand.doubleBoard || isTriple || (Number(hand.runTimes) >= 2);
@@ -3552,7 +3612,24 @@ export function tryAutoWinners(hand, holeCards) {
       winnersC[i] = wc;
     }
   }
-  return { winnersA, winnersB, winnersC };
+  let winnersLow = null;
+  if (variant === 'plo8') {
+    winnersLow = {};
+    for (let i = 0; i < pots.length; i++) {
+      const board = (hand.communityCards || []).filter((c) => !c.hidden);
+      const scores = pots[i].eligible
+        .map((pid) => ({ pid, sc: omahaLowScore(holeCards[pid], board) }))
+        .filter((x) => x.sc);
+      if (!scores.length) {
+        winnersLow[i] = [];
+        continue;
+      }
+      let bestLow = scores[0].sc;
+      for (const x of scores) if (cmpScore(x.sc, bestLow) < 0) bestLow = x.sc;
+      winnersLow[i] = scores.filter((x) => cmpScore(x.sc, bestLow) === 0).map((x) => x.pid);
+    }
+  }
+  return { winnersA, winnersB, winnersC, winnersLow };
 }
 
 export function getMultipleBoardWinPercentages(hand, holeCards) {
