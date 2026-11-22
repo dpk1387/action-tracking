@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { money } from '@/lib/poker';
 
@@ -20,6 +20,12 @@ export default function RebuyDialog({
   const [selectedId, setSelectedId] = useState('');
   const [mode, setMode] = useState('rebuy');
   const sym = currency || '';
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const activeLevelNum = (currentLevel ?? hand?.blindLevel ?? 0) + 1;
   const rules = rebuyRules || hand?.rebuyRules || {};

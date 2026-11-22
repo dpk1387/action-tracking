@@ -111,7 +111,8 @@ export function displayStack({ value, unit, bb, gameType = 'online', isHero = fa
   const chips = raw;
   if (gameType !== 'live') {
     if (unit === 'bb') return fmtBb(Math.round((chips / bblind) * 10) / 10);
-    return fmtChips(roundToNearest(chips, 25));
+    // Chip view online shows the real number: no chip rounding, nothing to hide.
+    return fmtChips(chips);
   }
   if (unit === 'bb') {
     if (isHero || allIn) return fmtBb(Math.round((chips / bblind) * 10) / 10);

@@ -1,8 +1,14 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { X, Dice5 } from 'lucide-react';
 import { money } from '@/lib/poker';
 
 export default function ReentryDialog({ eliminatedPlayers, maxReEntries, tableSize, players, startingStack, currency, onReentry, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const [selectedName, setSelectedName] = useState('');
   const [seat, setSeat] = useState('');
   const sym = currency || '';
