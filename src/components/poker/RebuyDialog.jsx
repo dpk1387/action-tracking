@@ -57,7 +57,7 @@ export default function RebuyDialog({
     return { eligible: true, reason: null };
   };
 
-  const list = players || [];
+  const list = (players || []).filter((p) => mode !== 'addon' || !p.eliminated);
   const chips = mode === 'rebuy' ? rebuyChips : addOnChips;
   const price = mode === 'rebuy' ? rebuyPrice : addOnPrice;
 
@@ -80,7 +80,9 @@ export default function RebuyDialog({
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-white">Tournament Re-buy / Add-on</h2>
+            <h2 className="text-lg font-bold text-white">
+              {hand?.mode === 'cash' ? 'Buy Back In' : 'Tournament Re-buy / Add-on'}
+            </h2>
             <div className="text-xs text-slate-400 mt-0.5">
               Current Level: <span className="text-emerald-400 font-bold">{activeLevelNum}</span>
               {timeLimitEnabled && (
@@ -197,6 +199,11 @@ export default function RebuyDialog({
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="font-bold truncate">{p.name}</span>
+                      {p.eliminated && (
+                        <span className="px-1.5 py-0.5 rounded bg-rose-950 border border-rose-700/60 text-rose-300 text-[10px] font-black uppercase">
+                          Busted
+                        </span>
+                      )}
                       {cappedEnabled && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/40 text-slate-400 font-mono">
                           {rebuysUsed}/{maxRebuys} rebuys

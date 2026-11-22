@@ -470,15 +470,74 @@ export default function GoModeView({
     return () => clearTimeout(t);
   }, [peekCards, cardTimeout, hand?.currentPlayer, hand?.street]);
 
-  const togglePeekCards = () => {
-    if (!peekCards && cpPin && !pinUnlocked) {
+  // Peek mode: 'tap' keeps cards up until hidden again; 'hold' shows them only while pressed.
+  const peekIsHold = cpPrefs.peekMode === 'hold';
+  const canPeek = () => {
+    if (cpPin && !pinUnlocked) {
       setPinPromptOpen(true);
       setPinEntry('');
       setPinError('');
-      return;
+      return false;
     }
+    return true;
+  };
+  const togglePeekCards = () => {
+    if (!peekCards && !canPeek()) return;
     setPeekCards((v) => !v);
   };
+  const startHoldPeek = (e) => {
+    e.preventDefault();
+    if (!canPeek()) return;
+    setPeekCards(true);
+  };
+  const endHoldPeek = () => {
+    if (peekIsHold) setPeekCards(false);
+  };
+
+  // Leaving the app (tab switch, phone locked, window blur) hides cards right away so the
+  // table is never left face up, and drops the PIN unlock and hold confirmation.
+  useEffect(() => {
+    const hide = () => {
+      setPeekCards(false);
+      setHoldProgress(0);
+      setTurnVerified(false);
+      setPinUnlocked(false);
+    };
+    document.addEventListener('visibilitychange', hide);
+    window.addEventListener('blur', hide);
+    return () => {
+      document.removeEventListener('visibilitychange', hide);
+      window.removeEventListener('blur', hide);
+    };
+  }, []);
+
+  // Auto-lock: an open turn re-locks behind the handoff screen after a stretch with no taps.
+  const idleLockSec = Number(cpPrefs.idleLockSec ?? 60);
+  const [idleNotice, setIdleNotice] = useState(false);
+  useEffect(() => {
+    setIdleNotice(false);
+  }, [hand?.currentPlayer, hand?.handNumber]);
+  useEffect(() => {
+    if (!turnVerified || !idleLockSec || isAllInSituation) return undefined;
+    let t = null;
+    const arm = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        setTurnVerified(false);
+        setPeekCards(false);
+        setPinUnlocked(false);
+        setIdleNotice(true);
+      }, idleLockSec * 1000);
+    };
+    arm();
+    window.addEventListener('pointerdown', arm, true);
+    window.addEventListener('keydown', arm, true);
+    return () => {
+      if (t) clearTimeout(t);
+      window.removeEventListener('pointerdown', arm, true);
+      window.removeEventListener('keydown', arm, true);
+    };
+  }, [turnVerified, idleLockSec, isAllInSituation]);
 
   const shuffleKeypad = () => {
     setDigitOrder((prev) => {
@@ -797,7 +856,13 @@ export default function GoModeView({
 
           <button
             type="button"
-            onClick={togglePeekCards}
+            onClick={peekIsHold ? undefined : togglePeekCards}
+            onPointerDown={peekIsHold ? startHoldPeek : undefined}
+            onPointerUp={peekIsHold ? endHoldPeek : undefined}
+            onPointerLeave={peekIsHold ? endHoldPeek : undefined}
+            onPointerCancel={peekIsHold ? endHoldPeek : undefined}
+            onContextMenu={(e) => e.preventDefault()}
+            title={peekIsHold ? 'Hold to peek at your cards' : 'Tap to show your cards'}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-extrabold text-xs transition-all cursor-pointer border ${
               peekCards
                 ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)] scale-105'
@@ -805,7 +870,7 @@ export default function GoModeView({
             }`}
           >
             {peekCards ? <EyeOff size={15} /> : <Eye size={15} />}
-            <span>{peekCards ? 'Hide Cards' : 'Show Cards'}</span>
+            <span>{peekIsHold ? 'Hold to Peek' : (peekCards ? 'Hide Cards' : 'Show Cards')}</span>
             <span className={`kbd-shortcut-hint hidden md:inline text-[10px] font-mono font-normal ${peekCards ? 'text-black/70' : 'text-amber-200/70'}`}>(S)</span>
           </button>
         </div>
@@ -1093,19 +1158,10 @@ export default function GoModeView({
               </div>
             </div>
 
-            {/* CENTER-RIGHT: Pot Size + Last Raise Info & Community Board */}
+            {/* CENTER-RIGHT: Last Raise Info + Pot Size & Community Board */}
             <div className="space-y-3 text-center md:text-right md:pl-2">
               <div className="flex flex-wrap items-start justify-center md:justify-end gap-4">
-                <div>
-                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Current Pot
-                  </div>
-                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
-                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
-                  </div>
-                </div>
-
-                {/* Last Raise / Bet Info (right of Current Pot) */}
+                {/* Last Raise / Bet Info (left of Current Pot) */}
                 <div className="bg-[#19202b] border border-slate-700/80 rounded-2xl px-3 py-2 text-left min-w-[130px]">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
                     Last Raise
@@ -1131,6 +1187,14 @@ export default function GoModeView({
                   )}
                 </div>
 
+                <div>
+                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Current Pot
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
+                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
+                  </div>
+                </div>
               </div>
 
               {/* Community Cards */}
@@ -1472,6 +1536,11 @@ export default function GoModeView({
             </div>
 
             <div className="p-3 bg-[#11141b] rounded-2xl border border-slate-800 text-xs text-slate-400">
+              {idleNotice && (
+                <div className="mb-1 font-bold text-amber-300">
+                  Locked again after {idleLockSec}s with no taps.
+                </div>
+              )}
               Hold the button below so a stray tap cannot open someone else&apos;s turn.
               {cpPin ? ' Hole cards stay hidden until you enter your PIN.' : ' Hole cards stay hidden until you tap Show Cards.'}
             </div>

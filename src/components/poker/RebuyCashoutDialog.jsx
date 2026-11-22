@@ -3,11 +3,16 @@ import { X, ShieldAlert, LogOut, PlusCircle } from 'lucide-react';
 import { money } from '@/lib/poker';
 
 export default function RebuyCashoutDialog({ hand, onApply, onClose }) {
-  const [sel, setSel] = useState(String(hand.players[0]?.id || 0));
+  // Busted players leave hand.players, so add them back with a negative id so they can buy in.
+  const players = [
+    ...(hand.players || []),
+    ...((hand.eliminatedPlayers || []).map((e) => ({ ...e, id: -Math.abs(Number(e.seat) || 1), stack: 0, eliminated: true }))),
+  ];
+  const [sel, setSel] = useState(String(players[0]?.id || 0));
   const [amount, setAmount] = useState('');
   const cur = hand.currency;
 
-  const selectedPlayer = hand.players.find((p) => String(p.id) === String(sel)) || hand.players[0];
+  const selectedPlayer = players.find((p) => String(p.id) === String(sel)) || players[0];
 
   const handleRebuy = () => {
     const v = Number(amount);
@@ -17,7 +22,7 @@ export default function RebuyCashoutDialog({ hand, onApply, onClose }) {
   };
 
   const handleCashoutFull = () => {
-    if (!selectedPlayer || selectedPlayer.stack <= 0) return;
+    if (!selectedPlayer || selectedPlayer.stack <= 0 || selectedPlayer.eliminated) return;
     // To prevent ratholing, player must cash out for the full stack!
     onApply(Number(selectedPlayer.id), -selectedPlayer.stack);
     onClose();
@@ -41,9 +46,9 @@ export default function RebuyCashoutDialog({ hand, onApply, onClose }) {
               onChange={(e) => setSel(e.target.value)}
               className="w-full rounded-lg bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
             >
-              {hand.players.map((p) => (
+              {players.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} — Current Stack: {money(p.stack, cur)}
+                  {p.name} — {p.eliminated ? 'Busted' : `Current Stack: ${money(p.stack, cur)}`}
                 </option>
               ))}
             </select>

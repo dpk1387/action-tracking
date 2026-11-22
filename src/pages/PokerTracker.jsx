@@ -750,7 +750,7 @@ export default function PokerTracker() {
       } else {
         const w = tryAutoWinners(next, activeHoleCards);
         if (w) {
-          const awarded = awardPots(next, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, holeCards: activeHoleCards });
+          const awarded = awardPots(next, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, winnersLow: w.winnersLow, holeCards: activeHoleCards });
           updateFrozenStacks(awarded);
           setHand(awarded);
           advanceAfterAward(awarded);
@@ -781,7 +781,7 @@ export default function PokerTracker() {
     if (next.communityCards.length >= targetLen || next.street === finalStreet) {
       const w = tryAutoWinners(next, activeHoleCards);
       if (w) {
-        const awarded = awardPots(next, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, holeCards: activeHoleCards });
+        const awarded = awardPots(next, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, winnersLow: w.winnersLow, holeCards: activeHoleCards });
         updateFrozenStacks(awarded);
         recordHand(awarded);
         setHand(awarded);
@@ -1354,7 +1354,7 @@ export default function PokerTracker() {
     }
     const w = tryAutoWinners(ended, holeCards);
     if (w) {
-      const awarded = awardPots(ended, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, holeCards });
+      const awarded = awardPots(ended, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, winnersLow: w.winnersLow, holeCards });
       updateFrozenStacks(awarded);
       setHand(awarded);
       advanceAfterAward(awarded);
@@ -1679,7 +1679,7 @@ export default function PokerTracker() {
     const w = tryAutoWinners(hand, holeCards);
     if (!w) return;
     pushHistory(hand);
-    const awarded = awardPots(hand, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, holeCards });
+    const awarded = awardPots(hand, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, winnersLow: w.winnersLow, holeCards });
     updateFrozenStacks(awarded);
     setHand(awarded);
     if (sevenTwoActive(awarded)) {
@@ -1919,9 +1919,14 @@ export default function PokerTracker() {
   };
 
   const handleRebuy = (pid, amt, isAddOn = false) => {
-    const target = (hand?.players || []).find((p) => p.id === pid);
-    if (!isCash && hand?.mode === 'tournament' && !isAddOn) {
-      const blocked = rebuyBlocker(hand, target, hand?.levelIndex ?? hand?.blindLevel);
+    // Busted players are listed with a negative id so they can buy straight back in.
+    const isEliminated = pid < 0;
+    const target = isEliminated
+      ? (hand?.eliminatedPlayers || []).find((e) => Number(e.seat) === Math.abs(pid))
+      : (hand?.players || []).find((p) => p.id === pid);
+    if (!target) return;
+    if (!isAddOn && !isCash && hand?.mode === 'tournament') {
+      const blocked = rebuyBlocker({ ...hand, blindLevel: hand?.blindLevel }, { ...target, stack: isEliminated ? 0 : target.stack }, hand?.levelIndex ?? hand?.blindLevel);
       if (blocked) {
         setRuleNotice(`Rebuy blocked: ${blocked}`);
         return;
@@ -1929,6 +1934,16 @@ export default function PokerTracker() {
     }
     if (isAddOn && (Number(target?.addOns) || 0) >= 1) {
       setRuleNotice('Add-on already taken');
+      return;
+    }
+    if (isEliminated) {
+      setHand((prev) => ({
+        ...prev,
+        pendingPlayers: [
+          ...(prev.pendingPlayers || []),
+          { name: target.name, seat: target.seat, stack: amt, rebuys: (Number(target.rebuys) || 0) + 1 },
+        ],
+      }));
       return;
     }
     setHand((prev) => {
@@ -2261,6 +2276,11 @@ export default function PokerTracker() {
   }, [hand, pirateExposed, holeCards]);
   const showDiscardStep = hand && hand.variant === 'crazy_pineapple' && hand.cpNeedsDiscard && !hand.cpDiscarded && hand.currentPlayer === -1 && hand.phase !== 'awarded' && hand.communityCards.length >= 3 && nonFolded.length >= 2 && nonFolded.every((p) => holeCards[p.id] && holeCards[p.id].length === 3);
   const isCash = hand?.mode === 'cash' || config?.mode === 'cash' || gameOver?.mode === 'cash' || (sessionStore.get()?.config?.mode === 'cash');
+  // Busted players disappear from hand.players, so list them again (negative id) for buy-backs.
+  const rebuyCandidates = [
+    ...(hand?.players || []),
+    ...((hand?.eliminatedPlayers || []).map((e) => ({ ...e, id: -Math.abs(Number(e.seat) || 1), stack: 0, eliminated: true }))),
+  ];
   const lowGame = variantMeta(variant).group === 'low';
 
   const { highlightKeys, winningPlayerIds } = useMemo(() => {
@@ -2295,6 +2315,9 @@ export default function PokerTracker() {
             const cards = winningHandCards(hole, hand.boardB || [], hand.variant);
             if (cards) cards.forEach((c) => keys.add(c.rank + c.suit));
           });
+        }
+        if (auto.winnersLow) {
+          Object.values(auto.winnersLow).flat().forEach((pid) => winIds.add(pid));
         }
       }
     }
@@ -2375,7 +2398,7 @@ export default function PokerTracker() {
           onDealNextStreet={handleDealNextGoStreet}
           onOpenSettings={() => setShowSettingsModal(true)}
           onOpenStructureSetup={() => setShowSetup(true)}
-          onOpenRebuy={!isCash && hand?.tournamentFormat === 'rebuy' ? () => setShowRebuy(true) : null}
+          onOpenRebuy={(isCash || hand?.tournamentFormat === 'rebuy') && !bustRecovery ? () => setShowRebuy(true) : null}
           onOpenReentry={!isCash && hand?.tournamentFormat === 'reentry' ? () => setShowReentry(true) : null}
           onEndSession={() => setShowEndSession(true)}
           showPosition={showPosition}
@@ -3032,11 +3055,11 @@ export default function PokerTracker() {
       )}
       {showRebuy && !isCash && (
         <RebuyDialog
-          players={hand.players}
+          players={rebuyCandidates}
           hand={hand}
           currentLevel={hand.blindLevel || 0}
           rebuyRules={hand.rebuyRules}
-          rebuyChips={hand.rebuyChips || hand.startingStack}
+          rebuyChips={hand.rebuyChips || hand.startingStack || (Number(hand.bigBlind) || 1) * 100}
           rebuyPrice={hand.rebuyPrice}
           allowAddOn={hand.allowAddOn}
           addOnChips={hand.addOnChips}

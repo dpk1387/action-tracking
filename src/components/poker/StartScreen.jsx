@@ -29,6 +29,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   const [deletingCode, setDeletingCode] = useState(null);
   const [showModeModal, setShowModeModal] = useState(false);
   const [showDegenSubmenu, setShowDegenSubmenu] = useState(false);
+  const [showGoVariants, setShowGoVariants] = useState(false);
   const [degenCategory, setDegenCategory] = useState(null);
   const [showDirectorTournamentsModal, setShowDirectorTournamentsModal] = useState(false);
   const [activeTournaments, setActiveTournaments] = useState(() => mttStore.getTournaments().filter((t) => t.active));
@@ -184,10 +185,29 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
     onNewSession();
   };
 
+  // Every variant the GO engine can deal (see goModeSupported in poker.js).
+  const goVariants = [
+    { key: 'nlh', title: 'No-Limit Hold\u2019em', gameType: 'nl', desc: 'The standard game. 2 hole cards.' },
+    { key: 'plo', title: 'Pot-Limit Omaha (4)', gameType: 'pl', desc: '4 hole cards, must use exactly 2.' },
+    { key: 'plo5', title: 'Pot-Limit Omaha (5)', gameType: 'pl', desc: '5 hole cards. More draws, more action.' },
+    { key: 'plo6', title: 'Pot-Limit Omaha (6)', gameType: 'pl', desc: '6 hole cards. Maximum wrap chaos.' },
+    { key: 'plo8', title: 'Omaha Hi/Lo (8-or-better)', gameType: 'pl', desc: 'Pot split between the best high and the best qualifying low.' },
+    { key: 'short_deck', title: 'Short Deck (6+)', gameType: 'nl', desc: '36-card deck, 2s\u20135s removed. Low straight beats trips.' },
+    { key: 'pineapple', title: 'Pineapple', gameType: 'nl', desc: '3 hole cards, discard 1 before the flop.' },
+    { key: 'crazy_pineapple', title: 'Crazy Pineapple', gameType: 'nl', desc: '3 hole cards, discard 1 after the flop betting round.' },
+    { key: 'lazy_pineapple', title: 'Lazy Pineapple', gameType: 'nl', desc: '3 hole cards, discard 1 on the river.' },
+    { key: 'super_holdem', title: "Super Hold\u2019em", gameType: 'nl', desc: '3 hole cards; may use any two, one or all three.' },
+  ];
+
   const handleLaunchGoMode = () => {
-    setShowModeModal(false);
     setShowDegenSubmenu(false);
-    onNewSession({ isGoMode: true, variant: 'nlh', gameType: 'nl' });
+    setShowGoVariants(true);
+  };
+
+  const handleLaunchGoVariant = (v) => {
+    setShowModeModal(false);
+    setShowGoVariants(false);
+    onNewSession({ isGoMode: true, variant: v.key, gameType: v.gameType });
   };
 
   const handleLaunchDegen = (variantKey) => {
@@ -652,21 +672,54 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
             <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
               <div>
                 <h2 className="text-lg font-bold text-white">
-                  {showDegenSubmenu ? 'Select Degen Variant' : 'Choose Session Mode'}
+                  {showGoVariants ? 'Select GO Variant' : showDegenSubmenu ? 'Select Degen Variant' : 'Choose Session Mode'}
                 </h2>
                 <p className="text-xs text-slate-400">
-                  {showDegenSubmenu ? 'Pick a No-Limit Hold\'em variant rule' : 'Select how you want to run this poker game'}
+                  {showGoVariants
+                    ? 'Play any of these games on one shared device'
+                    : showDegenSubmenu
+                    ? 'Pick a No-Limit Hold\'em variant rule'
+                    : 'Select how you want to run this poker game'}
                 </p>
               </div>
               <button
-                onClick={() => { setShowModeModal(false); setShowDegenSubmenu(false); }}
+                onClick={() => { setShowModeModal(false); setShowDegenSubmenu(false); setShowGoVariants(false); }}
                 className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
               >
                 <Trash2 size={18} />
               </button>
             </div>
 
-            {!showDegenSubmenu ? (
+            {showGoVariants ? (
+              <div className="space-y-2.5" data-testid="go-variant-list">
+                <button
+                  type="button"
+                  onClick={() => setShowGoVariants(false)}
+                  className="text-xs text-amber-400 hover:text-amber-300 mb-2 font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  ← Back to Modes
+                </button>
+                {goVariants.map((v) => (
+                  <div
+                    key={v.key}
+                    data-testid={`go-variant-${v.key}`}
+                    onClick={() => handleLaunchGoVariant(v)}
+                    className="p-3.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-500/60 transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-white group-hover:text-amber-300 flex items-center gap-2">
+                        <Smartphone size={14} className="text-amber-400" />
+                        {v.title}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950 border border-amber-500/40 text-amber-300 uppercase">
+                        GO
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">{v.desc}</p>
+                  </div>
+                ))}
+              </div>
+            ) : !showDegenSubmenu ? (
               <div className="space-y-3">
                 <div
                   onClick={handleLaunchTracker}
