@@ -10,7 +10,12 @@ const isCall = (a) => /^call/i.test(a.action || '');
 /** actionHistory stores display labels ("Bet", "3-bet", "All-in"), not types. */
 export const isAggressiveAction = (a) => /^(bet|raise|all[- ]?in|\d+-bet)/i.test(a.action || '');
 
-function emptyCounts() {
+const COUNT_KEYS = [
+  'hands', 'vpip', 'pfr', 'threeBetOpps', 'threeBets', 'stealOpps', 'steals',
+  'cbetOpps', 'cbets', 'foldCbetOpps', 'foldCbets', 'postAgg', 'postCalls',
+];
+
+export function emptyCounts() {
   return {
     hands: 0,
     vpip: 0,
@@ -26,6 +31,28 @@ function emptyCounts() {
     postAgg: 0,
     postCalls: 0,
   };
+}
+
+/** Compact per-hand tally used for rolling stat windows. */
+export function countsToRow(counts) {
+  return COUNT_KEYS.map((k) => Number(counts?.[k]) || 0);
+}
+
+export function rowToCounts(row) {
+  const out = emptyCounts();
+  COUNT_KEYS.forEach((k, i) => { out[k] = Number(row?.[i]) || 0; });
+  return out;
+}
+
+export function addCounts(target, counts) {
+  COUNT_KEYS.forEach((k) => { target[k] = (target[k] || 0) + (Number(counts?.[k]) || 0); });
+  return target;
+}
+
+export function sumRows(rows) {
+  const out = emptyCounts();
+  (rows || []).forEach((row) => addCounts(out, rowToCounts(row)));
+  return out;
 }
 
 /** Percent with one decimal, or null when the player never had the chance. */
@@ -100,6 +127,13 @@ function tallyHand(rec, heroName, tally) {
   });
 }
 
+/** One recorded hand's contribution to a player's stats. */
+export function handTally(rec, playerName) {
+  const tally = emptyCounts();
+  tallyHand(rec, playerName, tally);
+  return tally;
+}
+
 export function summarizeStats(tally) {
   const af = tally.postCalls > 0
     ? Math.round((tally.postAgg / tally.postCalls) * 100) / 100
@@ -130,12 +164,18 @@ export function computePlayerStats(handRecords, playerName) {
  * are preflop-only, so this measures the real decision code without paying for
  * thousands of postflop equity simulations.
  */
-const OPPONENT_MIX = ['tag', 'lag', 'fish', 'nit', 'rec', 'calling_station', 'shark'];
+const OPPONENT_MIX = ['tag', 'lag', 'nit', 'calling_station', 'shark', 'rock', 'maniac'];
 
-export function simulateStyleStats({ styleId, seats = 6, hands = 1200, difficulty = 'medium' }) {
+/**
+ * Simulate preflop hands for one style or one profile. Returns summary stats,
+ * and with `collectRows` also the compact per-hand tallies so a caller can
+ * keep a rolling window.
+ */
+export function simulateStyleStats({ styleId, profile = null, seats = 6, hands = 1200, difficulty = 'medium', live = false, collectRows = false }) {
   const tally = emptyCounts();
+  const rows = collectRows ? [] : null;
   const tableSize = Math.max(2, Math.min(10, Number(seats) || 6));
-  const heroStyle = resolveStyle(styleId);
+  const heroStyle = profile ? null : resolveStyle(styleId);
   for (let n = 0; n < hands; n += 1) {
     const deck = generateGoDeck('nlh');
     const players = [];
@@ -177,7 +217,9 @@ export function simulateStyleStats({ styleId, seats = 6, hands = 1200, difficult
         playerIndex: idx,
         holeCards: holes[hand.players[idx].id],
         styleId: styles[idx],
+        profile: idx === 0 ? profile : null,
         difficulty,
+        live,
       });
       let res = applyAction(hand, idx, action.type, action.amount);
       if (res && res.error) res = applyAction(hand, idx, action.type === 'raise' ? 'call' : 'check');
@@ -186,8 +228,11 @@ export function simulateStyleStats({ styleId, seats = 6, hands = 1200, difficult
       hand = res;
     }
     if (hand && Array.isArray(hand.actionHistory)) {
-      tallyHand({ actions: hand.actionHistory, positions }, '__hero__', tally);
+      const delta = emptyCounts();
+      tallyHand({ actions: hand.actionHistory, positions }, '__hero__', delta);
+      addCounts(tally, delta);
+      if (rows) rows.push(countsToRow(delta));
     }
   }
-  return summarizeStats(tally);
+  return collectRows ? { stats: summarizeStats(tally), rows } : summarizeStats(tally);
 }
