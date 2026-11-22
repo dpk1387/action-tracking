@@ -638,6 +638,7 @@ export default function PokerTracker() {
           startingStack: cfg.startingStack || prev.startingStack,
           rebuyPrice: cfg.rebuyPrice,
           rebuyChips: cfg.rebuyChips,
+          rebuyRules: cfg.tournamentFormat === 'rebuy' ? (cfg.rebuyRules || prev.rebuyRules || null) : null,
           allowAddOn: cfg.allowAddOn,
           addOnPrice: cfg.addOnPrice,
           addOnChips: cfg.addOnChips,

@@ -1936,13 +1936,15 @@ function getDeadAnte(p, idx, opts = {}) {
 }
 
 export function computePots(players, opts = {}) {
-  let deadAnteTotal = 0;
+  // Side-pot layers follow each player's total commitment, because a dead
+  // ante is still real money in the pot. Deriving layers from live (non-ante)
+  // chips used to leave a phantom top layer whenever the ante payer was all-in
+  // for the same total as everyone else (e.g. heads-up), and that layer was
+  // then awarded to the other player.
   const contribs = players.map((p, idx) => {
     const contrib = Math.max(0, (p.initialStack ?? p.stack ?? 0) - (p.stack ?? 0));
-    const deadAnte = getDeadAnte(p, idx, opts);
-    deadAnteTotal += deadAnte;
-    const liveContrib = Math.max(0, contrib - deadAnte);
-    return { id: p.id, name: p.name, contrib, liveContrib, deadAnte, status: p.status };
+    const deadAnte = Math.min(contrib, getDeadAnte(p, idx, opts));
+    return { id: p.id, name: p.name, contrib, deadAnte, status: p.status };
   });
   const totalPot = contribs.reduce((s, c) => s + c.contrib, 0);
   const hasAllIn = contribs.some((c) => c.status === 'allin' && c.contrib > 0);
@@ -1950,30 +1952,32 @@ export function computePots(players, opts = {}) {
     const eligible = contribs.filter((c) => c.contrib > 0 && c.status !== 'folded').map((c) => c.id);
     return [{ amount: totalPot, eligible }];
   }
-  const levels = [...new Set(contribs.filter((c) => c.liveContrib > 0).map((c) => c.liveContrib))].sort((a, b) => a - b);
+  const levels = [...new Set(contribs.filter((c) => c.contrib > 0).map((c) => c.contrib))].sort((a, b) => a - b);
   const pots = [];
   let prev = 0;
   for (const level of levels) {
     const amount = level - prev;
-    const contributors = contribs.filter((c) => c.liveContrib >= level);
+    const contributors = contribs.filter((c) => c.contrib >= level);
     const potAmount = amount * contributors.length;
     const eligible = contribs
-      .filter((c) => c.liveContrib >= level && c.status !== 'folded')
+      .filter((c) => c.contrib >= level && c.status !== 'folded')
       .map((c) => c.id);
     pots.push({ amount: potAmount, eligible });
     prev = level;
   }
-  if (deadAnteTotal > 0) {
-    if (pots.length === 0) {
-      const eligible = contribs.filter((c) => c.contrib > 0 && c.status !== 'folded').map((c) => c.id);
-      pots.push({ amount: deadAnteTotal, eligible });
-    } else {
-      pots[0].amount += deadAnteTotal;
-      const anteOnlyEligible = contribs
-        .filter((c) => c.deadAnte > 0 && c.liveContrib === 0 && c.status !== 'folded' && !pots[0].eligible.includes(c.id))
-        .map((c) => c.id);
-      if (anteOnlyEligible.length > 0) {
-        pots[0].eligible = [...pots[0].eligible, ...anteOnlyEligible];
+  // The last layer of the lone deepest stack can never be matched. When that
+  // excess is only his dead ante, the ante belongs to the main pot for
+  // everyone still in the hand rather than coming back to him.
+  if (pots.length > 1) {
+    const last = pots[pots.length - 1];
+    if (last.eligible.length === 1) {
+      const top = contribs.find((c) => c.id === last.eligible[0]);
+      const nextLevel = levels[levels.length - 2];
+      if (top && top.deadAnte > 0 && top.contrib - nextLevel <= top.deadAnte + 1e-9) {
+        const below = pots[pots.length - 2];
+        below.amount += last.amount;
+        if (!below.eligible.includes(top.id)) below.eligible = [...below.eligible, top.id];
+        pots.pop();
       }
     }
   }
@@ -1995,11 +1999,14 @@ export function computePots(players, opts = {}) {
 export function refundUncontestedPots(hand) {
   const h = clone(hand);
   if (h._refundsApplied) return h;
-  const opts = bbaPotOpts(h);
-  const entries = h.players.map((p, idx) => {
+  // Match on total commitments, ante included: a dead ante is real money
+  // already in the pot, so a shover's chips are matched by the ante payer's
+  // ante too. Excluding it used to hand the big blind's ante back to the
+  // shover as an "uncalled" excess (e.g. heads-up 5,000 vs 5,000 with a
+  // 50 BBA left the shover alive with 50 behind).
+  const entries = h.players.map((p) => {
     const contrib = Math.max(0, (p.initialStack ?? p.stack ?? 0) - (p.stack ?? 0));
-    const deadAnte = getDeadAnte(p, idx, opts);
-    return { p, live: Math.max(0, contrib - deadAnte) };
+    return { p, live: contrib };
   });
   entries.sort((a, b) => b.live - a.live);
   const top = entries[0];
