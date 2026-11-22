@@ -994,9 +994,10 @@ export default function BotsMode() {
     );
   }
 
-  // The flop stays centred on the middle slot, so cards never shift as the board fills.
+  // Five fixed slots, one per board card, centred on the screen: the flop lands
+  // in slots 1-3, the turn adds slot 4 and the river slot 5, so a card that is
+  // already dealt never moves and the board reads left to right.
   const boardCards = (hand?.communityCards || []).filter((c) => c && !c.hidden);
-  const boardStart = boardCards.length >= 5 ? 0 : 1;
 
   return (
     <div className="h-[100dvh] min-h-[560px] bg-[#121417] text-white flex flex-col overflow-hidden">
@@ -1064,10 +1065,10 @@ export default function BotsMode() {
                 )}
                 <div data-testid="board" className="flex justify-center gap-1 sm:gap-1.5 mt-1 min-h-[44px] items-center">
                   {[0, 1, 2, 3, 4].map((slot) => {
-                    const card = boardCards[slot - boardStart];
+                    const card = boardCards[slot];
                     return (
                       <span key={slot} className="inline-flex items-center justify-center w-7 h-10 sm:w-8 sm:h-11">
-                        {card && <CardChip card={card} fourColor={fourColor} delay={Math.min(slot - boardStart, 4) * 55} />}
+                        {card && <CardChip card={card} fourColor={fourColor} delay={Math.min(slot, 4) * 55} />}
                       </span>
                     );
                   })}
