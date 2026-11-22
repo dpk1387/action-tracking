@@ -1987,39 +1987,32 @@ export function computePots(players, opts = {}) {
   return merged;
 }
 
+// Returns the part of a bet no other player could match (an all-in shove
+// covered by a shorter stack) to the player who made it. Awards have not run
+// yet, so contributions are still readable from initialStack - stack.
 export function refundUncontestedPots(hand) {
   const h = clone(hand);
   if (h._refundsApplied) return h;
   const opts = bbaPotOpts(h);
-  const pots = computePots(h.players, opts);
-  const soleWinners = new Set();
-  pots.forEach((pot) => {
-    if (pot.eligible.length === 1) soleWinners.add(pot.eligible[0]);
+  const entries = h.players.map((p, idx) => {
+    const contrib = Math.max(0, (p.initialStack ?? p.stack ?? 0) - (p.stack ?? 0));
+    const deadAnte = getDeadAnte(p, idx, opts);
+    return { p, live: Math.max(0, contrib - deadAnte) };
   });
-  if (soleWinners.size === 0) {
+  entries.sort((a, b) => b.live - a.live);
+  const top = entries[0];
+  const second = entries[1];
+  const uncalled = top ? top.live - (second ? second.live : 0) : 0;
+  // A folded player's unmatched chips stay in the pot as dead money.
+  if (!top || uncalled <= 0 || top.p.status === 'folded') {
     h._refundsApplied = true;
     return h;
   }
-  const liveContribs = {};
-  h.players.forEach((p, idx) => {
-    const contrib = Math.max(0, (p.initialStack ?? p.stack ?? 0) - (p.stack ?? 0));
-    const deadAnte = getDeadAnte(p, idx, opts);
-    liveContribs[p.id] = Math.max(0, contrib - deadAnte);
-  });
-  h.refunds = [];
-  for (const pid of soleWinners) {
-    const p = h.players.find((pl) => pl.id === pid);
-    if (!p) continue;
-    const myLive = liveContribs[pid];
-    const maxOtherLive = Math.max(0, ...h.players.filter((pl) => pl.id !== pid).map((pl) => liveContribs[pl.id]));
-    const excess = Math.max(0, myLive - maxOtherLive);
-    if (excess > 0) {
-      p.stack += excess;
-      p.totalBet -= excess;
-      p.refunded = (p.refunded || 0) + excess;
-      h.refunds.push({ playerId: pid, amount: excess });
-    }
-  }
+  const excess = Math.round(uncalled * 100) / 100;
+  top.p.stack = Math.round((top.p.stack + excess) * 100) / 100;
+  top.p.totalBet = Math.max(0, Math.round(((top.p.totalBet || 0) - excess) * 100) / 100);
+  top.p.refunded = Math.round(((top.p.refunded || 0) + excess) * 100) / 100;
+  h.refunds = [{ playerId: top.p.id, amount: excess }];
   h._refundsApplied = true;
   return h;
 }
