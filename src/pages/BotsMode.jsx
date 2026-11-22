@@ -22,13 +22,16 @@ import {
   formatBlindLevel,
   handsPerLevel,
   assignStyles,
+  assignProfiles,
+  findBotProfile,
   nextBlindSeats,
   parseStyleSpec,
   resolveStyle,
   thinkDelay,
 } from '@/lib/bots';
 import { getBotsSession, upsertBotsSession } from '@/lib/botsSessionsStore';
-import { isAggressiveAction, simulateStyleStats } from '@/lib/botStats';
+import { ensureProfileBaseline, recordHandForBots, profileStats, subscribeBotProfiles } from '@/lib/botProfilesStore';
+import { isAggressiveAction } from '@/lib/botStats';
 import HandHistoryCard from '@/components/poker/HandHistoryCard';
 
 const SUIT_SYMBOL = { s: '♠', h: '♥', d: '♦', c: '♣' };
@@ -172,6 +175,7 @@ export default function BotsMode() {
   const [showStyle, setShowStyle] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [botStats, setBotStats] = useState(null);
+  const [statsVersion, setStatsVersion] = useState(0);
   const [setupError, setSetupError] = useState(null);
   const [equity, setEquity] = useState(null);
   const [unit, setUnit] = useState('chips');
@@ -273,16 +277,21 @@ export default function BotsMode() {
       }
       botStyles = assigned.styles.map((id) => resolveStyle(id));
     }
+    // One distinct named profile per bot, so a table never seats the same
+    // player twice unless a style runs out of its 13 profiles.
+    const botProfiles = assignProfiles(botStyles);
     setSetupError(null);
     const seats = [];
     const ring = [];
     for (let i = 0; i < Number(draft.seats); i++) {
+      const profile = i === 0 ? null : botProfiles[i - 1];
       seats.push({
         seat: i,
         playerId: i,
-        name: i === 0 ? 'You' : `Bot ${i}`,
+        name: i === 0 ? 'You' : (profile?.name || `Bot ${i}`),
         isHero: i === 0,
-        styleId: i === 0 ? null : botStyles[i - 1] || 'random',
+        styleId: i === 0 ? null : (profile?.styleId || 'random'),
+        profileId: i === 0 ? null : (profile?.id || null),
         eliminated: false,
       });
       ring.push(i);
@@ -420,7 +429,10 @@ export default function BotsMode() {
       const shown = p.seat === heroSeatNo || (!uncontested && p.status !== 'folded');
       recordHoles[p.id] = shown ? (holes[p.id] || []) : [];
     });
-    setHandRecords((records) => [buildHandRecord(settled, awarded, recordHoles, levelLabel), ...records]);
+    const record = buildHandRecord(settled, awarded, recordHoles, levelLabel);
+    setHandRecords((records) => [record, ...records]);
+    // Every seated bot's long-term stats get this hand (last 900 are kept).
+    recordHandForBots(g.seats, record);
 
     // Engine ids are positional, so keep the persistent stacks keyed by seat.
     const stacks = { ...g.stacks };
@@ -482,11 +494,13 @@ export default function BotsMode() {
       sbSeat: rotated.sbSeat,
       bbSeat: rotated.bbSeat,
     };
+    const showdown = nonFolded.length >= 2
+      && settled.players.some((p) => p.status === 'allin' || p.stack <= 0 || p.lastAction?.type === 'allin');
     setTimeout(() => {
       setHoles({});
       setHand(null);
       dealHand(nextGame);
-    }, 2200);
+    }, showdown ? 2800 : 2200);
     setGame(nextGame);
   }, [holes, dealHand]);
 
@@ -510,16 +524,23 @@ export default function BotsMode() {
       return undefined;
     }
     if (hand.currentPlayer !== -1) return undefined;
+    // An all-in run-out is a show, not a formality: pause on the cards and
+    // equity, then deal one street at a time and let the river result sit
+    // long enough to read before the next hand (or the session end) starts.
+    const showdown = nonFolded.length >= 2
+      && hand.players.some((p) => p.status === 'allin' || p.stack <= 0 || p.lastAction?.type === 'allin');
     if (hand.street !== 'river') {
       const cardsNeeded = hand.street === 'preflop' ? 3 : 1;
       const t = setTimeout(() => {
         const cards = deckRef.current.splice(0, cardsNeeded);
         const res = dealNextStreet(hand, cards);
         if (!res.error) setHand(res.hand);
-      }, 650);
+      }, showdown ? 1500 : 650);
       return () => clearTimeout(t);
     }
-    const t = setTimeout(() => finishHand(hand), 800);
+    // Award as soon as the river lands so the winner is visible, then hold the
+    // result on screen longer for an all-in (finishHand waits longer too).
+    const t = setTimeout(() => finishHand(hand), showdown ? 900 : 800);
     return () => clearTimeout(t);
   }, [hand, game, finishHand]);
 
@@ -535,7 +556,9 @@ export default function BotsMode() {
         playerIndex: hand.currentPlayer,
         holeCards: holes[active.id],
         styleId: seat.styleId,
+        profile: findBotProfile(seat.profileId)?.profile || null,
         difficulty: game.difficulty,
+        live: game.gameType === 'live',
       });
       let amount = action.amount;
       if (amount != null && game.gameType === 'live') {
@@ -592,7 +615,10 @@ export default function BotsMode() {
     minChip: isLive ? minChip : 1,
   }), [hand?.street, hand?.currentBet, bigBlind, pot, minRaiseTo, maxRaiseTo, minChip, isLive]);
 
-  const allInSpot = !!hand && hand.players.some((p) => p.status === 'allin');
+  // Equity only belongs on screen once the betting is finished: showing it
+  // while someone can still fold or call leaks information and looks wrong.
+  const bettingClosed = !!hand && (hand.currentPlayer === -1 || hand.phase !== 'playing');
+  const allInSpot = bettingClosed && hand.players.some((p) => p.status === 'allin' || p.stack <= 0 || p.lastAction?.type === 'allin');
   useEffect(() => {
     if (!hand || !allInSpot) {
       setEquity(null);
@@ -615,12 +641,35 @@ export default function BotsMode() {
     return () => clearTimeout(t);
   }, [hand, holes, allInSpot]);
 
-  // Bot stats are simulated on demand: 1,200 preflop-only hands per style is
-  // fast (well under a second) and measures the same decision code the bots use.
+  // Each bot's baseline is simulated once (200 hands) and then real hands are
+  // appended, so stats drift with the way you actually play against them.
+  useEffect(() => subscribeBotProfiles(() => setStatsVersion((v) => v + 1)), []);
+
   useEffect(() => {
-    if (!showStats || !game) return undefined;
+    if (!game) return undefined;
+    const bots = game.seats.filter((s) => !s.isHero && s.profileId);
+    let cancelled = false;
+    let timer = null;
+    const seed = (i) => {
+      if (cancelled || i >= bots.length) return;
+      const profile = findBotProfile(bots[i].profileId);
+      if (profile) {
+        ensureProfileBaseline(profile, {
+          seats: game.seats.length,
+          difficulty: game.difficulty,
+          live: game.gameType === 'live',
+        });
+      }
+      timer = setTimeout(() => seed(i + 1), 40);
+    };
+    timer = setTimeout(() => seed(0), 250);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [game?.seats?.length, game?.difficulty, game?.gameType]);
+
+  useEffect(() => {
+    if (!showStats || !game || game.gameType === 'live') return undefined;
     const bots = game.seats.filter((s) => !s.isHero);
-    const key = `${game.difficulty}|${game.seats.length}|${bots.map((b) => b.styleId).join(',')}`;
+    const key = `${bots.map((b) => b.profileId).join(',')}|${statsVersion}`;
     if (botStats?.key === key) return undefined;
     const timer = setTimeout(() => {
       const rows = bots.map((b) => ({
@@ -628,12 +677,12 @@ export default function BotsMode() {
         name: b.name,
         styleId: b.styleId,
         eliminated: b.eliminated,
-        stats: simulateStyleStats({ styleId: b.styleId, seats: game.seats.length, hands: 1200, difficulty: game.difficulty }),
+        stats: b.profileId ? profileStats(b.profileId) : null,
       }));
       setBotStats({ key, rows });
-    }, 50);
+    }, 30);
     return () => clearTimeout(timer);
-  }, [showStats, game, botStats?.key]);
+  }, [showStats, game, botStats?.key, statsVersion]);
 
   const seatCount = game?.seats?.length || 0;
   const heroSeatNo = game?.seats?.find((s) => s.isHero)?.seat ?? 0;
@@ -944,7 +993,9 @@ export default function BotsMode() {
           </div>
           <div className="flex flex-wrap items-center gap-1">
             <button type="button" onClick={() => setShowSettings(true)} title="Settings" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><Settings size={14} /></button>
-            <button type="button" data-testid="bot-stats-button" onClick={() => setShowStats(true)} title="Bot stats" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><BarChart3 size={14} /></button>
+            {!isLive && (
+              <button type="button" data-testid="bot-stats-button" onClick={() => setShowStats(true)} title="Bot stats" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><BarChart3 size={14} /></button>
+            )}
             <button type="button" onClick={() => setShowHistory(true)} title="Hand history" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><History size={14} /></button>
             <button type="button" onClick={() => setShowStructure(true)} title="Structure setup" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><Layers size={14} /></button>
             <button type="button" onClick={() => setShowLevels(true)} title="Set level" className="p-2 rounded-lg bg-[#222834] hover:bg-[#2d3545] text-slate-300 border border-slate-700/60 cursor-pointer"><ListTree size={14} /></button>
@@ -965,7 +1016,9 @@ export default function BotsMode() {
               {history.length} hands played · saved to Completed sessions with your stats and every hand.
             </p>
             <div className="flex flex-wrap justify-center gap-2 pt-2">
-              <button type="button" onClick={() => setShowStats(true)} className="px-4 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Bot stats</button>
+              {!isLive && (
+                <button type="button" onClick={() => setShowStats(true)} className="px-4 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Bot stats</button>
+              )}
               <button type="button" onClick={() => setShowHistory(true)} className="px-4 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Hand history</button>
               <button
                 type="button"
@@ -1006,10 +1059,11 @@ export default function BotsMode() {
                 const isTurn = hand.currentPlayer === p.id && hand.phase === 'playing';
                 const folded = p.status === 'folded';
                 // A pot won by everyone else folding stays face down.
-                const uncontested = hand.phase === 'awarded'
-                  && hand.players.filter((x) => x.status !== 'folded').length === 1;
+                const contenders = hand.players.filter((x) => x.status !== 'folded');
+                const uncontested = hand.phase === 'awarded' && contenders.length === 1;
+                const allIn = p.status === 'allin' || p.stack <= 0 || p.lastAction?.type === 'allin';
                 const reveal = Boolean(seat?.isHero)
-                  || (p.status === 'allin' && bettingOver)
+                  || (allIn && bettingOver && contenders.length >= 2)
                   || (hand.phase === 'awarded' && !folded && !uncontested);
                 return (
                   <div key={p.id} data-testid={`seat-${p.seat}`} data-status={p.status} className="absolute -translate-x-1/2 -translate-y-1/2 z-10" style={seatPosition(p)}>
@@ -1135,14 +1189,14 @@ export default function BotsMode() {
         )}
       </div>
 
-      {showStats && (
+      {showStats && !isLive && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowStats(false)}>
           <div data-testid="bot-stats-modal" className="bg-[#141922] border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-sm font-bold text-white">Bot stats</h3>
               <button type="button" onClick={() => setShowStats(false)} className="text-xs text-slate-400 hover:text-white cursor-pointer">Close</button>
             </div>
-            <p className="text-[11px] text-slate-500 mb-3">Simulated from 1,200 preflop hands per bot with this table's difficulty and playstyles.</p>
+            <p className="text-[11px] text-slate-500 mb-3">200 simulated baseline hands per bot, then the last 900 hands you play with them. Live tables hide these stats.</p>
             {!botStats?.rows?.length ? (
               <p className="text-xs text-slate-400">Simulating…</p>
             ) : (
@@ -1167,10 +1221,10 @@ export default function BotsMode() {
                           </div>
                           <div className="text-[10px] text-slate-500">{STYLE_SHORT[r.styleId] || r.styleId}</div>
                         </td>
-                        <td className="py-1.5 px-2 font-mono text-emerald-300">{r.stats.vpip ?? '—'}%</td>
-                        <td className="py-1.5 px-2 font-mono text-sky-300">{r.stats.pfr ?? '—'}%</td>
-                        <td className="py-1.5 px-2 font-mono text-amber-300">{r.stats.threeBet ?? '—'}%</td>
-                        <td className="py-1.5 px-2 font-mono text-slate-300">{r.stats.ats ?? '—'}%</td>
+                        <td className="py-1.5 px-2 font-mono text-emerald-300">{r.stats?.vpip ?? '—'}{r.stats?.vpip != null ? '%' : ''}</td>
+                        <td className="py-1.5 px-2 font-mono text-sky-300">{r.stats?.pfr ?? '—'}{r.stats?.pfr != null ? '%' : ''}</td>
+                        <td className="py-1.5 px-2 font-mono text-amber-300">{r.stats?.threeBet ?? '—'}{r.stats?.threeBet != null ? '%' : ''}</td>
+                        <td className="py-1.5 px-2 font-mono text-slate-300">{r.stats?.ats ?? '—'}{r.stats?.ats != null ? '%' : ''}</td>
                       </tr>
                     ))}
                   </tbody>

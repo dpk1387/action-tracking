@@ -2003,8 +2003,10 @@ export function refundUncontestedPots(hand) {
   const top = entries[0];
   const second = entries[1];
   const uncalled = top ? top.live - (second ? second.live : 0) : 0;
-  // A folded player's unmatched chips stay in the pot as dead money.
-  if (!top || uncalled <= 0 || top.p.status === 'folded') {
+  // Only an all-in player's uncalled chips come back. A folded player's
+  // unmatched chips stay in the pot as dead money, and a normal fold-out win
+  // is not an all-in at all, so its pot must not be reduced.
+  if (!top || uncalled <= 0 || top.p.status === 'folded' || top.p.status !== 'allin') {
     h._refundsApplied = true;
     return h;
   }
