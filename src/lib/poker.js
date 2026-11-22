@@ -648,13 +648,15 @@ export function hasSoleDeepestStack(h, playerId) {
   return otherNonFolded.every((o) => pTotal > getCapacity(o));
 }
 
-export function raiseLabel(level) {
+export function raiseLabel(level, live = false) {
   if (!level || level <= 1) return 'Bet';
+  // Live rooms call the first bet and every later raise a "raise".
+  if (live) return 'Raise';
   if (level === 2) return 'Raise';
   return `${level}-bet`;
 }
 
-export function actionLabel(la) {
+export function actionLabel(la, live = false) {
   if (!la) return '';
   if (la.type === 'fold') return 'Fold';
   if (la.type === 'check') return 'Check';
@@ -666,7 +668,7 @@ export function actionLabel(la) {
   if (la.type === '4b') return '4B';
   if (la.type === 'straddle') return 'Straddle';
   if (la.type === 'kill') return 'Kill';
-  if (la.type === 'bet' || la.type === 'raise') return raiseLabel(la.raiseLevel);
+  if (la.type === 'bet' || la.type === 'raise') return raiseLabel(la.raiseLevel, live);
   return la.type;
 }
 

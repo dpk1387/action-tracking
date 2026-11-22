@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BarChart3, History, Layers, ListTree, LogOut, Settings, SkipForward, Trophy } from 'lucide-react';
-import { applyAction, awardPots, calcEquity, computePots, dealNextStreet, fillBoard, refundUncontestedPots, startHand, tryAutoWinners } from '@/lib/poker';
+import { applyAction, awardPots, calcEquity, computePots, dealNextStreet, fillBoard, raiseLabel, refundUncontestedPots, startHand, tryAutoWinners } from '@/lib/poker';
 import { generateGoDeck } from '@/lib/goMode';
 import {
   GAME_TYPES,
@@ -31,8 +31,9 @@ import {
 } from '@/lib/bots';
 import { getBotsSession, upsertBotsSession } from '@/lib/botsSessionsStore';
 import { ensureProfileBaseline, recordHandForBots, profileStats, subscribeBotProfiles } from '@/lib/botProfilesStore';
-import { isAggressiveAction } from '@/lib/botStats';
+import { computePlayerStats, isAggressiveAction } from '@/lib/botStats';
 import HandHistoryCard from '@/components/poker/HandHistoryCard';
+import BetKeypad from '@/components/poker/BetKeypad';
 
 const SUIT_SYMBOL = { s: '♠', h: '♥', d: '♦', c: '♣' };
 const RED_SUITS = { h: true, d: true };
@@ -54,6 +55,14 @@ function sortHole(cards) {
 }
 
 const ACTION_LABEL = { fold: 'Fold', check: 'Check', call: 'Call', bet: 'Bet', raise: 'Raise', allin: 'All-in', sb: 'SB', bb: 'BB' };
+
+// Online shows bet/raise/3-bet/4-bet; live rooms call every later raise a raise.
+function seatActionLabel(la, live = false) {
+  if (!la || !la.type) return '';
+  if (la.type === 'bet' || la.type === 'raise') return raiseLabel(la.raiseLevel, live);
+  if (la.type === 'allin') return live ? 'All in' : 'All-in';
+  return ACTION_LABEL[la.type] || la.type;
+}
 
 function CardChip({ card, fourColor = false, delay = 0 }) {
   if (!card) {
@@ -108,7 +117,7 @@ function positionLabels(hand) {
 }
 
 /** Snapshot of one finished hand, shaped like Action Tracking hand records. */
-function buildHandRecord(hand, awarded, holes, levelLabel) {
+function buildHandRecord(hand, awarded, holes, levelLabel, live = false) {
   const positions = positionLabels(hand);
   const holeCards = {};
   hand.players.forEach((p) => { holeCards[p.id] = holes[p.id] || []; });
@@ -139,7 +148,7 @@ function buildHandRecord(hand, awarded, holes, levelLabel) {
     actions: (hand.actionHistory || []).map((a) => ({
       street: a.street,
       player: a.player,
-      action: a.action,
+      action: live && /^\d+-bet$/.test(a.action || '') ? 'Raise' : a.action,
       chips: a.chips,
       isAggressive: isAggressiveAction(a),
       raiseLevel: a.raiseLevel,
@@ -185,6 +194,7 @@ export default function BotsMode() {
   const [heroBusted, setHeroBusted] = useState(false);
   const [sessionOutcome, setSessionOutcome] = useState(null);
   const [raiseTo, setRaiseTo] = useState('');
+  const [showKeypad, setShowKeypad] = useState(false);
   const [flash, setFlash] = useState(null);
   const [hydrated, setHydrated] = useState(false);
 
@@ -194,9 +204,11 @@ export default function BotsMode() {
   const handRef = useRef(null);
   const sessionIdRef = useRef(null);
   const sessionStartRef = useRef(0);
+  const handRecordsRef = useRef([]);
 
   useEffect(() => { gameRef.current = game; }, [game]);
   useEffect(() => { handRef.current = hand; }, [hand]);
+  useEffect(() => { handRecordsRef.current = handRecords; }, [handRecords]);
 
   const levels = useMemo(() => blindLevelsForSpeed(setup?.speed || setupDraft.speed), [setup?.speed, setupDraft.speed]);
 
@@ -429,7 +441,7 @@ export default function BotsMode() {
       const shown = p.seat === heroSeatNo || (!uncontested && p.status !== 'folded');
       recordHoles[p.id] = shown ? (holes[p.id] || []) : [];
     });
-    const record = buildHandRecord(settled, awarded, recordHoles, levelLabel);
+    const record = buildHandRecord(settled, awarded, recordHoles, levelLabel, g.gameType === 'live');
     setHandRecords((records) => [record, ...records]);
     // Every seated bot's long-term stats get this hand (last 900 are kept).
     recordHandForBots(g.seats, record);
@@ -559,6 +571,9 @@ export default function BotsMode() {
         profile: findBotProfile(seat.profileId)?.profile || null,
         difficulty: game.difficulty,
         live: game.gameType === 'live',
+        // HUD reads come from the hero's own played hands; bots only see the
+        // sample the tier's hudMinHands allows.
+        hud: computePlayerStats(handRecordsRef.current, 'You'),
       });
       let amount = action.amount;
       if (amount != null && game.gameType === 'live') {
@@ -979,6 +994,10 @@ export default function BotsMode() {
     );
   }
 
+  // The flop stays centred on the middle slot, so cards never shift as the board fills.
+  const boardCards = (hand?.communityCards || []).filter((c) => c && !c.hidden);
+  const boardStart = boardCards.length >= 5 ? 0 : 1;
+
   return (
     <div className="h-[100dvh] min-h-[560px] bg-[#121417] text-white flex flex-col overflow-hidden">
       <div className="w-full max-w-6xl mx-auto flex-1 min-h-0 flex flex-col gap-2 p-2 sm:p-3 lg:p-4">
@@ -1044,9 +1063,14 @@ export default function BotsMode() {
                   </>
                 )}
                 <div data-testid="board" className="flex justify-center gap-1 sm:gap-1.5 mt-1 min-h-[44px] items-center">
-                  {(hand?.communityCards || []).filter((c) => c && !c.hidden).map((c, i) => (
-                    <CardChip key={`${i}-${c.rank}${c.suit}`} card={c} fourColor={fourColor} delay={Math.min(i, 5) * 55} />
-                  ))}
+                  {[0, 1, 2, 3, 4].map((slot) => {
+                    const card = boardCards[slot - boardStart];
+                    return (
+                      <span key={slot} className="inline-flex items-center justify-center w-7 h-10 sm:w-8 sm:h-11">
+                        {card && <CardChip card={card} fourColor={fourColor} delay={Math.min(slot - boardStart, 4) * 55} />}
+                      </span>
+                    );
+                  })}
                 </div>
                 <div className="text-[9px] text-slate-500 font-mono">Hand #{hand?.handNumber || 0}</div>
               </div>
@@ -1084,11 +1108,17 @@ export default function BotsMode() {
                           <div data-testid={`style-${p.seat}`} className="text-[9px] text-slate-500 leading-tight">{STYLE_SHORT[seat.styleId] || seat.styleId}</div>
                         )}
                         <div data-testid={`stack-${p.seat}`} className="text-[11px] font-mono text-emerald-300 leading-tight">{stackLabel(p, seat)}</div>
-                        <div className="flex items-center justify-center gap-1 text-[9px] min-h-[12px]">
-                          {p.currentBet > 0 && <span className="font-mono text-amber-300">{betLabel(p.currentBet)}</span>}
+                        <div className="flex items-center justify-center gap-1 text-[9px] min-h-[12px] whitespace-nowrap">
+                          {p.lastAction?.type ? (
+                            <span className="text-slate-400 truncate">
+                              {seatActionLabel(p.lastAction, isLive)}
+                              {Number(p.lastAction.amount) > 0 && <span className="font-mono text-amber-300"> {betLabel(p.lastAction.amount)}</span>}
+                            </span>
+                          ) : p.currentBet > 0 ? (
+                            <span className="font-mono text-amber-300">{betLabel(p.currentBet)}</span>
+                          ) : null}
                           {equity && equity[p.id] != null && <span className="font-mono text-sky-300">{equity[p.id].toFixed(0)}%</span>}
                         </div>
-                        {p.lastAction?.type && <div className="text-[9px] text-slate-500 leading-tight">{ACTION_LABEL[p.lastAction.type] || p.lastAction.type}</div>}
                       </div>
                     </div>
                   </div>
@@ -1097,7 +1127,8 @@ export default function BotsMode() {
             </div>
 
             <div className="shrink-0 bg-[#0f1319]/95 border border-slate-800 rounded-2xl shadow-xl">
-              <div className="w-full p-2 sm:p-2.5 space-y-2">
+              {/* Reserved height: the hero controls and the "bot is acting" line keep the table the same size. */}
+              <div className="w-full p-2 sm:p-2.5 space-y-2 min-h-[112px] flex flex-col justify-center">
                 {hand?.phase === 'awarded' ? (
                   <div data-testid="winner-banner" className="text-center text-sm font-bold text-amber-300">
                     {winSummary?.text || 'Hand complete'}
@@ -1133,6 +1164,14 @@ export default function BotsMode() {
                       <button type="button" onClick={() => submitRaise(raiseTo)} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold cursor-pointer">
                         {toCall > 0 ? 'Raise to' : 'Bet'}
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowKeypad(true)}
+                        title="Keypad"
+                        className="md:hidden px-3 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-xs font-bold cursor-pointer"
+                      >
+                        123
+                      </button>
                       <div className="flex flex-1 flex-wrap items-center gap-1.5">
                         {shortcuts.map((sc) => (
                           <button
@@ -1140,7 +1179,7 @@ export default function BotsMode() {
                             type="button"
                             data-shortcut={sc.id}
                             onClick={() => submitRaise(sc.amount)}
-                            title={`${betLabel(sc.amount)}`}
+                            title={isLive ? undefined : betLabel(sc.amount)}
                             className="px-2.5 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-[11px] font-semibold cursor-pointer"
                           >
                             {sc.label}
@@ -1148,6 +1187,14 @@ export default function BotsMode() {
                         ))}
                       </div>
                     </div>
+                    {showKeypad && (
+                      <BetKeypad
+                        value={raiseTo}
+                        onChange={setRaiseTo}
+                        onDone={() => setShowKeypad(false)}
+                        label={toCall > 0 ? 'Raise to' : 'Bet amount'}
+                      />
+                    )}
                   </>
                 ) : (
                   <div className="text-center text-xs text-slate-500 py-3">

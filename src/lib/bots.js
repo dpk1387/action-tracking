@@ -1,12 +1,10 @@
 import { decideBotAction as decideFromRanges } from '@/lib/botStrategy';
 
 export const BOT_DIFFICULTIES = [
-  { id: 'beginner', label: 'Beginner', desc: 'Calls too much, rarely bluffs, makes mistakes.' },
-  { id: 'easy', label: 'Easy', desc: 'Loose and predictable, punishes only obvious mistakes.' },
-  { id: 'medium', label: 'Medium', desc: 'Solid fundamentals with occasional leaks.' },
-  { id: 'hard', label: 'Hard', desc: 'Tight-aggressive with balanced bluffing.' },
-  { id: 'pro', label: 'Pro', desc: 'Reads equity well and applies pressure.' },
-  { id: 'gto', label: 'GTO', desc: 'Pot-based, balanced frequencies computed from equity.' },
+  { id: 'easy', label: 'Easy', desc: 'Ignores position and pot odds, overvalues weak pairs, erratic sizing.' },
+  { id: 'medium', label: 'Medium', desc: 'Position-aware, shove-or-fold short, c-bets dry boards, respects pot odds.' },
+  { id: 'hard', label: 'Hard', desc: 'Clean charts, stack-scaled sizing, texture-aware c-bets, reads HUD leaks.' },
+  { id: 'pro', label: 'Pro', desc: 'Nash push/fold, geometric sizing, blockers and real-time counter-exploits.' },
 ];
 
 export const BOT_STYLES = [
@@ -221,14 +219,41 @@ export function liveTuning(profile) {
   };
 }
 
+/**
+ * Difficulty is more than an equity-noise knob. Each tier turns on a set of
+ * behaviours in botStrategy: position awareness, short-stack push/fold, board
+ * texture, draw odds, bet sizing, HUD reads and how often it blunders.
+ */
 const DIFFICULTY_TUNING = {
-  beginner: { noise: 0.16, iters: 80, bluffMul: 0.5, mistake: 0.1 },
-  easy: { noise: 0.11, iters: 120, bluffMul: 0.8, mistake: 0.05 },
-  medium: { noise: 0.07, iters: 200, bluffMul: 1, mistake: 0.02 },
-  hard: { noise: 0.04, iters: 300, bluffMul: 1.2, mistake: 0 },
-  pro: { noise: 0.02, iters: 400, bluffMul: 1.3, mistake: 0 },
-  gto: { noise: 0, iters: 500, bluffMul: 1.4, mistake: 0 },
+  easy: {
+    noise: 0.16, iters: 70, bluffMul: 0.45, mistake: 0.30,
+    positionAware: false, shortStack: 'none', texture: 'none', drawOdds: false,
+    sizing: 'erratic', hud: 'none', hudMinHands: Infinity, maxRaises: 1,
+    overvaluePairs: true, fitOrFold: true,
+  },
+  medium: {
+    noise: 0.07, iters: 220, bluffMul: 1, mistake: 0.12,
+    positionAware: true, shortStack: 'shove_fold', texture: 'basic', drawOdds: true,
+    sizing: 'standard', hud: 'outliers', hudMinHands: 20, maxRaises: 2,
+    overvaluePairs: false, fitOrFold: false,
+  },
+  hard: {
+    noise: 0.035, iters: 400, bluffMul: 1.15, mistake: 0.04,
+    positionAware: true, shortStack: 'charts', texture: 'sized', drawOdds: true,
+    sizing: 'stack_scaled', hud: 'core', hudMinHands: 30, maxRaises: 3,
+    overvaluePairs: false, fitOrFold: false,
+  },
+  pro: {
+    noise: 0.015, iters: 700, bluffMul: 1.3, mistake: 0.005,
+    positionAware: true, shortStack: 'charts_iso', texture: 'advanced', drawOdds: true,
+    sizing: 'geometric', hud: 'full', hudMinHands: 8, maxRaises: 4,
+    overvaluePairs: false, fitOrFold: false,
+  },
 };
+
+export function difficultyTuning(id) {
+  return DIFFICULTY_TUNING[id] || DIFFICULTY_TUNING.medium;
+}
 
 export function resolveStyle(styleId, rng = Math.random) {
   if (styleId && styleId !== 'random' && STYLE_PROFILES[styleId]) return styleId;
@@ -296,9 +321,9 @@ export function styleProfile(styleId) {
  * Decide an action for one bot. Ranges and sizing live in botStrategy; this
  * wrapper resolves the style and applies the difficulty tuning.
  */
-export function decideBotAction({ hand, playerIndex, holeCards, styleId, difficulty, profile, live = false, rng = Math.random }) {
-  const tuning = DIFFICULTY_TUNING[difficulty] || DIFFICULTY_TUNING.medium;
+export function decideBotAction({ hand, playerIndex, holeCards, styleId, difficulty, profile, hud = null, live = false, rng = Math.random }) {
+  const tuning = difficultyTuning(difficulty);
   let resolved = profile || styleProfile(resolveStyle(styleId, rng));
   if (live) resolved = liveTuning(resolved);
-  return decideFromRanges({ hand, playerIndex, holeCards, profile: resolved, tuning, rng });
+  return decideFromRanges({ hand, playerIndex, holeCards, profile: resolved, tuning, hud, rng });
 }
