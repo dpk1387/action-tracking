@@ -19,6 +19,8 @@ import {
 } from '@/lib/handHistoriesStore';
 import TournamentManagerModal from '@/components/poker/TournamentManagerModal';
 import CompletedSessionModal from '@/components/poker/CompletedSessionModal';
+import BotsSessionModal from '@/components/poker/BotsSessionModal';
+import { getBotsSessions, deleteBotsSession, subscribeBotsSessions } from '@/lib/botsSessionsStore';
 
 export default function StartScreen({ onNewSession, onResumeSession, savedGuestSession, savedGuestUpdatedAt, onDismissGuest }) {
   const { user, isAuthenticated, isLoadingAuth, logout } = useAuth();
@@ -39,6 +41,8 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   const [completedList, setCompletedList] = useState(() => getCompletedSessions());
   const [viewingCompleted, setViewingCompleted] = useState(null);
   const [handHistoriesList, setHandHistoriesList] = useState(() => getHandHistories());
+  const [botsSessions, setBotsSessions] = useState(() => getBotsSessions());
+  const [viewingBotsSession, setViewingBotsSession] = useState(null);
   const [viewingHandHistory, setViewingHandHistory] = useState(null);
   // One shared in-app confirmation for destructive actions (window.confirm is blocked in some shells)
   const [pendingConfirm, setPendingConfirm] = useState(null);
@@ -101,6 +105,14 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   }, []);
 
   useEffect(() => {
+    setBotsSessions(getBotsSessions());
+    const unsub = subscribeBotsSessions(() => {
+      setBotsSessions(getBotsSessions());
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
     if (!isAuthenticated) { setSessions([]); return; }
     setLoadingSessions(true);
     setListError('');
@@ -155,13 +167,15 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   const handleClearAllActive = () => {
     setPendingConfirm({
       title: 'Clear all in-progress sessions?',
-      message: `All ${sessions.length} in-progress saved session${sessions.length === 1 ? '' : 's'} will be deleted. Completed sessions and hand histories are untouched.`,
+      message: `All ${sessions.length + botsInProgress.length} in-progress saved session${sessions.length + botsInProgress.length === 1 ? '' : 's'} will be deleted. Completed sessions and hand histories are untouched.`,
       confirmLabel: 'Clear all',
       onConfirm: async () => {
         setLoadingSessions(true);
         try {
           await discardAllSavedSessions();
           setSessions([]);
+          botsInProgress.forEach((b) => deleteBotsSession(b.id));
+          setBotsSessions(getBotsSessions());
         } catch {
           setListError('Could not clear active sessions.');
         } finally {
@@ -225,7 +239,9 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   }
 
   const hasGuestSaved = Boolean(savedGuestSession?.hand);
-  const totalInProgressCount = (isAuthenticated ? sessions.length : 0) + activeTournaments.length + (hasGuestSaved ? 1 : 0);
+  const botsInProgress = botsSessions.filter((s) => s.status === 'in_progress');
+  const botsCompleted = botsSessions.filter((s) => s.status === 'complete');
+  const totalInProgressCount = (isAuthenticated ? sessions.length : 0) + activeTournaments.length + (hasGuestSaved ? 1 : 0) + botsInProgress.length;
 
   return (
     <div className="min-h-screen bg-[#121417] flex items-center justify-center p-6 relative">
@@ -315,7 +331,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <FolderOpen size={13} /> Complete Sessions {completedList.length > 0 ? `(${completedList.length})` : ''}
+                <FolderOpen size={13} /> Complete Sessions {completedList.length + botsCompleted.length > 0 ? `(${completedList.length + botsCompleted.length})` : ''}
               </button>
               <button
                 type="button"
@@ -330,7 +346,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
               </button>
             </div>
 
-            {sessionTab === 'in_progress' && sessions.length > 0 && (
+            {sessionTab === 'in_progress' && (sessions.length > 0 || botsInProgress.length > 0) && (
               <button
                 type="button"
                 onClick={handleClearAllActive}
@@ -356,6 +372,61 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
           {/* TAB 1: IN PROGRESS SESSIONS */}
           {sessionTab === 'in_progress' && (
             <div className="space-y-2.5">
+              {/* Saved Play Bots sessions */}
+              {botsInProgress.map((b) => (
+                <div
+                  key={b.id}
+                  className="rounded-lg border border-sky-500/40 bg-[#1e2227] hover:bg-[#242a30] p-3.5 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow"
+                >
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/bots?s=${encodeURIComponent(b.id)}`)}
+                    className="min-w-0 flex-1 text-left cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <Bot size={15} className="text-sky-400 shrink-0" />
+                      <span className="text-sm font-bold text-white truncate">
+                        Play Bots — {b.setup?.seats || '—'}-max {b.setup?.difficulty ? b.setup.difficulty[0].toUpperCase() + b.setup.difficulty.slice(1) : ''}
+                      </span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950 border border-sky-500/40 text-sky-300 uppercase">
+                        Play Bots
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
+                      <span>Hand #{b.handNumber || 1}</span>
+                      <span>{b.levelLabel ? `Blinds ${b.levelLabel}` : ''}</span>
+                      <span>{b.handCount || 0} hands played</span>
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/bots?s=${encodeURIComponent(b.id)}`)}
+                      className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer transition-colors shadow"
+                    >
+                      Resume
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingConfirm({
+                          title: 'Delete bots session',
+                          message: 'This saved Play Bots session and its recorded hands will be permanently deleted.',
+                          confirmLabel: 'Delete',
+                          onConfirm: () => {
+                            deleteBotsSession(b.id);
+                            setBotsSessions(getBotsSessions());
+                          },
+                        });
+                      }}
+                      title="Delete session"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
               {/* Active Tournament Director Sessions listed cleanly down here */}
               {activeTournaments.map((t) => (
                 <div
@@ -448,11 +519,11 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                 <div className="text-sm text-slate-400 py-6 text-center">Loading sessions...</div>
               ) : listError ? (
                 <div className="text-sm text-rose-400 py-4">{listError}</div>
-              ) : (isAuthenticated && sessions.length === 0 && !hasGuestSaved && activeTournaments.length === 0) ? (
+              ) : (isAuthenticated && sessions.length === 0 && !hasGuestSaved && activeTournaments.length === 0 && botsInProgress.length === 0) ? (
                 <div className="py-8 text-center text-xs text-slate-500">
                   No in-progress sessions saved.
                 </div>
-              ) : (!isAuthenticated && !hasGuestSaved && activeTournaments.length === 0) ? (
+              ) : (!isAuthenticated && !hasGuestSaved && activeTournaments.length === 0 && botsInProgress.length === 0) ? (
                 <div className="py-8 text-center text-xs text-slate-500">
                   No local in-progress sessions. Sign in to sync cloud sessions across devices.
                 </div>
@@ -512,7 +583,67 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
           {/* TAB 2: COMPLETE SESSIONS */}
           {sessionTab === 'completed' && (
             <div className="space-y-2.5">
-              {completedList.length === 0 ? (
+              {botsCompleted.map((b) => (
+                <div
+                  key={b.id}
+                  onClick={() => setViewingBotsSession(b)}
+                  className="group relative rounded-lg border border-[#2a2f37] bg-[#1e2227] hover:bg-[#242a30] hover:border-sky-500/50 p-3.5 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 pr-10">
+                      <div className="text-sm font-bold text-white truncate flex items-center gap-2 mb-1">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-950 border border-sky-500/40 text-sky-300 uppercase">Play Bots</span>
+                        <span className="truncate">
+                          {b.setup?.seats || '—'}-max {b.setup?.difficulty ? b.setup.difficulty[0].toUpperCase() + b.setup.difficulty.slice(1) : ''} — {b.outcome === 'win' ? 'You won' : b.outcome === 'bust' ? 'You busted' : 'Ended early'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
+                        <span className="flex items-center gap-1 text-slate-300 font-semibold">
+                          <FolderOpen size={12} className="text-sky-400" />
+                          {b.handCount || b.handRecords?.length || 0} Hands Recorded
+                        </span>
+                        {b.updatedAt && (
+                          <span className="flex items-center gap-1 text-slate-500">
+                            <Calendar size={12} /> {new Date(b.updatedAt).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setViewingBotsSession(b);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-sky-950/80 hover:bg-sky-900 border border-sky-600/50 text-sky-300 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <Eye size={13} /> View Stats
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPendingConfirm({
+                        title: 'Delete bots session',
+                        message: 'This completed Play Bots session, its stats and its hand history will be permanently deleted.',
+                        confirmLabel: 'Delete',
+                        onConfirm: () => {
+                          deleteBotsSession(b.id);
+                          setBotsSessions(getBotsSessions());
+                        },
+                      });
+                    }}
+                    title="Delete bots session"
+                    className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-[#2a2f37] transition-colors cursor-pointer"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+              {completedList.length === 0 && botsCompleted.length === 0 ? (
                 <div className="py-10 text-center text-xs text-slate-500">
                   No completed sessions saved yet. When you end a session, save it to view its complete hand history here.
                 </div>
@@ -942,6 +1073,10 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
             setViewingHandHistory(null);
           }}
         />
+      )}
+
+      {viewingBotsSession && (
+        <BotsSessionModal session={viewingBotsSession} onClose={() => setViewingBotsSession(null)} />
       )}
 
       {/* Shared confirmation for destructive actions */}
