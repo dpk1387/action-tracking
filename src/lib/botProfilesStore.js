@@ -1,11 +1,11 @@
 // Long-lived per-bot stats. Each seated bot is one named profile; its first
-// 200 hands are simulated once as a baseline, then real hands you play with it
+// 300 hands are simulated once as a baseline, then real hands you play with it
 // are appended. Stats always use at most the last 900 hands.
 import { handTally, countsToRow, sumRows, summarizeStats, simulateStyleStats } from '@/lib/botStats';
 
-const STORAGE_KEY = 'poker_bot_profiles_v1';
+const STORAGE_KEY = 'poker_bot_profiles_v4';
 const MAX_WINDOW = 900;
-const BASELINE_HANDS = 200;
+const BASELINE_HANDS = 300;
 const MAX_PROFILES = 40;
 const WRITE_DELAY_MS = 500;
 
@@ -62,11 +62,17 @@ export function getProfileRecord(profileId) {
   return readAll().profiles[profileId] || null;
 }
 
-/** Simulate the 200-hand baseline once for a profile, and return its record. */
+/** Simulate the 300-hand baseline once for a profile, and return its record. */
 export function ensureProfileBaseline(profile, { seats = 6, difficulty = 'medium', live = false } = {}) {
   const store = readAll();
   const existing = store.profiles[profile.id];
-  if (existing?.baselineDone) return existing;
+  if (existing?.baselineDone) {
+    if (existing.name !== profile.name) {
+      existing.name = profile.name;
+      scheduleWrite();
+    }
+    return existing;
+  }
   const result = simulateStyleStats({
     profile: profile.profile,
     seats,

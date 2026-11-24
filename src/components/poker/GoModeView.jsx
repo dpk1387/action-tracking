@@ -179,9 +179,8 @@ export default function GoModeView({
   const buttonIndex = players.findIndex((p) => p.seat === hand?.buttonSeat);
   const n = players.length;
   const positions = players.map((p, idx) => {
-    let pos = positionForSeat(n, buttonIndex, idx, hand?.variant);
-    if (pos === 'BTN' || pos === 'D/SB') pos = 'D';
-    if (!showPosition && !['D', 'SB', 'BB'].includes(pos)) return '';
+    const pos = positionForSeat(n, buttonIndex, idx, hand?.variant);
+    if (!showPosition && !['BTN', 'D', 'D/SB', 'SB', 'BB'].includes(pos)) return '';
     return pos;
   });
 
@@ -195,7 +194,8 @@ export default function GoModeView({
   const mandatoryBlock = mandatoryCallBlocker(hand);
   const disableCall = canCheck || !!mandatoryBlock;
 
-  const minRaise = (hand?.currentBet || 0) + (hand?.lastRaiseAmount || hand?.bigBlind || 10);
+  const effBlind = hand?.bigBlind || hand?.bombAmount || hand?.anteAmount || 10;
+  const minRaise = (hand?.currentBet || 0) + (hand?.lastRaiseAmount || effBlind);
   const maxRaise = cp ? cp.stack + cp.currentBet : 0;
   const breakItem = hand?.inBreak ? ((hand.blindSchedule || [])[hand.tLevel] || null) : null;
   const hasBreakRace = !!(breakItem && ((breakItem.type === 'color_up') || (breakItem.race && Number(breakItem.race.retired) > 0 && Number(breakItem.race.replacement) > 0)));
@@ -206,15 +206,15 @@ export default function GoModeView({
   const isPL = hand?.gameType === 'pl' || hand?.gameType === 'pot_limit' || isPotLimitVariant(hand?.variant);
   const facingBet = hand?.currentBet || 0;
   const rawPotRaiseTo = cp
-    ? (facingBet === 0 ? Math.max(hand?.bigBlind || 1, potTotal) : potTotal + 2 * facingBet - (cp.currentBet || 0))
+    ? (facingBet === 0 ? Math.max(hand?.bigBlind || hand?.bombAmount || hand?.anteAmount || 1, potTotal) : potTotal + 2 * facingBet - (cp.currentBet || 0))
     : 0;
   const effectiveMaxRaise = isPL ? Math.min(maxRaise, rawPotRaiseTo) : maxRaise;
   const isPotCapped = isPL && rawPotRaiseTo < maxRaise;
 
   // Smallest chip on the table for this level; bet steps are half a big blind
   // rounded to that chip, and every size we produce is aligned to it.
-  const minChip = minChipForBlinds(hand?.bigBlind || getLowestDenomination(hand));
-  const stepSize = Math.max(minChip, roundToNearest((hand?.bigBlind || 0) / 2, minChip));
+  const minChip = minChipForBlinds(hand?.bigBlind || hand?.bombAmount || hand?.anteAmount || getLowestDenomination(hand));
+  const stepSize = Math.max(minChip, roundToNearest((effBlind || 0) / 2, minChip));
   const alignToChip = (value) => roundToNearest(value, minChip);
 
   // Check if hand is currently in play

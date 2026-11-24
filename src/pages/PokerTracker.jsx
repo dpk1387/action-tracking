@@ -45,11 +45,11 @@ import { saveHandHistory, findHandHistoryByCode, deleteHandHistory } from '@/lib
 import {
   startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots, nextHand,
   positionForSeat, getButtonIndex, money, formatPotAmount, formatPotOutcome, formatSessionName, getMultipleBoardWinPercentages, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone, calcAnteForType,
-  goDiscardStage, rebuyBlocker, isPotLimitVariant, goModeSupported,
+  goDiscardStage, rebuyBlocker, isPotLimitVariant, goModeSupported, isBombPotVariant,
 } from '@/lib/poker';
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
-import { suggestNextBlinds } from '@/lib/tournamentStructures';
+import { suggestNextBlinds, suggestNextAnte } from '@/lib/tournamentStructures';
 import { advanceToNextHand, initLevelTimer, advanceTimerSegment, removeScheduleStops, pauseLevelTimer, resumeLevelTimer, levelTimerState, formatTimer, formatTimerLabel, nudgeLevelTimer, scheduledLevelNumber } from '@/lib/levelTimer';
 import { minChipForBlinds, roundHandToMinChip } from '@/lib/tableRules';
 import { buildBustRecovery, recoveryChips } from '@/lib/bustRecovery';
@@ -502,12 +502,21 @@ export default function PokerTracker() {
     const bi = getButtonIndex(h);
     sessionStore.addHand({
       handNumber: h.handNumber,
+      variant: h.variant,
+      buttonSeat: h.buttonSeat,
+      sbSeat: h.sbSeat,
+      bbSeat: h.bbSeat,
       smallBlind: h.smallBlind,
       bigBlind: h.bigBlind,
       anteType: h.anteType,
       anteAmount: h.anteAmount,
+      bombAmount: h.bombAmount,
       currency: h.currency,
       communityCards: h.communityCards,
+      boardB: h.boardB,
+      boardC: h.boardC,
+      doubleBoard: !!h.doubleBoard,
+      bombBoards: h.bombBoards,
       actions: h.actionHistory,
       actionHistory: h.actionHistory,
       holeCards: isGoMode ? { ...goHoleCards } : { ...holeCards },
@@ -620,6 +629,8 @@ export default function PokerTracker() {
           mandatoryStraddle: !!cfg.mandatoryStraddle,
           bombPot: !!cfg.bombPot,
           baseBombPot: !!cfg.bombPot,
+          bombBoards: cfg.bombBoards || (cfg.doubleBoard ? 2 : 1),
+          baseBombBoards: cfg.bombBoards || (cfg.doubleBoard ? 2 : 1),
           bombAmount: cfg.bombAmount || prev.bombAmount,
           smallBlind: cfg.smallBlind != null ? cfg.smallBlind : prev.smallBlind,
           bigBlind: cfg.bigBlind != null ? cfg.bigBlind : prev.bigBlind,
@@ -653,7 +664,8 @@ export default function PokerTracker() {
             updated.buttonSeat = chosenSeat;
           }
         }
-        if (updated.actionHistory && updated.actionHistory.length === 0 && updated.street === 'preflop') {
+        const noActionYet = !updated.actionHistory || updated.actionHistory.length === 0;
+        if (noActionYet && (updated.street === 'preflop' || isBombPotVariant(updated.variant))) {
           updated = recomputeBlindsForLevel(updated, updated.smallBlind, updated.bigBlind, updated.anteAmount);
         }
         return updated;
@@ -1653,13 +1665,16 @@ export default function PokerTracker() {
     if (idx === (hand.blindLevel || 0)) return;
     const lvl = sched[idx];
     if (!lvl || lvl.type === 'break' || lvl.type === 'color_up') return;
+    const isBombVar = isBombPotVariant(hand.variant);
     const bbVal = parseAmount(lvl.bigBlind) ?? Number(lvl.bigBlind) ?? 0;
     const sbVal = parseAmount(lvl.smallBlind) ?? Number(lvl.smallBlind) ?? 0;
-    if (bbVal <= 0 || sbVal <= 0) return;
-    const ante = calcAnteForType(hand.anteType, bbVal, lvl.ante);
-    const newSB = sbVal;
-    const newBB = bbVal;
-    if (newSB === hand.smallBlind && newBB === hand.bigBlind && ante === hand.anteAmount) return;
+    const lvlAnteVal = parseAmount(lvl.ante) ?? Number(lvl.ante) ?? 0;
+    if (!isBombVar && (bbVal <= 0 || sbVal <= 0)) return;
+    if (isBombVar && lvlAnteVal <= 0) return;
+    const ante = isBombVar ? lvlAnteVal : calcAnteForType(hand.anteType, bbVal, lvl.ante);
+    const newSB = isBombVar ? 0 : sbVal;
+    const newBB = isBombVar ? 0 : bbVal;
+    if (newSB === hand.smallBlind && newBB === hand.bigBlind && ante === hand.anteAmount && (!isBombVar || ante === hand.bombAmount)) return;
     setHand(recomputeBlindsForLevel(hand, newSB, newBB, ante));
   }, [hand]);
 
@@ -1731,14 +1746,15 @@ export default function PokerTracker() {
   const handleBlindLevel = (sb, bb, ante) => {
     pushHistory(hand);
     setHand((prev) => {
+      const isBombVar = isBombPotVariant(prev.variant);
       const sched = Array.isArray(prev.blindSchedule) ? prev.blindSchedule.slice() : [];
       const atLast = !sched.length || (prev.blindLevel || 0) >= sched.length - 1;
       if (atLast) {
         sched.push({
           type: 'level',
-          smallBlind: sb,
-          bigBlind: bb,
-          ante: calcAnteForType(prev.anteType, bb, ante),
+          smallBlind: isBombVar ? 0 : sb,
+          bigBlind: isBombVar ? 0 : bb,
+          ante: isBombVar ? ante : calcAnteForType(prev.anteType, bb, ante),
         });
         return { ...prev, blindSchedule: sched };
       }
@@ -1746,7 +1762,11 @@ export default function PokerTracker() {
       return {
         ...prev,
         blindSchedule: sched,
-        smallBlind: sb, bigBlind: bb, anteAmount: ante, blindLevel: levelIdx,
+        smallBlind: isBombVar ? 0 : sb,
+        bigBlind: isBombVar ? 0 : bb,
+        anteAmount: ante,
+        bombAmount: isBombVar ? ante : prev.bombAmount,
+        blindLevel: levelIdx,
         tLevel: levelIdx,
         pendingLevelIdx: levelIdx,
         inBreak: false,
@@ -1784,12 +1804,14 @@ export default function PokerTracker() {
         base.levelStartEpoch = Date.now();
         base.levelHandsCompleted = 0;
         if (nextLevel && nextLevel.type !== 'break' && nextLevel.type !== 'color_up') {
-          const nextBB = parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0;
-          const nextSB = parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0;
-          const ante = calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
+          const isBombVar = isBombPotVariant(prev.variant);
+          const nextBB = isBombVar ? 0 : (parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0);
+          const nextSB = isBombVar ? 0 : (parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0);
+          const ante = isBombVar ? (parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
           base.smallBlind = nextSB;
           base.bigBlind = nextBB;
           base.anteAmount = ante;
+          if (isBombVar) base.bombAmount = ante;
           base.blindLevel = nextIdx;
         }
       }
@@ -1835,12 +1857,14 @@ export default function PokerTracker() {
         pendingRace: null,
       };
       if (nextLevel && nextLevel.type !== 'break' && nextLevel.type !== 'color_up') {
-        const nextBB = parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0;
-        const nextSB = parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0;
-        const ante = calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
+        const isBombVar = isBombPotVariant(prev.variant);
+        const nextBB = isBombVar ? 0 : (parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0);
+        const nextSB = isBombVar ? 0 : (parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0);
+        const ante = isBombVar ? (parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
         base.smallBlind = nextSB;
         base.bigBlind = nextBB;
         base.anteAmount = ante;
+        if (isBombVar) base.bombAmount = ante;
         base.blindLevel = nextIdx;
       }
       return base.blindsPosted === false ? postBlinds(base) : base;
@@ -1850,14 +1874,21 @@ export default function PokerTracker() {
   const handleNextLevelClick = () => {
     const sched = hand.blindSchedule;
     const atLast = !sched?.length || (hand.blindLevel || 0) >= sched.length - 1;
+    const isBombVar = isBombPotVariant(hand.variant);
     setPreplannerLevel(atLast);
     if (sched?.length && !atLast) {
       const nextIdx = Math.min((hand.blindLevel || 0) + 1, sched.length - 1);
       const lvl = sched[nextIdx];
       setBlindsPrefill({
-        smallBlind: lvl.smallBlind,
-        bigBlind: lvl.bigBlind,
-        anteAmount: calcAnteForType(hand.anteType, lvl.bigBlind, lvl.ante),
+        smallBlind: isBombVar ? 0 : lvl.smallBlind,
+        bigBlind: isBombVar ? 0 : lvl.bigBlind,
+        anteAmount: isBombVar ? (parseAmount(lvl.ante) ?? Number(lvl.ante) ?? hand.anteAmount) : calcAnteForType(hand.anteType, lvl.bigBlind, lvl.ante),
+      });
+    } else if (isBombVar) {
+      setBlindsPrefill({
+        smallBlind: 0,
+        bigBlind: 0,
+        anteAmount: suggestNextAnte(sched || [], hand.chipDenominations || []),
       });
     } else {
       const suggestion = suggestNextBlinds(sched || [], hand.chipDenominations || []);
@@ -1905,12 +1936,14 @@ export default function PokerTracker() {
         }
       }
       if (noAction && !inBreak && targetLevel && targetLevel.type !== 'break' && targetLevel.type !== 'color_up') {
-        const targetBB = parseAmount(targetLevel.bigBlind) ?? Number(targetLevel.bigBlind) ?? 0;
-        const targetSB = parseAmount(targetLevel.smallBlind) ?? Number(targetLevel.smallBlind) ?? 0;
-        const ante = calcAnteForType(prev.anteType, targetBB, targetLevel.ante);
+        const isBombVar = isBombPotVariant(prev.variant);
+        const targetBB = isBombVar ? 0 : (parseAmount(targetLevel.bigBlind) ?? Number(targetLevel.bigBlind) ?? 0);
+        const targetSB = isBombVar ? 0 : (parseAmount(targetLevel.smallBlind) ?? Number(targetLevel.smallBlind) ?? 0);
+        const ante = isBombVar ? (parseAmount(targetLevel.ante) ?? Number(targetLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, targetBB, targetLevel.ante);
         base.smallBlind = targetSB;
         base.bigBlind = targetBB;
         base.anteAmount = ante;
+        if (isBombVar) base.bombAmount = ante;
         base.blindLevel = targetIdx;
         return recomputeBlindsForLevel(base, targetSB, targetBB, ante);
       }
@@ -3028,6 +3061,7 @@ export default function PokerTracker() {
           currency={hand.currency}
           chipDenominations={hand.chipDenominations}
           isPreplanner={preplannerLevel}
+          isBombPot={isBombPotVariant(hand.variant)}
           onSave={handleBlindLevel}
           onChipRace={handleChipRace}
           onClose={() => { setShowBlinds(false); setBlindsPrefill(null); setPreplannerLevel(false); }}
@@ -3160,12 +3194,14 @@ export default function PokerTracker() {
                 base.levelStartEpoch = Date.now();
                 base.levelHandsCompleted = 0;
                 if (nextLevel && nextLevel.type !== 'break' && nextLevel.type !== 'color_up') {
-                  const nextBB = parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0;
-                  const nextSB = parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0;
-                  const ante = calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
+                  const isBombVar = isBombPotVariant(prev.variant);
+                  const nextBB = isBombVar ? 0 : (parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0);
+                  const nextSB = isBombVar ? 0 : (parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0);
+                  const ante = isBombVar ? (parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
                   base.smallBlind = nextSB;
                   base.bigBlind = nextBB;
                   base.anteAmount = ante;
+                  if (isBombVar) base.bombAmount = ante;
                   base.blindLevel = nextIdx;
                 }
               }

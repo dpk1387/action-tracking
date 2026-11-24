@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { X } from 'lucide-react';
-import { formatKM } from '@/lib/poker';
+import { formatKM, isBombPotVariant, parseAmount } from '@/lib/poker';
 
 export default function SetLevelDialog({ hand, onApply, onClose }) {
+  const isBomb = isBombPotVariant(hand?.variant) || (Number(hand?.smallBlind) === 0 && Number(hand?.bigBlind) === 0 && Boolean(hand?.bombPot));
   const schedule = hand?.blindSchedule || [];
   const segments = [];
   let levelCount = 0;
@@ -32,6 +33,7 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
         label: `Level ${levelCount}`,
         smallBlind: item.smallBlind,
         bigBlind: item.bigBlind,
+        ante: item.ante,
         minutes: item.minutes,
       });
     }
@@ -79,16 +81,19 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
           onChange={(e) => setSegIdx(e.target.value)}
           className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm mb-4"
         >
-          {segments.map((s) => (
-            <option key={s.idx} value={String(s.idx)}>
-              {s.label}
-              {s.kind === 'level'
-                ? ` — ${formatKM(s.smallBlind)}/${formatKM(s.bigBlind)}`
-                : s.kind === 'color_up'
-                ? ` — Color Up (${s.minutes} min${s.race ? ` ${formatKM(s.race.retired)}→${formatKM(s.race.replacement)}` : ''})`
-                : ` — ${s.minutes} min`}
-            </option>
-          ))}
+          {segments.map((s) => {
+            const segIsBomb = isBomb || (Number(s.smallBlind) === 0 && Number(s.bigBlind) === 0 && Number(parseAmount(s.ante) ?? s.ante) > 0);
+            return (
+              <option key={s.idx} value={String(s.idx)}>
+                {s.label}
+                {s.kind === 'level'
+                  ? (segIsBomb ? ` — Ante ${formatKM(s.ante)}` : ` — ${formatKM(s.smallBlind)}/${formatKM(s.bigBlind)}`)
+                  : s.kind === 'color_up'
+                  ? ` — Color Up (${s.minutes} min${s.race ? ` ${formatKM(s.race.retired)}→${formatKM(s.race.replacement)}` : ''})`
+                  : ` — ${s.minutes} min`}
+              </option>
+            );
+          })}
         </select>
         {isMinutes && (
           <div className="mb-4">
@@ -124,7 +129,11 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
               </div>
             ) : (
               <div>
-                <div>Blinds: {formatKM(selected.smallBlind)} / {formatKM(selected.bigBlind)}</div>
+                <div>
+                  {(isBomb || (Number(selected.smallBlind) === 0 && Number(selected.bigBlind) === 0 && Number(parseAmount(selected.ante) ?? selected.ante) > 0))
+                    ? `Ante: ${formatKM(selected.ante)}`
+                    : `Blinds: ${formatKM(selected.smallBlind)} / ${formatKM(selected.bigBlind)}`}
+                </div>
                 {!isMinutes && <div className="text-xs text-slate-500 mt-1">Timer method is {cfg.method} – level counter resets.</div>}
               </div>
             )}

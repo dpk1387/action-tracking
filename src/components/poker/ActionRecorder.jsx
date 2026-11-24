@@ -58,12 +58,12 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
         : hand.anteType === 'three_blinds'
         ? (Number(hand.thirdBlind) || (hand.bigBlind * 2))
         : hand.bigBlind)
-    : hand.bigBlind;
+    : (hand.bigBlind || hand.bombAmount || hand.anteAmount || 1);
   const minRaise = hand.currentBet === 0
-    ? hand.bigBlind
+    ? (hand.bigBlind || hand.bombAmount || hand.anteAmount || 1)
     : (hand.street === 'preflop' && (!hand.raiseLevel || hand.raiseLevel <= 1))
     ? Math.max(hand.currentBet * 2, hand.currentBet + (hand.lastRaiseAmount || effectiveLiveBlind))
-    : (hand.currentBet + Math.max(hand.lastRaiseAmount || 0, hand.bigBlind || 1));
+    : (hand.currentBet + Math.max(hand.lastRaiseAmount || 0, hand.bigBlind || hand.bombAmount || hand.anteAmount || 1));
   const isBet = hand.currentBet === 0;
 
   const potNow = hand.players.reduce((s, p) => s + (p.totalBet || 0), 0);

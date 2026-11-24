@@ -4,8 +4,8 @@ import BlindScheduleEditor from '@/components/poker/BlindScheduleEditor';
 import ChipDenominationPicker from '@/components/poker/ChipDenominationPicker';
 import HelpHover from '@/components/HelpHover';
 import SavedStructuresDialog from '@/components/poker/SavedStructuresDialog';
-import { defaultScheduleFor, defaultDenomsFor, firstBreakLevelNum, generateBlindSchedule } from '@/lib/tournamentStructures';
-import { suggestAnte, parseAmount } from '@/lib/poker';
+import { defaultScheduleFor, defaultDenomsFor, firstBreakLevelNum, generateBlindSchedule, bombPotScheduleFor } from '@/lib/tournamentStructures';
+import { suggestAnte, parseAmount, isBombPotVariant } from '@/lib/poker';
 import { ROUNDING_OPTIONS, isRoundingOptionDisabled, getDefaultStackRounding } from '@/lib/goMode';
 
 const CASH_DEFAULT = { smallBlind: 1, bigBlind: 2, anteType: 'none', anteAmount: 0 };
@@ -95,8 +95,10 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [fourthBlind, setFourthBlind] = useState(initial?.fourthBlind ?? (initBB * 4));
   const [thirdBlindCustomized, setThirdBlindCustomized] = useState(initial?.thirdBlind != null);
   const [fourthBlindCustomized, setFourthBlindCustomized] = useState(initial?.fourthBlind != null);
-  const [anteType, setAnteType] = useState(initial?.anteType || 'bba');
-  const [anteAmount, setAnteAmount] = useState(initial?.anteAmount ?? 50);
+  const initVariant = !initial?.variant || initial.variant === 'holdem' ? 'nlh' : initial.variant;
+  const initIsBomb = isBombPotVariant(initVariant);
+  const [anteType, setAnteType] = useState(initIsBomb ? 'traditional' : (initial?.anteType || 'bba'));
+  const [anteAmount, setAnteAmount] = useState(initial?.anteAmount ?? (initIsBomb ? (initial?.mode === 'cash' ? 5 : 25) : 50));
   const [sbHalfAnteShortHanded, setSbHalfAnteShortHanded] = useState(initial?.sbHalfAnteShortHanded ?? false);
   const [shortHandedThreshold, setShortHandedThreshold] = useState(initial?.shortHandedThreshold ?? 5);
   const [cashBlindsTouched, setCashBlindsTouched] = useState(false);
@@ -107,15 +109,15 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [mandatoryStraddleAmount, setMandatoryStraddleAmount] = useState(initial?.mandatoryStraddleAmount ?? '');
   const [mandatoryDoubleStraddle, setMandatoryDoubleStraddle] = useState(initial?.mandatoryDoubleStraddle || false);
   const [mandatoryDoubleStraddleAmount, setMandatoryDoubleStraddleAmount] = useState(initial?.mandatoryDoubleStraddleAmount ?? '');
-  const [bombPot, setBombPot] = useState(initial?.bombPot || false);
-  const [bombAmount, setBombAmount] = useState(initial?.bombAmount ?? (initial?.bigBlind ? initial.bigBlind * 5 : 10));
-  const [doubleBoard, setDoubleBoard] = useState(false);
+  const [bombPot, setBombPot] = useState(initIsBomb || initial?.bombPot || false);
+  const [bombAmount, setBombAmount] = useState(initial?.bombAmount ?? (initIsBomb ? (initial?.anteAmount || (initial?.mode === 'cash' ? 5 : 25)) : (initial?.bigBlind ? initial.bigBlind * 5 : 10)));
+  const [doubleBoard, setDoubleBoard] = useState(initVariant === 'double_board_bomb_pot' ? true : false);
   const [firstButton, setFirstButton] = useState(initial?.firstButton ?? initial?.buttonSeat ?? 'random');
   const [schedule, setSchedule] = useState(() => {
     if (initial?.blindSchedule?.length) return initial.blindSchedule;
     const denoms = initial?.chipDenominations || chipDenoms;
     const lowest = [...denoms].sort((a, b) => a - b)[0];
-    return defaultScheduleFor(lowest);
+    return initIsBomb ? bombPotScheduleFor(lowest) : defaultScheduleFor(lowest);
   });
   const omahaVariants = ['plo', 'plo5', 'plo6', 'plo8'];
   const degenVariantLabels = {
@@ -126,20 +128,54 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     pirate_poker: 'Pirate Poker',
     mandatory_3bet: 'Mandatory 3-Bet',
     mandatory_raise: 'Mandatory Raise',
-    mandatory_4bet: 'Mandatory 4-Bet',
     red_river: 'Red River',
     win_button: 'Win the Button',
     deuces_wild: 'Deuces Wild',
+    bomb_pot: 'Bomb Pot',
+    double_board_bomb_pot: 'Double Board Bomb Pot',
   };
   const [gameType, setGameType] = useState(() => {
     const initV = !initial?.variant || initial.variant === 'holdem' ? 'nlh' : initial.variant;
     return omahaVariants.includes(initV) ? 'pl' : (initial?.gameType || 'nl');
   });
   const handleVariantChange = (v) => {
+    const prevWasBomb = isBombPotVariant(variant);
+    const nextIsBomb = isBombPotVariant(v);
+    const validDenoms = chipDenoms.map(Number).filter((d) => d > 0);
+    const lowest = validDenoms.length ? Math.min(...validDenoms) : 25;
     setVariant(v);
     if (v === 'short_deck') {
       if (!anteAmount || Number(anteAmount) <= 0 || Number(anteAmount) === 50) {
         setAnteAmount(isCash ? 1 : 25);
+      }
+    }
+    if (nextIsBomb) {
+      setGameType('nl');
+      setStackInBB(false);
+      setAnteType('traditional');
+      setAllowStraddle(false);
+      setAllowMultiStraddle(false);
+      setBombPot(true);
+      setDoubleBoard(v === 'double_board_bomb_pot');
+      if (!prevWasBomb) {
+        const defAnte = isCash ? 5 : lowest;
+        setAnteAmount(defAnte);
+        setBombAmount(defAnte);
+        setSchedule(bombPotScheduleFor(lowest));
+      }
+      return;
+    }
+    if (prevWasBomb && !nextIsBomb) {
+      setBombPot(false);
+      setDoubleBoard(false);
+      if (isCash) {
+        setAnteType(CASH_DEFAULT.anteType);
+        setAnteAmount(CASH_DEFAULT.anteAmount);
+      } else {
+        setAnteType('bba');
+        setSchedule(defaultScheduleFor(lowest));
+        const defSched = defaultScheduleFor(lowest);
+        setAnteAmount(Number(defSched[0]?.bigBlind) || 50);
       }
     }
     setGameType(omahaVariants.includes(v) ? 'pl' : 'nl');
@@ -195,16 +231,21 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   };
 
   const buildStructureData = () => {
-    const schedBB = schedule?.[0]?.bigBlind ? (parseAmount(schedule[0].bigBlind) ?? Number(schedule[0].bigBlind)) : 50;
-    const effStartingStack = bulkStack !== '' ? (parseAmount(bulkStack) ?? Number(bulkStack)) : (players[0]?.stack ? (parseAmount(players[0].stack) ?? Number(players[0].stack)) : schedBB * 100);
+    const isBombVar = isBombPotVariant(variant);
+    const schedUnit = isBombVar
+      ? (schedule?.[0]?.ante ? (parseAmount(schedule[0].ante) ?? Number(schedule[0].ante)) : 25)
+      : (schedule?.[0]?.bigBlind ? (parseAmount(schedule[0].bigBlind) ?? Number(schedule[0].bigBlind)) : 50);
+    const effStartingStack = bulkStack !== '' ? (parseAmount(bulkStack) ?? Number(bulkStack)) : (players[0]?.stack ? (parseAmount(players[0].stack) ?? Number(players[0].stack)) : schedUnit * 100);
 
     return {
-      mode, variant, gameType, currency, stackInBB, seatCount,
-      smallBlind, bigBlind, thirdBlind, fourthBlind, anteType, anteAmount,
+      mode, variant, gameType, currency, stackInBB: isBombVar ? false : stackInBB, seatCount,
+      smallBlind: isBombVar ? 0 : smallBlind, bigBlind: isBombVar ? 0 : bigBlind, thirdBlind, fourthBlind,
+      anteType: isBombVar ? 'traditional' : anteType, anteAmount,
       sbHalfAnteShortHanded, shortHandedThreshold,
       smallBet, bigBet, flMaxRaises,
-      doubleBoard: false, allowStraddle, allowMultiStraddle, mandatoryStraddle,
-      bombPot, bombAmount,
+      doubleBoard: variant === 'double_board_bomb_pot', allowStraddle: isBombVar ? false : allowStraddle,
+      allowMultiStraddle: isBombVar ? false : allowMultiStraddle, mandatoryStraddle,
+      bombPot: isBombVar || bombPot, bombAmount: isBombVar ? (parseAmount(anteAmount) ?? Number(anteAmount) ?? bombAmount) : bombAmount,
       firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
       levelMethod, levelValue,
       levelDurationMinutes: levelMethod === 'minutes' ? (Number(levelValue) || 15) : undefined,
@@ -360,26 +401,46 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   };
 
   const isCash = mode === 'cash';
-  const isBBA = anteType === 'bba';
-  const isBtnAnte = anteType === 'btn_ante';
-  const isSBHalfAnte = anteType === 'sb_half_ante';
-  const isThreeBlinds = isCash && anteType === 'three_blinds';
+  const isBombVariant = isBombPotVariant(variant);
+  const isDoubleBombVariant = variant === 'double_board_bomb_pot';
+  const isBBA = !isBombVariant && anteType === 'bba';
+  const isBtnAnte = !isBombVariant && anteType === 'btn_ante';
+  const isSBHalfAnte = !isBombVariant && anteType === 'sb_half_ante';
+  const isThreeBlinds = !isBombVariant && isCash && anteType === 'three_blinds';
   const sym = isCash ? currency || '$' : '';
-  const stackUnit = !isCash && stackInBB ? 'bb' : sym;
+  const stackUnit = !isCash && stackInBB && !isBombVariant ? 'bb' : sym;
   const isLow = false;
   const isShortDeck = variant === 'short_deck';
-  const effBB = isCash ? Number(bigBlind || 0) : Number(schedule[0]?.bigBlind || bigBlind || 0);
+  const schedFirstAnte = parseAmount(schedule[0]?.ante) ?? Number(schedule[0]?.ante) ?? 0;
+  const effAnteBomb = isCash ? (parseAmount(anteAmount) ?? (Number(anteAmount) || 5)) : (schedFirstAnte || (parseAmount(anteAmount) ?? (Number(anteAmount) || 25)));
+  const effBB = isBombVariant ? effAnteBomb : (isCash ? Number(bigBlind || 0) : Number(schedule[0]?.bigBlind || bigBlind || 0));
   const bb = effBB || (isCash ? 2 : 50);
   const smallestChip = !isCash && chipDenoms.length ? Math.min(...chipDenoms.map(Number).filter((d) => d > 0)) : effBB;
 
   useEffect(() => {
+    if (isBombVariant) return;
     if (isBBA || isBtnAnte) setAnteAmount(Number(bigBlind));
     else if (isSBHalfAnte) setAnteAmount(Math.max(1, Math.round(Number(bigBlind) * 0.5)));
-  }, [isBBA, isBtnAnte, isSBHalfAnte, bigBlind]);
+  }, [isBombVariant, isBBA, isBtnAnte, isSBHalfAnte, bigBlind]);
 
   const handleModeChange = (newMode) => {
     if (newMode === mode) return;
     setMode(newMode);
+    if (isBombVariant) {
+      setStackInBB(false);
+      setAnteType('traditional');
+      setAllowStraddle(false);
+      setAllowMultiStraddle(false);
+      if (newMode === 'cash') {
+        const curA = parseAmount(anteAmount) ?? Number(anteAmount);
+        if (!curA || curA <= 0) setAnteAmount(5);
+      } else {
+        if (seatCount > 10) setSeatCount(10);
+        setPlayers((prev) => (prev.length > 10 ? prev.slice(0, 10) : prev));
+        setAnteAmount(schedFirstAnte || smallestChip || 25);
+      }
+      return;
+    }
     if (newMode === 'cash') {
       if (!cashBlindsTouched) {
         setSmallBlind(CASH_DEFAULT.smallBlind);
@@ -435,10 +496,22 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const updatePlayer = (i, field, value) => setPlayers((prev) => prev.map((p, idx) => idx === i ? { ...p, [field]: value } : p));
 
   const save = () => {
-    const isFL = gameType === 'fl';
+    const isFL = !isBombVariant && gameType === 'fl';
     const useScheduleBlinds = !isCash && !isFL;
-    const schedFirst = schedule[0] || { smallBlind: 25, bigBlind: 50, ante: 0 };
-    if (isFL) {
+    const schedFirst = schedule[0] || { smallBlind: isBombVariant ? 0 : 25, bigBlind: isBombVariant ? 0 : 50, ante: isBombVariant ? 25 : 0 };
+    if (isBombVariant) {
+      if (isCash) {
+        const cashBombAnte = parseAmount(anteAmount) ?? Number(anteAmount);
+        if (!cashBombAnte || cashBombAnte <= 0) return setError('Ante must be positive.');
+      } else {
+        for (const l of schedule) {
+          if (l.type !== 'break' && l.type !== 'color_up') {
+            const lvlAnte = parseAmount(l.ante) ?? Number(l.ante);
+            if (!lvlAnte || lvlAnte <= 0) return setError('Every ante level must be positive.');
+          }
+        }
+      }
+    } else if (isFL) {
       if ((parseAmount(smallBet) ?? Number(smallBet)) <= 0) return setError('Small bet must be positive.');
       if ((parseAmount(bigBet) ?? Number(bigBet)) <= 0) return setError('Big bet must be positive.');
       if (Number(flMaxRaises) < 1) return setError('Max raises must be at least 1.');
@@ -449,16 +522,16 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         if ((parseAmount(bigBlind) ?? Number(bigBlind)) <= 0 || (parseAmount(smallBlind) ?? Number(smallBlind)) <= 0) return setError('Blinds must be positive.');
       }
     }
-    if (anteType === 'three_blinds' || anteType === 'four_blinds') {
+    if (!isBombVariant && (anteType === 'three_blinds' || anteType === 'four_blinds')) {
       const tbVal = parseAmount(thirdBlind) ?? Number(thirdBlind);
       if (tbVal <= 0) return setError('Third blind must be positive.');
     }
-    if (anteType === 'four_blinds') {
+    if (!isBombVariant && anteType === 'four_blinds') {
       const fbVal = parseAmount(fourthBlind) ?? Number(fourthBlind);
       if (fbVal <= 0) return setError('Fourth blind must be positive.');
     }
-    if (isCash && anteType === 'traditional' && anteAmount !== '' && (parseAmount(anteAmount) ?? Number(anteAmount)) < 0) return setError('Ante cannot be negative.');
-    if (!isCash) {
+    if (!isBombVariant && isCash && anteType === 'traditional' && anteAmount !== '' && (parseAmount(anteAmount) ?? Number(anteAmount)) < 0) return setError('Ante cannot be negative.');
+    if (!isBombVariant && !isCash) {
       for (const l of schedule) {
         if (l.type !== 'break' && ((parseAmount(l.smallBlind) ?? Number(l.smallBlind)) <= 0 || (parseAmount(l.bigBlind) ?? Number(l.bigBlind)) <= 0)) return setError('Every blind level must be positive.');
       }
@@ -467,26 +540,32 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       ? players.map((p, idx) => ({ ...p, seat: idx + 1, occupied: true }))
       : players.filter((p) => p.occupied);
     if (occupiedPlayers.length < 2) return setError('At least 2 active players are required.');
-    const effAnte = parseAmount(anteAmount) ?? Number(anteAmount) ?? (isCash ? 1 : 25);
+    const effAnte = parseAmount(anteAmount) ?? Number(anteAmount) ?? (isCash ? (isBombVariant ? 5 : 1) : 25);
     if (isShortDeck && effAnte <= 0) return setError('Ante must be positive.');
 
-    const sb = isShortDeck ? 0 : isFL ? Math.max(1, Math.round((parseAmount(smallBet) ?? Number(smallBet)) / 2)) : useScheduleBlinds ? (parseAmount(schedFirst.smallBlind) ?? Number(schedFirst.smallBlind)) : (parseAmount(smallBlind) ?? Number(smallBlind));
-    const bb = isShortDeck ? effAnte : isFL ? (parseAmount(smallBet) ?? Number(smallBet)) : useScheduleBlinds ? (parseAmount(schedFirst.bigBlind) ?? Number(schedFirst.bigBlind)) : (parseAmount(bigBlind) ?? Number(bigBlind));
+    const bombLvl1Ante = isBombVariant
+      ? (isCash ? effAnte : (parseAmount(schedFirst.ante) ?? Number(schedFirst.ante) ?? 25))
+      : 0;
+    const sb = isBombVariant ? 0 : isShortDeck ? 0 : isFL ? Math.max(1, Math.round((parseAmount(smallBet) ?? Number(smallBet)) / 2)) : useScheduleBlinds ? (parseAmount(schedFirst.smallBlind) ?? Number(schedFirst.smallBlind)) : (parseAmount(smallBlind) ?? Number(smallBlind));
+    const bb = isBombVariant ? 0 : isShortDeck ? effAnte : isFL ? (parseAmount(smallBet) ?? Number(smallBet)) : useScheduleBlinds ? (parseAmount(schedFirst.bigBlind) ?? Number(schedFirst.bigBlind)) : (parseAmount(bigBlind) ?? Number(bigBlind));
     const toChips = (val) => {
       let s = parseAmount(val);
       if (s == null) s = Number(val);
       const blank = s == null || isNaN(s) || s <= 0;
-      if (!isCash && stackInBB) return (blank ? 100 : s) * bb;
+      if (!isCash && !isBombVariant && stackInBB) return (blank ? 100 : s) * bb;
+      if (isBombVariant) return blank ? (isCash ? 100 * bombLvl1Ante : 200 * smallestChip) : s;
       return blank ? (isShortDeck ? 100 * effAnte : 100 * bb) : s;
     };
-      const tbVal = (!isShortDeck && (anteType === 'three_blinds' || anteType === 'four_blinds')) ? (parseAmount(thirdBlind) ?? Number(thirdBlind) ?? (bb * 2)) : 0;
-      const fbVal = (!isShortDeck && anteType === 'four_blinds') ? (parseAmount(fourthBlind) ?? Number(fourthBlind) ?? (bb * 4)) : 0;
+      const tbVal = (!isBombVariant && !isShortDeck && (anteType === 'three_blinds' || anteType === 'four_blinds')) ? (parseAmount(thirdBlind) ?? Number(thirdBlind) ?? (bb * 2)) : 0;
+      const fbVal = (!isBombVariant && !isShortDeck && anteType === 'four_blinds') ? (parseAmount(fourthBlind) ?? Number(fourthBlind) ?? (bb * 4)) : 0;
       const highestBlind = Math.max(bb, tbVal || 0, fbVal || 0);
       const finalPlayers = occupiedPlayers.map((p) => ({ ...p, name: (p.name || '').trim() || `Player ${p.seat}`, stack: toChips(p.stack) }));
-      const determinedStartingStack = initial?.startingStack || (finalPlayers.length ? finalPlayers[0].stack : (bulkStack ? toChips(bulkStack) : 100 * bb));
+      const determinedStartingStack = initial?.startingStack || (finalPlayers.length ? finalPlayers[0].stack : (bulkStack ? toChips(bulkStack) : (isBombVariant ? 200 * smallestChip : 100 * bb)));
 
       const finalVariant = variant;
-      const finalGameType = omahaVariants.includes(finalVariant)
+      const finalGameType = isBombVariant
+        ? 'nl'
+        : omahaVariants.includes(finalVariant)
         ? 'pl'
         : (isGoMode ? (gameType === 'fl' ? 'nl' : gameType) : gameType);
 
@@ -499,20 +578,22 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       firstButton: firstButton === 'random' ? 'random' : Number(firstButton),
       gameType: finalGameType,
       currency: sym,
-      stackInBB: !isCash && stackInBB,
+      stackInBB: !isCash && !isBombVariant && stackInBB,
       tableSize: isCash ? occupiedPlayers.length : seatCount,
       players: finalPlayers,
       smallBlind: sb,
       bigBlind: bb,
-      thirdBlind: (!isShortDeck && (anteType === 'three_blinds' || anteType === 'four_blinds')) ? tbVal : undefined,
-      fourthBlind: (!isShortDeck && anteType === 'four_blinds') ? fbVal : undefined,
+      thirdBlind: (!isBombVariant && !isShortDeck && (anteType === 'three_blinds' || anteType === 'four_blinds')) ? tbVal : undefined,
+      fourthBlind: (!isBombVariant && !isShortDeck && anteType === 'four_blinds') ? fbVal : undefined,
       smallBet: isFL ? (parseAmount(smallBet) ?? Number(smallBet)) : undefined,
       bigBet: isFL ? (parseAmount(bigBet) ?? Number(bigBet)) : undefined,
       flMaxRaises: isFL ? Number(flMaxRaises) : undefined,
-      anteType: isShortDeck ? 'btn_ante' : anteType,
-      sbHalfAnteShortHanded: isShortDeck ? false : (anteType === 'bba' ? sbHalfAnteShortHanded : false),
+      anteType: isBombVariant ? 'traditional' : isShortDeck ? 'btn_ante' : anteType,
+      sbHalfAnteShortHanded: (isBombVariant || isShortDeck) ? false : (anteType === 'bba' ? sbHalfAnteShortHanded : false),
       shortHandedThreshold: Number(shortHandedThreshold) || 5,
-      anteAmount: isShortDeck
+      anteAmount: isBombVariant
+        ? bombLvl1Ante
+        : isShortDeck
         ? effAnte
         : (anteType === 'bba' || anteType === 'btn_ante')
         ? bb
@@ -523,20 +604,24 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         : anteType === 'traditional'
         ? (parseAmount(schedFirst.ante) ?? Number(schedFirst.ante))
         : 0,
-      doubleBoard: false,
-      allowStraddle: isShortDeck ? false : (isCash && !isFL && allowStraddle),
-      straddleAmount: isCash && !isFL && allowStraddle ? (highestBlind * 2) : (bb * 2),
-      allowMultiStraddle: isShortDeck ? false : (isCash && !isFL && allowMultiStraddle),
+      doubleBoard: isDoubleBombVariant,
+      baseDoubleBoard: isDoubleBombVariant,
+      allowStraddle: (isBombVariant || isShortDeck) ? false : (isCash && !isFL && allowStraddle),
+      straddleAmount: isCash && !isFL && !isBombVariant && allowStraddle ? (highestBlind * 2) : (bb * 2),
+      allowMultiStraddle: (isBombVariant || isShortDeck) ? false : (isCash && !isFL && allowMultiStraddle),
       mandatoryStraddle: false,
       mandatoryStraddleAmount: undefined,
       mandatoryDoubleStraddle: false,
       mandatoryDoubleStraddleAmount: undefined,
-      bombPot: isCash && bombPot,
-      bombAmount: isCash ? (parseAmount(bombAmount) ?? Number(bombAmount)) || (bb * 5) : 0,
+      bombPot: isBombVariant || (isCash && bombPot),
+      baseBombPot: isBombVariant || (isCash && bombPot),
+      bombBoards: isDoubleBombVariant ? 2 : 1,
+      baseBombBoards: isDoubleBombVariant ? 2 : 1,
+      bombAmount: isBombVariant ? bombLvl1Ante : (isCash ? (parseAmount(bombAmount) ?? Number(bombAmount)) || (bb * 5) : 0),
       levelConfig: isCash ? null : { method: levelMethod, value: Number(levelValue) > 0 ? Number(levelValue) : LEVEL_PRESETS[levelMethod] },
       chipDenominations: isCash ? null : chipDenoms.filter((d) => Number(d) > 0).map((d) => Number(d)).sort((a, b) => a - b),
-      bbaEarlyHalfAnte: anteType === 'bba' ? bbaEarlyHalfAnte : false,
-      bbaEarlyHalfAnteLevel: anteType === 'bba' ? Number(bbaEarlyHalfAnteLevel) || 2 : 2,
+      bbaEarlyHalfAnte: !isBombVariant && anteType === 'bba' ? bbaEarlyHalfAnte : false,
+      bbaEarlyHalfAnteLevel: !isBombVariant && anteType === 'bba' ? Number(bbaEarlyHalfAnteLevel) || 2 : 2,
       buyIn: isCash ? undefined : (Number(buyIn) || 50),
       tournamentFormat: isCash ? undefined : tournamentFormat,
       maxReEntries: isCash ? undefined : (tournamentFormat === 'reentry' ? Number(maxReEntries) : 0),
@@ -571,6 +656,16 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             race: hasRace
               ? { retired: parseAmount(l.race.retired) ?? Number(l.race.retired), replacement: parseAmount(l.race.replacement) ?? Number(l.race.replacement) }
               : null,
+          };
+        }
+        if (isBombVariant) {
+          const lvlAnte = parseAmount(l.ante) ?? Number(l.ante || 0);
+          return {
+            type: 'level',
+            smallBlind: 0,
+            bigBlind: 0,
+            ante: lvlAnte,
+            minutes: l.minutes === '' || l.minutes == null ? '' : (Number(l.minutes) > 0 ? Number(l.minutes) : ''),
           };
         }
         return {
@@ -681,7 +776,9 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                 <option value="plo5">PLO5</option>
                 <option value="plo6">PLO6</option>
                 <option value="plo8">PLO8</option>
-                {degenVariantLabels[variant] && !['nlh', 'plo', 'short_deck', 'pineapple', 'crazy_pineapple', 'lazy_pineapple', 'super_holdem', 'plo5', 'plo6', 'plo8'].includes(variant) && (
+                <option value="bomb_pot">Bomb Pot</option>
+                <option value="double_board_bomb_pot">Double Board Bomb Pot</option>
+                {degenVariantLabels[variant] && !['nlh', 'plo', 'short_deck', 'pineapple', 'crazy_pineapple', 'lazy_pineapple', 'super_holdem', 'plo5', 'plo6', 'plo8', 'bomb_pot', 'double_board_bomb_pot'].includes(variant) && (
                   <option value={variant}>{degenVariantLabels[variant]}</option>
                 )}
               </>
@@ -750,10 +847,10 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400">Set all stacks</span>
             {stackUnit && <span className="text-xs text-slate-400">{stackUnit}</span>}
-            <input type="text" inputMode="decimal" value={bulkStack} onChange={(e) => setBulkStack(e.target.value)} placeholder={!isCash && stackInBB ? '100' : String(isCash ? 200 : 200 * smallestChip)} className="w-28 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm text-left" />
+            <input type="text" inputMode="decimal" value={bulkStack} onChange={(e) => setBulkStack(e.target.value)} placeholder={!isCash && !isBombVariant && stackInBB ? '100' : String(isBombVariant ? (isCash ? 100 * effAnteBomb : 200 * smallestChip) : (isCash ? 200 : 200 * smallestChip))} className="w-28 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm text-left" />
             <button onClick={applyBulk} className="rounded-md bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3 py-2 cursor-pointer">Apply to all</button>
           </div>
-          {!isCash && (
+          {!isCash && !isBombVariant && (
             <div className="ml-auto">
               <ToggleRow label="Enter stacks in BB" checked={stackInBB} onChange={setStackInBB} />
             </div>
@@ -818,9 +915,32 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           </div>
         )}
         {!isCash && gameType !== 'fl' && (
-          <div className="text-xs text-slate-500 mb-3">Blinds come from level 1 of the schedule below.</div>
+          <div className="text-xs text-slate-500 mb-3">
+            {isBombVariant ? 'Antes come from level 1 of the schedule below.' : 'Blinds come from level 1 of the schedule below.'}
+          </div>
         )}
-        {isShortDeck ? (
+        {isBombVariant ? (
+          isCash ? (
+            <div className="flex flex-wrap items-end gap-3 mb-4">
+              <div className="flex-1 min-w-[160px]">
+                <label className="text-xs text-amber-300 font-semibold block mb-1">
+                  Ante (per player) {sym && `(${sym})`}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={anteAmount !== '' ? anteAmount : '5'}
+                  onChange={(e) => setAnteAmount(e.target.value)}
+                  placeholder="5"
+                  className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
+                />
+                <span className="text-[11px] text-slate-400 block mt-1">
+                  Every player pays {sym}{anteAmount || '5'} to enter each bomb pot. No small/big blinds; action starts on the flop{isDoubleBombVariant ? ' with 2 boards' : ''}.
+                </span>
+              </div>
+            </div>
+          ) : null
+        ) : isShortDeck ? (
           <div className="flex flex-wrap items-end gap-3 mb-4">
             <div className="flex-1 min-w-[140px]">
               <label className="text-xs text-amber-300 font-semibold block mb-1">
@@ -1009,14 +1129,14 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             )}
           </>
         )}
-        {gameType === 'fl' && (
+        {!isBombVariant && gameType === 'fl' && (
           <div className="flex items-center gap-3 mb-4">
             <label className="text-xs text-slate-400 whitespace-nowrap">Max raises / street</label>
             <input type="number" min="1" value={flMaxRaises} onChange={(e) => setFlMaxRaises(e.target.value)} className="w-20 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
             <span className="text-[11px] text-slate-500">e.g. 3 – 4-bet is the cap</span>
           </div>
         )}
-        {isCash && !isShortDeck && (
+        {!isBombVariant && isCash && !isShortDeck && (
           <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4 space-y-2.5">
             <div className="text-xs font-semibold text-slate-300">Straddle Settings</div>
             <ToggleRow label="Allow straddle (UTG)" checked={allowStraddle} onChange={setAllowStraddle} />
@@ -1245,7 +1365,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             setChipDenoms(newDenoms);
             if (newDenoms.length > 0) {
               const lowest = Math.min(...newDenoms);
-              setSchedule(defaultScheduleFor(lowest));
+              setSchedule(isBombVariant ? bombPotScheduleFor(lowest) : defaultScheduleFor(lowest));
             }
           };
 
@@ -1265,6 +1385,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
               chipDenominations: chipDenoms,
               speed: generatorSpeed,
               anteType,
+              bombPot: isBombVariant,
             });
             setSchedule(newSched);
           };
@@ -1280,10 +1401,12 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                   <div>
                     <div className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
                       <Clock size={14} className="text-emerald-400" />
-                      <span>Level Pacing & Blind Structure Generator</span>
+                      <span>{isBombVariant ? 'Level Pacing & Ante Structure Generator' : 'Level Pacing & Blind Structure Generator'}</span>
                     </div>
                     <div className="text-[11px] text-slate-400">
-                      Generate a blind progression sized to your desired tournament length and starting stack.
+                      {isBombVariant
+                        ? 'Generate an ante progression sized to your desired tournament length and starting stack.'
+                        : 'Generate a blind progression sized to your desired tournament length and starting stack.'}
                     </div>
                   </div>
                   <button
@@ -1291,7 +1414,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                     onClick={handleGenerateBlindStructure}
                     className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white flex items-center gap-1.5 cursor-pointer transition-colors shadow self-start sm:self-center shrink-0"
                   >
-                    <Sparkles size={14} /> Generate Blind Schedule
+                    <Sparkles size={14} /> {isBombVariant ? 'Generate Ante Schedule' : 'Generate Blind Schedule'}
                   </button>
                 </div>
 
@@ -1457,7 +1580,11 @@ export default function SetupDialog({ initial, onSave, onClose }) {
 
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 bg-[#1e2227] p-2.5 rounded-lg border border-[#2a2f37]">
                   <span>
-                    Lowest Chip: <span className="font-mono text-emerald-400 font-bold">{lowestChip}</span> · Starting Stack: <span className="font-mono text-white font-bold">{Math.round(estStartingStack).toLocaleString()}</span> ({Math.round(estStartingStack / (2 * lowestChip))} BBs at Level 1)
+                    Lowest Chip: <span className="font-mono text-emerald-400 font-bold">{lowestChip}</span> · Starting Stack: <span className="font-mono text-white font-bold">{Math.round(estStartingStack).toLocaleString()}</span> (
+                    {isBombVariant
+                      ? `${Math.round(estStartingStack / (schedFirstAnte || lowestChip))} Antes at Level 1`
+                      : `${Math.round(estStartingStack / (2 * lowestChip))} BBs at Level 1`}
+                    )
                   </span>
                   <span className="text-slate-400">
                     {isGoMode
@@ -1478,7 +1605,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                 </div>
               </div>
 
-              <BlindScheduleEditor schedule={strippedSchedule} onChange={setSchedule} anteType={anteType} chipDenominations={chipDenoms} allowBreaks={!isGoMode} />
+              <BlindScheduleEditor schedule={strippedSchedule} onChange={setSchedule} anteType={anteType} chipDenominations={chipDenoms} allowBreaks={!isGoMode} isBombPot={isBombVariant} />
             </div>
           );
         })()}

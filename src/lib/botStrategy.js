@@ -64,16 +64,32 @@ export function topPercent(cards) {
   return TOP_PERCENT[handKey(cards)] ?? 1;
 }
 
-/** How many players still act after this seat, preflop, before the button. */
+/** How many players still act after this seat, preflop. */
 function playersBehind(hand, playerIndex) {
   const n = hand.players.length;
+  if (n <= 1) return 0;
   const buttonIndex = hand.players.findIndex((p) => p.seat === hand.buttonSeat);
+  const bbIndex = hand.bbSeat != null
+    ? hand.players.findIndex((p) => p.seat === hand.bbSeat)
+    : (n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n);
+  const raiseLevel = hand.raiseLevel || (hand.street === 'preflop' ? 1 : 0);
   let count = 0;
+  if (raiseLevel <= 1) {
+    if (playerIndex === bbIndex) return 0;
+    for (let k = 1; k < n; k++) {
+      const idx = (playerIndex + k) % n;
+      const p = hand.players[idx];
+      if (p.status !== 'folded' && (p.stack || 0) > 0) count += 1;
+      if (idx === bbIndex) break;
+    }
+    return count;
+  }
   for (let k = 1; k < n; k++) {
     const idx = (playerIndex + k) % n;
-    if (idx === buttonIndex) break;
     const p = hand.players[idx];
-    if (p.status !== 'folded' && (p.stack || 0) > 0) count += 1;
+    if (p.status !== 'folded' && (p.stack || 0) > 0 && (!p.hasActed || (p.currentBet || 0) < (hand.currentBet || 0))) {
+      count += 1;
+    }
   }
   return count;
 }
@@ -168,7 +184,7 @@ function blockerBonus(holeCards, board) {
 }
 
 /** Approximate cEV push range for a short stack facing N players behind. */
-function nashPushPct(stackBB, behind) {
+function nashPushPct(stackBB, behind, dealtCount = 6) {
   let base;
   if (stackBB <= 2) base = 0.95;
   else if (stackBB <= 4) base = 0.75;
@@ -179,7 +195,8 @@ function nashPushPct(stackBB, behind) {
   else if (stackBB <= 15) base = 0.22;
   else if (stackBB <= 20) base = 0.16;
   else base = 0.12;
-  return Math.min(0.95, base * Math.max(0.35, 1 - 0.12 * Math.max(0, behind)));
+  const huMul = dealtCount === 2 && behind <= 1 ? 1.35 : 1;
+  return Math.min(0.95, base * Math.max(0.35, 1 - 0.12 * Math.max(0, behind)) * huMul);
 }
 
 /** Rough call range against a shove: about the pot odds plus a small edge. */
@@ -265,7 +282,8 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
 
   const cap = Math.min(Number(tuning.maxRaises) || 2, Math.max(1, Math.min(4, Number(profile.maxRaises) || 2)));
   const raisesSoFar = Math.max(0, (raiseLevel || 0) - 1);
-  if (tuning.mistake > 0 && rng() < tuning.mistake) {
+  const effectiveMistake = street === 'preflop' ? (tuning.mistake || 0) * 0.12 : (tuning.mistake || 0);
+  if (effectiveMistake > 0 && rng() < effectiveMistake) {
     const roll = rng();
     const mayRaise = canRaise && raisesSoFar < cap;
     if (toCall <= 0) {
@@ -279,37 +297,74 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
   }
 
   if (street === 'preflop') {
-    const posFactor = positionAware ? (behind <= 1 ? 1.35 : behind <= 2 ? 1.15 : behind <= 3 ? 1 : 0.8) : 1;
+    const dealtCount = Math.max(2, hand.players.length);
+    const buttonIndex = hand.players.findIndex((p) => p.seat === hand.buttonSeat);
+    const bbIndex = hand.bbSeat != null
+      ? hand.players.findIndex((p) => p.seat === hand.bbSeat)
+      : (dealtCount === 2 ? (buttonIndex + 1) % dealtCount : (buttonIndex + 2) % dealtCount);
+    const isBB = playerIndex === bbIndex;
+
+    let posFactor = 1;
+    if (positionAware) {
+      if (dealtCount === 2) {
+        posFactor = isBB ? 2.25 : 2.85;
+      } else {
+        const shortBonus = dealtCount <= 4 ? 1.12 : dealtCount === 5 ? 1.05 : 1.0;
+        if (isBB || behind === 0) posFactor = 1.65 * shortBonus;
+        else if (behind === 1) posFactor = 1.75 * shortBonus;
+        else if (behind === 2) posFactor = 1.9 * shortBonus;
+        else if (behind === 3) posFactor = 1.45 * shortBonus;
+        else if (behind === 4) posFactor = 1.15;
+        else if (behind === 5) posFactor = 0.96;
+        else if (behind === 6) posFactor = 0.84;
+        else if (behind === 7) posFactor = 0.75;
+        else posFactor = 0.68;
+      }
+    } else {
+      posFactor = dealtCount === 2 ? 1.85 : dealtCount === 3 ? 1.35 : dealtCount <= 5 ? 1.15 : dealtCount <= 7 ? 1.0 : 0.92;
+    }
+
     const top = topPercent(holeCards);
     const stealMul = behind <= 1 && raiseLevel <= 1 ? (reads?.stealMul || 1) : 1;
-    const openPct = Math.min(0.92, profile.openPct * posFactor * (reads?.openMul || 1) * stealMul);
-    const threeBetPct = Math.min(0.5, profile.threeBetPct * posFactor * (reads?.threeBetMul || 1));
+    const passiveCap = posFactor > 1 && (profile.aggro ?? 0.5) < 0.35
+      ? 1 + (posFactor - 1) * (0.35 + (profile.aggro ?? 0.2))
+      : posFactor;
+    const openPct = Math.min(0.92, profile.openPct * passiveCap * (reads?.openMul || 1) * stealMul);
+    const threeBetPosFactor = dealtCount === 2
+      ? (isBB ? 2.1 : 1.9)
+      : Math.min(1.6, Math.max(0.75, posFactor * 0.88));
+    const threeBetPct = Math.min(0.5, profile.threeBetPct * threeBetPosFactor * (reads?.threeBetMul || 1));
+    const limpScale = posFactor > 1 ? Math.min(1.6, 1 + (posFactor - 1) * 0.5) : Math.max(0.95, posFactor);
+    const limpPct = profile.limpPct * limpScale;
+    const isLoosePassive = (profile.aggro ?? 0.5) < 0.25 && profile.coldCallPct >= 0.35;
     const short = tuning.shortStack || 'none';
-    const inPosition = behind <= 1;
+    const inPosition = playerIndex === buttonIndex || behind <= 1;
 
     // --- Short stack: each tier handles it differently. ---
-    if (stackBB <= 20) {
+    if (stackBB <= 20 && !isLoosePassive) {
       if (short === 'none') {
         // Easy: never shoves short - it limps or min-raises instead.
         if (raiseLevel <= 1 && toCall <= bb && top <= openPct && canRaise) {
           const amount = raiseTarget(hand, cp, bb * 2);
           if (amount) return { type: 'raise', amount };
         }
-        if (toCall > 0 && top <= openPct * 1.2) return { type: 'call' };
+        if (toCall > 0 && top <= Math.min(0.95, openPct * 1.2 + limpPct)) return { type: 'call' };
         return toCall === 0 ? { type: 'check' } : { type: 'fold' };
       }
       if (short === 'shove_fold') {
         // Medium: all in or fold once the stack is short.
         if (raiseLevel <= 1) {
           if (top <= openPct && canRaise) return shove();
+          if (toCall > 0 && top <= Math.min(0.95, openPct + limpPct * 0.6)) return { type: 'call' };
           return toCall === 0 ? { type: 'check' } : { type: 'fold' };
         }
         if (top <= openPct * 0.75 && canRaise) return shove();
-        if (top <= openPct * 1.1 && toCall <= stack) return { type: 'call' };
+        if (top <= Math.min(0.95, Math.max(openPct * 1.1, threeBetPct + profile.coldCallPct)) && toCall <= stack) return { type: 'call' };
         return { type: 'fold' };
       }
-      // Hard / pro: push-fold charts, re-shove and iso-shove math.
-      const pushPct = nashPushPct(stackBB, behind);
+      // Hard / pro: push-fold charts scaled gently by archetype looseness.
+      const stylePushMul = clamp(profile.openPct / 0.22, 0.7, 1.55);
+      const pushPct = Math.min(0.95, nashPushPct(stackBB, behind, dealtCount) * stylePushMul);
       if (raiseLevel <= 1) {
         const iso = short === 'charts_iso' && toCall > 0 && toCall <= bb * 2;
         if (top <= pushPct * (iso ? 1.15 : 1) && canRaise) return shove();
@@ -318,7 +373,7 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
       }
       if (raiseLevel === 2) {
         if (top <= pushPct * 0.8 && canRaise) return shove();
-        const callPct = nashCallPct(toCall / Math.max(1, pot + toCall));
+        const callPct = Math.max(nashCallPct(toCall / Math.max(1, pot + toCall)), profile.coldCallPct * 0.8);
         if (top <= callPct && toCall <= stack) return { type: 'call' };
         if (short === 'charts_iso' && stackBB >= 12 && stackBB <= 25 && inPosition && top <= 0.12 && toCall < stack * 0.35) {
           return { type: 'call' }; // stop-and-go: call, then shove the flop
@@ -341,7 +396,7 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
         if (amount) return { type: 'raise', amount };
       }
       if (top <= openPct && toCall === 0) return { type: 'check' };
-      if (toCall > 0 && top <= Math.min(0.95, openPct + profile.limpPct * (reads?.callMul || 1))) return { type: 'call' };
+      if (toCall > 0 && top <= Math.min(0.95, openPct + limpPct * (reads?.callMul || 1))) return { type: 'call' };
       return toCall === 0 ? { type: 'check' } : { type: 'fold' };
     }
     if (raiseLevel === 2) {
@@ -350,11 +405,24 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
         const amount = raiseTarget(hand, cp, Math.max((hand.currentBet || 0) * 3, (hand.currentBet || 0) + pot * 0.9));
         if (amount) return { type: 'raise', amount };
       }
-      // Cold-calling range scales with the style's opening range, so a TAG
-      // defends a normal share against an open instead of folding everything.
-      const defendPct = Math.min(0.95, Math.max(profile.coldCallPct, profile.openPct * 0.45) * posFactor * (reads?.callMul || 1));
+      // Cold-calling sits below the 3-bet range and scales by seat and player count.
+      const defendPosFactor = dealtCount === 2 && isBB
+        ? 2.8
+        : isBB
+          ? (dealtCount <= 4 ? 2.15 : 1.75)
+          : behind === 1
+            ? (isLoosePassive || profile.openPct >= 0.45 ? 1.25 : 0.98)
+            : behind === 2
+              ? (dealtCount <= 4 ? 1.7 : 1.4)
+              : behind === 3
+                ? 1.2
+                : (isLoosePassive || profile.openPct >= 0.45)
+                  ? 1.05
+                  : Math.max(0.85, 1.05 - (behind - 4) * 0.06);
+      const coldCallRange = Math.max(profile.coldCallPct, profile.openPct * 0.35) * defendPosFactor * (reads?.callMul || 1);
+      const defendPct = Math.min(0.95, threeBetPct + coldCallRange);
       if (top <= defendPct) return { type: 'call' };
-      if (allInBet && top <= defendPct * 1.6 && toCall <= stack) return { type: 'call' };
+      if (allInBet && top <= defendPct * 1.4 && toCall <= stack) return { type: 'call' };
       if (toCall >= stack * 0.5) return { type: 'fold' };
       return { type: 'fold' };
     }

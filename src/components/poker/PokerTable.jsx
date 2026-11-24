@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Clock } from 'lucide-react';
-import { money, formatPotAmount, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, SUIT_COLOR_CLASS, suitColorClass, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown, hasSoleDeepestStack, bettingFrozen, getLastActionPlayerName } from '@/lib/poker';
+import { money, formatPotAmount, formatPlayerTagAmount, formatBetAmount, formatSidePotAmount, SUIT_SYMBOL, SUIT_RED, SUIT_COLOR_CLASS, suitColorClass, rankDisplay, variantMeta, describeHand, calculateEffectiveM, calculateAllInOuts, isAllInSituation, isAllInShowdown, hasSoleDeepestStack, bettingFrozen, getLastActionPlayerName, isBombPotVariant } from '@/lib/poker';
 import AllInView from './AllInView';
 
 function raiseLabelLocal(level) {
@@ -107,10 +107,11 @@ export default function PokerTable({
   const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
   const tbIndex = (isThreeBlinds || isFourBlinds) ? (buttonIndex + 3) % n : -1;
   const fbIndex = isFourBlinds ? (buttonIndex + 4) % n : -1;
-  const sbSeat = hand.players[sbIndex]?.seat;
-  const bbSeat = hand.players[bbIndex]?.seat;
-  const tbSeat = tbIndex >= 0 ? hand.players[tbIndex]?.seat : null;
-  const fbSeat = fbIndex >= 0 ? hand.players[fbIndex]?.seat : null;
+  const isPermBomb = isBombPotVariant(hand.variant) || (Number(hand.smallBlind) === 0 && Number(hand.bigBlind) === 0 && Boolean(hand.bombPot));
+  const sbSeat = isPermBomb ? null : hand.players[sbIndex]?.seat;
+  const bbSeat = isPermBomb ? null : hand.players[bbIndex]?.seat;
+  const tbSeat = isPermBomb ? null : (tbIndex >= 0 ? hand.players[tbIndex]?.seat : null);
+  const fbSeat = isPermBomb ? null : (fbIndex >= 0 ? hand.players[fbIndex]?.seat : null);
   const potIsPublic = hand.gameType === 'pl';
 
   const stackShown = (p) => (alwaysShow ? true : (stackVisibleIds ? stackVisibleIds.has(p.id) : !hideAmounts));
@@ -318,6 +319,8 @@ export default function PokerTable({
             ? `SB ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === 'bb'
             ? `BB ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
+            : la.type === 'ante'
+            ? `Ante ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === '3b'
             ? `3B ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === '4b'

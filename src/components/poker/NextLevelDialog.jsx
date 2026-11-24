@@ -5,16 +5,17 @@ import { money, parseAmount } from '@/lib/poker';
 export default function NextLevelDialog({
   smallBlind, bigBlind, anteAmount, anteType,
   players, currency, chipDenominations,
-  isPreplanner, onSave, onChipRace, onClose,
+  isPreplanner, isBombPot = false, onSave, onChipRace, onClose,
 }) {
+  const bombMode = Boolean(isBombPot || (Number(smallBlind) === 0 && Number(bigBlind) === 0));
   const [sb, setSb] = useState(smallBlind);
   const [bb, setBb] = useState(bigBlind);
   const [ante, setAnte] = useState(anteAmount);
   const [error, setError] = useState('');
-  const isBBA = anteType === 'bba';
-  const isBtnAnte = anteType === 'btn_ante';
-  const isSBHalfAnte = anteType === 'sb_half_ante';
-  const isFixedAnte = isBBA || isBtnAnte || isSBHalfAnte;
+  const isBBA = !bombMode && anteType === 'bba';
+  const isBtnAnte = !bombMode && anteType === 'btn_ante';
+  const isSBHalfAnte = !bombMode && anteType === 'sb_half_ante';
+  const isFixedAnte = !bombMode && (isBBA || isBtnAnte || isSBHalfAnte);
   const hasChips = Array.isArray(chipDenominations) && chipDenominations.length > 0;
 
   const [retiringValue, setRetiringValue] = useState('');
@@ -25,9 +26,10 @@ export default function NextLevelDialog({
   const [appliedLevel, setAppliedLevel] = useState(false);
 
   useEffect(() => {
+    if (bombMode) return;
     if (isBBA || isBtnAnte) setAnte(bb);
     else if (isSBHalfAnte) setAnte(Math.max(1, Math.round((Number(bb) || 0) * 0.5)));
-  }, [isBBA, isBtnAnte, isSBHalfAnte, bb]);
+  }, [bombMode, isBBA, isBtnAnte, isSBHalfAnte, bb]);
 
 function calcOddChips(stack, retired, replacement) {
   if (retired <= 0 || replacement <= 0 || stack <= 0) return 0;
@@ -95,6 +97,13 @@ function calcOddChips(stack, retired, replacement) {
   };
 
   const applyLevel = () => {
+    if (bombMode) {
+      const a = parseAmount(ante) ?? Number(ante);
+      if (!a || a <= 0) return setError('Ante must be positive.');
+      onSave(0, 0, a);
+      setAppliedLevel(true);
+      return;
+    }
     const s = parseAmount(sb) ?? Number(sb);
     const b = parseAmount(bb) ?? Number(bb);
     const a = anteType !== 'none' ? (parseAmount(ante) ?? Number(ante)) : 0;
@@ -150,21 +159,25 @@ function calcOddChips(stack, retired, replacement) {
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={18} /></button>
         </div>
         <div className="space-y-3 mb-4">
-          <div className="text-xs text-slate-500 uppercase tracking-wide">1. Set the next blinds</div>
+          <div className="text-xs text-slate-500 uppercase tracking-wide">{bombMode ? '1. Set the next ante' : '1. Set the next blinds'}</div>
           {isPreplanner && (
-            <div className="text-[11px] text-emerald-300/80">This adds a new level to the blind schedule.</div>
+            <div className="text-[11px] text-emerald-300/80">
+              {bombMode ? 'This adds a new level to the ante schedule.' : 'This adds a new level to the blind schedule.'}
+            </div>
           )}
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className="text-xs text-slate-400 block mb-1">Small blind</label>
-              <input type="text" inputMode="decimal" value={sb} onChange={(e) => setSb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+          {!bombMode && (
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="text-xs text-slate-400 block mb-1">Small blind</label>
+                <input type="text" inputMode="decimal" value={sb} onChange={(e) => setSb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-slate-400 block mb-1">Big blind</label>
+                <input type="text" inputMode="decimal" value={bb} onChange={(e) => setBb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+              </div>
             </div>
-            <div className="flex-1">
-              <label className="text-xs text-slate-400 block mb-1">Big blind</label>
-              <input type="text" inputMode="decimal" value={bb} onChange={(e) => setBb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-            </div>
-          </div>
-          {anteType !== 'none' && anteType !== 'three_blinds' && (
+          )}
+          {(bombMode || (anteType !== 'none' && anteType !== 'three_blinds')) && (
             <div>
               <label className="text-xs text-slate-400 block mb-1">
                 Ante {isBBA ? '(= big blind)' : isBtnAnte ? '(= button ante 1 BB)' : isSBHalfAnte ? '(= BB half ante 0.5 BB)' : ''}

@@ -1,22 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 
-export default function BlindLevelDialog({ smallBlind, bigBlind, anteAmount, anteType, onSave, onClose }) {
+export default function BlindLevelDialog({ smallBlind, bigBlind, anteAmount, anteType, isBombPot = false, onSave, onClose }) {
+  const bombMode = Boolean(isBombPot || (Number(smallBlind) === 0 && Number(bigBlind) === 0));
   const [sb, setSb] = useState(smallBlind);
   const [bb, setBb] = useState(bigBlind);
   const [ante, setAnte] = useState(anteAmount);
   const [error, setError] = useState('');
-  const isBBA = anteType === 'bba';
-  const isBtnAnte = anteType === 'btn_ante';
-  const isSBHalfAnte = anteType === 'sb_half_ante';
-  const isFixedAnte = isBBA || isBtnAnte || isSBHalfAnte;
+  const isBBA = !bombMode && anteType === 'bba';
+  const isBtnAnte = !bombMode && anteType === 'btn_ante';
+  const isSBHalfAnte = !bombMode && anteType === 'sb_half_ante';
+  const isFixedAnte = !bombMode && (isBBA || isBtnAnte || isSBHalfAnte);
 
   useEffect(() => {
+    if (bombMode) return;
     if (isBBA || isBtnAnte) setAnte(Number(bb));
     else if (isSBHalfAnte) setAnte(Math.max(1, Math.round(Number(bb) * 0.5)));
-  }, [isBBA, isBtnAnte, isSBHalfAnte, bb]);
+  }, [bombMode, isBBA, isBtnAnte, isSBHalfAnte, bb]);
 
   const save = () => {
+    if (bombMode) {
+      if (Number(ante) <= 0) return setError('Ante must be positive.');
+      onSave(0, 0, Number(ante));
+      return;
+    }
     if (Number(sb) <= 0 || Number(bb) <= 0) return setError('Blinds must be positive.');
     if (anteType !== 'none' && !isFixedAnte && Number(ante) <= 0) return setError('Ante must be positive.');
     onSave(Number(sb), Number(bb), Number(ante));
@@ -26,19 +33,23 @@ export default function BlindLevelDialog({ smallBlind, bigBlind, anteAmount, ant
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div className="w-full max-w-sm rounded-2xl border border-[#2a2f37] bg-[#1e2227] p-6 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-white">Next blind level</h2>
+          <h2 className="text-lg font-semibold text-white">{bombMode ? 'Next ante level' : 'Next blind level'}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={18} /></button>
         </div>
         <div className="space-y-3">
-          <div>
-            <label className="text-xs text-slate-400 block mb-1">Small blind</label>
-            <input type="number" value={sb} onChange={(e) => setSb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 block mb-1">Big blind</label>
-            <input type="number" value={bb} onChange={(e) => setBb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-          </div>
-          {anteType !== 'none' && anteType !== 'three_blinds' && (
+          {!bombMode && (
+            <>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Small blind</label>
+                <input type="number" value={sb} onChange={(e) => setSb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Big blind</label>
+                <input type="number" value={bb} onChange={(e) => setBb(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+              </div>
+            </>
+          )}
+          {(bombMode || (anteType !== 'none' && anteType !== 'three_blinds')) && (
             <div>
               <label className="text-xs text-slate-400 block mb-1">
                 Ante amount {isBBA ? '(= big blind)' : isBtnAnte ? '(= button ante 1 BB)' : isSBHalfAnte ? '(= BB half ante 0.5 BB)' : ''}

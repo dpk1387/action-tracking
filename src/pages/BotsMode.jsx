@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { BarChart3, History, Layers, ListTree, LogOut, Settings, SkipForward, Trophy } from 'lucide-react';
-import { applyAction, awardPots, calcEquity, computePots, dealNextStreet, fillBoard, raiseLabel, refundUncontestedPots, startHand, tryAutoWinners } from '@/lib/poker';
+import { BarChart3, Download, ExternalLink, FileSpreadsheet, History, Layers, ListTree, Loader2, LogOut, Settings, SkipForward, Trophy } from 'lucide-react';
+import { applyAction, awardPots, bbaPotOpts, calcEquity, computePots, dealNextStreet, fillBoard, POS, positionForSeat, raiseLabel, refundUncontestedPots, startHand, tryAutoWinners } from '@/lib/poker';
+import { exportHandsToCSV, exportHandsToGoogleSheet } from '@/lib/googleSheetsExport';
 import { generateGoDeck } from '@/lib/goMode';
 import {
   GAME_TYPES,
@@ -77,12 +78,16 @@ function CardChip({ card, fourColor = false, delay = 0 }) {
       : card.suit === 'd' ? 'text-sky-600'
         : card.suit === 'c' ? 'text-emerald-600'
           : 'text-slate-900';
+  const rankText = card.rank === 'T' ? '10' : card.rank;
   return (
     <span
       className="inline-flex items-center justify-center w-7 h-10 sm:w-8 sm:h-11 rounded-md bg-white border border-slate-300 shadow-sm text-sm font-black leading-none"
       style={{ animation: 'lcDealIn 200ms ease-out both', animationDelay: `${delay}ms` }}
     >
-      <span className={color}>{cardText(card)}</span>
+      <span className={color}>
+        <span>{rankText}</span>
+        <span className="suit-glyph">{SUIT_SYMBOL[card.suit] || card.suit}</span>
+      </span>
     </span>
   );
 }
@@ -98,44 +103,84 @@ function formatChips(n, unit, bigBlind) {
 
 const STYLE_CHOICES = BOT_STYLES.filter((s) => s.id !== 'random');
 
-/** Seat-order positions (SB, BB, …, CO, BTN) for a hand's players. */
+/** Canonical seat-order positions (D..BB, UTG..CO) for a hand's players. */
 function positionLabels(hand) {
   const dealt = [...(hand.players || [])].sort((a, b) => a.seat - b.seat);
   if (!dealt.length) return {};
-  const start = Math.max(0, dealt.findIndex((p) => p.seat === hand.sbSeat));
-  const order = [...dealt.slice(start), ...dealt.slice(0, start)];
-  const n = order.length;
+  const n = dealt.length;
   const labels = {};
-  order.forEach((p, i) => {
-    if (i === 0) labels[p.name] = n === 2 ? 'BTN' : 'SB';
-    else if (i === 1) labels[p.name] = 'BB';
-    else if (i === n - 1) labels[p.name] = 'BTN';
-    else if (i === n - 2) labels[p.name] = 'CO';
-    else labels[p.name] = `MP${i - 1}`;
-  });
+  if (n === 2) {
+    dealt.forEach((p) => {
+      labels[p.name] = p.seat === hand.sbSeat || p.seat === hand.buttonSeat ? 'BTN' : 'BB';
+    });
+    return labels;
+  }
+  const btnIdx = dealt.findIndex((p) => Number(p.seat) === Number(hand.buttonSeat));
+  if (btnIdx >= 0) {
+    dealt.forEach((p, i) => {
+      labels[p.name] = positionForSeat(n, btnIdx, i, hand.variant);
+    });
+    return labels;
+  }
+  const sbIdx = dealt.findIndex((p) => Number(p.seat) === Number(hand.sbSeat));
+  const bbIdx = dealt.findIndex((p) => Number(p.seat) === Number(hand.bbSeat));
+  if (sbIdx >= 0) {
+    const posList = (POS[n + 1] || POS[10]).filter((x) => x !== 'BTN');
+    dealt.forEach((p, i) => {
+      const offset = (i - sbIdx + n) % n;
+      labels[p.name] = posList[offset] || 'P';
+    });
+    return labels;
+  }
+  if (bbIdx >= 0) {
+    const posList = (POS[n + 1] || POS[10]).filter((x) => x !== 'BTN' && x !== 'SB');
+    dealt.forEach((p, i) => {
+      const offset = (i - bbIdx + n) % n;
+      labels[p.name] = posList[offset] || 'P';
+    });
+    return labels;
+  }
   return labels;
 }
 
 /** Snapshot of one finished hand, shaped like Action Tracking hand records. */
-function buildHandRecord(hand, awarded, holes, levelLabel, live = false) {
+function buildHandRecord(hand, awarded, holes, levelLabel, live = false, pots = null, seats = null) {
   const positions = positionLabels(hand);
   const holeCards = {};
   hand.players.forEach((p) => { holeCards[p.id] = holes[p.id] || []; });
   return {
     id: `${awarded.handNumber}-${Date.now()}`,
     handNumber: awarded.handNumber,
+    mode: 'tournament',
     level: levelLabel,
     smallBlind: awarded.smallBlind,
     bigBlind: awarded.bigBlind,
     anteType: 'bba',
     anteAmount: awarded.anteAmount,
+    buttonSeat: awarded.buttonSeat ?? hand.buttonSeat,
+    sbSeat: awarded.sbSeat ?? hand.sbSeat,
+    bbSeat: awarded.bbSeat ?? hand.bbSeat,
+    pots: Array.isArray(pots) ? pots : undefined,
     currency: '',
     players: hand.players.map((p) => {
       const end = awarded.players.find((x) => x.seat === p.seat);
+      const seat = Array.isArray(seats) ? seats.find((s) => s.seat === p.seat) : null;
+      const isHero = p.name === 'You' || !!seat?.isHero;
+      const styleId = seat?.styleId || p.styleId || null;
+      const playstyle = isHero
+        ? 'Hero'
+        : styleId
+        ? (BOT_STYLES.find((b) => b.id === styleId)?.label || STYLE_SHORT[styleId] || styleId)
+        : '';
       return {
         id: p.id,
+        seat: p.seat,
         name: p.name,
         position: positions[p.name] || '',
+        isHero,
+        styleId,
+        playstyle,
+        rank: p.rank,
         stack: p.initialStack ?? p.stack,
         initialStack: p.initialStack ?? p.stack,
         endStack: end ? end.stack : p.stack,
@@ -148,9 +193,10 @@ function buildHandRecord(hand, awarded, holes, levelLabel, live = false) {
     actions: (hand.actionHistory || []).map((a) => ({
       street: a.street,
       player: a.player,
+      playerId: a.playerId,
       action: live && /^\d+-bet$/.test(a.action || '') ? 'Raise' : a.action,
       chips: a.chips,
-      isAggressive: isAggressiveAction(a),
+      isAggressive: a.isAggressive != null ? a.isAggressive : isAggressiveAction(a),
       raiseLevel: a.raiseLevel,
     })),
     winners: (awarded.winners || []).map((w) => ({ potIndex: w.potIndex, playerId: w.playerId, amount: w.amount })),
@@ -158,6 +204,7 @@ function buildHandRecord(hand, awarded, holes, levelLabel, live = false) {
 }
 
 const DEFAULT_SETUP = {
+  sessionName: '',
   gameType: 'online',
   difficulty: 'medium',
   seats: 6,
@@ -197,6 +244,9 @@ export default function BotsMode() {
   const [showKeypad, setShowKeypad] = useState(false);
   const [flash, setFlash] = useState(null);
   const [hydrated, setHydrated] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportUrl, setExportUrl] = useState(null);
+  const [exportError, setExportError] = useState('');
 
   const deckRef = useRef([]);
   const raiseInputRef = useRef(null);
@@ -232,6 +282,10 @@ export default function BotsMode() {
     sessionStartRef.current = saved.createdAt || Date.now();
     setSetup(saved.setup || DEFAULT_SETUP);
     setSetupDraft(saved.setup || DEFAULT_SETUP);
+    if (saved.sessionName) {
+      setSetup((s) => ({ ...s, sessionName: saved.sessionName }));
+      setSetupDraft((s) => ({ ...s, sessionName: saved.sessionName }));
+    }
     setGame(saved.state.game);
     setHand(saved.state.hand || null);
     setHoles(saved.state.holes || {});
@@ -249,12 +303,20 @@ export default function BotsMode() {
     if (!id || !setup || !game) return;
     upsertBotsSession({
       id,
+      sessionName: (setup.sessionName || game?.sessionName || '').trim(),
       createdAt: sessionStartRef.current || Date.now(),
       updatedAt: Date.now(),
       status: outcome ? 'complete' : 'in_progress',
       outcome: outcome || null,
       setup,
       heroName: 'You',
+      seats: (game.seats || []).map((s) => ({
+        seat: s.seat,
+        name: s.name,
+        isHero: !!s.isHero,
+        styleId: s.styleId || null,
+        eliminated: !!s.eliminated,
+      })),
       handCount: handRecords.length,
       handRecords,
       state: outcome ? null : {
@@ -313,6 +375,7 @@ export default function BotsMode() {
     seats.forEach((s) => { stacks[s.playerId] = Math.round(Number(draft.stackBb) * bb); });
     const g = {
       ...draft,
+      sessionName: (draft.sessionName || '').trim(),
       seats,
       ring,
       stacks,
@@ -321,7 +384,7 @@ export default function BotsMode() {
       levelIndex: 0,
       handsThisLevel: 0,
       handsTarget: handsPerLevel(draft.speed, seats.length),
-      buttonSeat: 0,
+      buttonSeat: ring[Math.floor(Math.random() * ring.length)],
       sbSeat: null,
       bbSeat: null,
       handNumber: 0,
@@ -360,7 +423,7 @@ export default function BotsMode() {
     };
     let sbSeat = g.sbSeat;
     let bbSeat = g.bbSeat;
-    if (sbSeat == null || bbSeat == null || !activeSeats.includes(sbSeat) && !activeSeats.includes(bbSeat)) {
+    if (sbSeat == null || bbSeat == null || !activeSeats.includes(bbSeat)) {
       if (activeSeats.length === 2) {
         sbSeat = g.buttonSeat;
         bbSeat = nextActive(g.buttonSeat);
@@ -390,14 +453,17 @@ export default function BotsMode() {
         variant: 'nlh',
         blindSeats: { sbSeat, bbSeat },
         tableSize: players.length,
-        chipDenominations: [Math.max(1, Math.round(level.sb / 2))],
+        chipDenominations: [g.gameType === 'live' ? minChipForBlinds(level.bb) : 1],
         levelConfig: { type: 'hands' },
       },
       g.buttonSeat,
       g.handNumber + 1,
     );
+    const initialHand = next.currentPlayer === -1 && next.players.filter((p) => p.status !== 'folded').some((p) => p.status === 'allin')
+      ? refundUncontestedPots(next)
+      : next;
     setHoles(dealtHoles);
-    setHand(next);
+    setHand(initialHand);
     setRaiseTo('');
     setGame({ ...g, sbSeat, bbSeat, handNumber: g.handNumber + 1 });
   }, []);
@@ -415,7 +481,7 @@ export default function BotsMode() {
     // the player who shoved it rather than sitting in an uncalled side pot.
     const settled = refundUncontestedPots(currentHand) || currentHand;
     const nonFolded = settled.players.filter((p) => p.status !== 'folded');
-    const pots = computePots(settled.players, { bba: true });
+    const pots = computePots(settled.players, bbaPotOpts(settled));
     let winners = null;
     if (nonFolded.length === 1) {
       const map = {};
@@ -441,7 +507,7 @@ export default function BotsMode() {
       const shown = p.seat === heroSeatNo || (!uncontested && p.status !== 'folded');
       recordHoles[p.id] = shown ? (holes[p.id] || []) : [];
     });
-    const record = buildHandRecord(settled, awarded, recordHoles, levelLabel, g.gameType === 'live');
+    const record = buildHandRecord(settled, awarded, recordHoles, levelLabel, g.gameType === 'live', pots, g.seats);
     setHandRecords((records) => [record, ...records]);
     // Every seated bot's long-term stats get this hand (last 900 are kept).
     recordHandForBots(g.seats, record);
@@ -524,6 +590,10 @@ export default function BotsMode() {
     if (nonFolded.length <= 1) {
       const t = setTimeout(() => finishHand(hand), 700);
       return () => clearTimeout(t);
+    }
+    if (hand.currentPlayer === -1 && !hand._refundsApplied && nonFolded.some((p) => p.status === 'allin')) {
+      setHand(refundUncontestedPots(hand));
+      return undefined;
     }
     // Fill the street straight away; rendering drops hidden placeholders, so
     // the new cards appear once with their deal-in animation instead of a
@@ -656,7 +726,7 @@ export default function BotsMode() {
     return () => clearTimeout(t);
   }, [hand, holes, allInSpot]);
 
-  // Each bot's baseline is simulated once (200 hands) and then real hands are
+  // Each bot's baseline is simulated once (300 hands) and then real hands are
   // appended, so stats drift with the way you actually play against them.
   useEffect(() => subscribeBotProfiles(() => setStatsVersion((v) => v + 1)), []);
 
@@ -785,6 +855,57 @@ export default function BotsMode() {
     return () => window.removeEventListener('keydown', onKey);
   }, [hand, isHeroTurn, toCall, pot, minRaiseTo, maxRaiseTo, raiseTo]);
 
+  const handleExportCSV = useCallback(() => {
+    if (!handRecords.length) {
+      setExportError('No hand history available to export.');
+      return;
+    }
+    setExportError('');
+    try {
+      const customName = (game?.sessionName || setup?.sessionName || '').trim();
+      exportHandsToCSV(handRecords, {
+        filenamePrefix: customName ? customName.replace(/\s+/g, '_') : 'Play_Bots_Hand_History',
+        seats: game?.seats,
+        heroName: 'You',
+      });
+    } catch (e) {
+      setExportError(e?.message || 'Export to CSV failed.');
+    }
+  }, [handRecords, game?.sessionName, setup?.sessionName, game?.seats]);
+
+  const handleExportSheets = useCallback(async () => {
+    if (!handRecords.length || exporting) {
+      if (!handRecords.length) setExportError('No hand history available to export.');
+      return;
+    }
+    setExporting(true);
+    setExportError('');
+    setExportUrl(null);
+    try {
+      const dateStr = new Date().toISOString().split('T')[0];
+      const customName = (game?.sessionName || setup?.sessionName || '').trim();
+      const seatsText = setup?.seats === 2 ? 'Heads-up' : `${setup?.seats || 6}-max`;
+      const title = customName
+        ? `${customName} - ${dateStr}`
+        : `Play Bots Hand History (${seatsText}) - ${dateStr}`;
+      const res = await exportHandsToGoogleSheet(handRecords, {
+        title,
+        sessionName: customName,
+        seats: game?.seats,
+        heroName: 'You',
+      });
+      if (res?.spreadsheetUrl) {
+        setExportUrl(res.spreadsheetUrl);
+      } else {
+        setExportError('Export failed – no sheet URL returned.');
+      }
+    } catch (e) {
+      setExportError(e?.message || 'Export to Google Sheets failed.');
+    } finally {
+      setExporting(false);
+    }
+  }, [handRecords, exporting, setup?.seats, setup?.sessionName, game?.seats, game?.sessionName]);
+
   const levelLabel = formatBlindLevel(levels, game?.levelIndex || 0);
 
   // One line for the award banner, with the amount each player actually took
@@ -846,6 +967,17 @@ export default function BotsMode() {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
+            <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl sm:col-span-2">
+              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Session name (optional)</div>
+              <input
+                type="text"
+                value={setupDraft.sessionName || ''}
+                onChange={(e) => setSetupDraft((s) => ({ ...s, sessionName: e.target.value }))}
+                placeholder="e.g. Saturday Practice, Heads-up Drills..."
+                className="w-full bg-[#0e1219] border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
             <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl">
               <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Difficulty</div>
               <div className="grid grid-cols-2 gap-2">
@@ -883,7 +1015,7 @@ export default function BotsMode() {
             <div className="bg-[#151921] border border-slate-800 rounded-2xl p-4 shadow-xl sm:col-span-2">
               <div className="grid gap-4 sm:grid-cols-3">
                 <div>
-                  <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Seats ({setupDraft.seats}-max)</div>
+                  <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Seats ({setupDraft.seats === 2 ? 'Heads-up' : `${setupDraft.seats}-max`})</div>
                   <input
                     type="range"
                     min={2}
@@ -1004,7 +1136,9 @@ export default function BotsMode() {
       <div className="w-full max-w-6xl mx-auto flex-1 min-h-0 flex flex-col gap-2 p-2 sm:p-3 lg:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 bg-[#151921] border border-slate-800 rounded-2xl px-3.5 py-2.5 shadow-xl">
           <div className="flex items-center gap-3">
-            <span className="text-xs font-black uppercase tracking-widest text-emerald-400">Play Bots · {BOT_DIFFICULTIES.find((d) => d.id === setup.difficulty)?.label}</span>
+            <span className="text-xs font-black uppercase tracking-widest text-emerald-400">
+              {setup.sessionName ? `${setup.sessionName} · ` : ''}Play Bots · {BOT_DIFFICULTIES.find((d) => d.id === setup.difficulty)?.label}
+            </span>
             <span data-testid="game-type" className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{isLive ? 'Live' : 'Online'}</span>
             <span className="text-xs text-slate-400">Level {game.levelIndex + 1}</span>
             <span className="text-xs font-mono text-slate-300">{levelLabel}</span>
@@ -1042,13 +1176,48 @@ export default function BotsMode() {
               <button type="button" onClick={() => setShowHistory(true)} className="px-4 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Hand history</button>
               <button
                 type="button"
-                onClick={() => { setSetup(null); setGame(null); setHand(null); setChampion(null); setHeroBusted(false); setSessionOutcome(null); }}
+                onClick={handleExportCSV}
+                disabled={handRecords.length === 0}
+                className="px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download size={14} /> Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={handleExportSheets}
+                disabled={exporting || handRecords.length === 0}
+                className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                {exporting ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />}
+                Export to Google Sheets
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSetup(null); setGame(null); setHand(null); setChampion(null); setHeroBusted(false); setSessionOutcome(null); setExportUrl(null); setExportError(''); }}
                 className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black cursor-pointer"
               >
                 New game
               </button>
               <button type="button" onClick={() => navigate('/')} className="px-4 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Home</button>
             </div>
+            {exportError && (
+              <div className="max-w-md mx-auto text-xs text-rose-400 bg-rose-950/60 border border-rose-500/40 p-2.5 rounded-xl">
+                {exportError}
+              </div>
+            )}
+            {exportUrl && (
+              <div className="max-w-md mx-auto p-3 bg-[#131c17] border border-emerald-500/50 rounded-xl flex items-center justify-center flex-wrap gap-2">
+                <span className="text-xs text-emerald-300 font-medium">Exported to Google Sheets!</span>
+                <a
+                  href={exportUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white"
+                >
+                  <ExternalLink size={12} /> Open Sheet
+                </a>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-2 lg:gap-3">
@@ -1077,8 +1246,8 @@ export default function BotsMode() {
               </div>
 
               {orderedPlayers.map((p) => {
-                // Cards stay hidden through an all-in until the betting is over,
-                // then only the players who are all in turn them over.
+                // Cards stay hidden through live betting, then every non-folded
+                // contender in an all-in or river showdown turns them face up.
                 const bettingOver = hand.currentPlayer === -1 || hand.phase !== 'playing';
                 const seat = game.seats.find((s) => s.seat === p.seat);
                 const isTurn = hand.currentPlayer === p.id && hand.phase === 'playing';
@@ -1086,9 +1255,11 @@ export default function BotsMode() {
                 // A pot won by everyone else folding stays face down.
                 const contenders = hand.players.filter((x) => x.status !== 'folded');
                 const uncontested = hand.phase === 'awarded' && contenders.length === 1;
-                const allIn = p.status === 'allin' || p.stack <= 0 || p.lastAction?.type === 'allin';
+                const anyContenderAllIn = contenders.some((x) => x.status === 'allin' || x.stack <= 0 || x.lastAction?.type === 'allin');
+                const allInShowdown = bettingOver && contenders.length >= 2 && anyContenderAllIn;
+                const riverShowdown = bettingOver && contenders.length >= 2 && hand.street === 'river';
                 const reveal = Boolean(seat?.isHero)
-                  || (allIn && bettingOver && contenders.length >= 2)
+                  || (!folded && (allInShowdown || riverShowdown))
                   || (hand.phase === 'awarded' && !folded && !uncontested);
                 return (
                   <div key={p.id} data-testid={`seat-${p.seat}`} data-status={p.status} className="absolute -translate-x-1/2 -translate-y-1/2 z-10" style={seatPosition(p)}>
@@ -1151,29 +1322,37 @@ export default function BotsMode() {
                         All in
                       </button>
                     </div>
-                    <div className="flex gap-2 items-center">
-                      <input
-                        ref={raiseInputRef}
-                        data-testid="raise-input"
-                        type="number"
-                        value={raiseTo}
-                        onChange={(e) => setRaiseTo(e.target.value)}
-                        placeholder={`${minRaiseTo}`}
-                        title="Bet size: M = min, R = half pot, +/- = half a big blind"
-                        className="w-28 bg-[#0e1219] border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono"
-                      />
-                      <button type="button" onClick={() => submitRaise(raiseTo)} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold cursor-pointer">
-                        {toCall > 0 ? 'Raise to' : 'Bet'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowKeypad(true)}
-                        title="Keypad"
-                        className="md:hidden px-3 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-xs font-bold cursor-pointer"
-                      >
-                        123
-                      </button>
-                      <div className="flex flex-1 flex-wrap items-center gap-1.5">
+                    <div className="flex gap-2 items-stretch md:items-center">
+                      <div className="flex flex-col md:flex-row gap-1.5 md:gap-2 shrink-0 w-[122px] sm:w-32 md:w-auto md:items-center">
+                        <div className="flex gap-1 items-center">
+                          <input
+                            ref={raiseInputRef}
+                            data-testid="raise-input"
+                            type="number"
+                            value={raiseTo}
+                            onChange={(e) => setRaiseTo(e.target.value)}
+                            placeholder={`${minRaiseTo}`}
+                            title="Bet size: M = min, R = half pot, +/- = half a big blind"
+                            className="w-full md:w-28 min-w-0 bg-[#0e1219] border border-slate-700 rounded-xl px-2.5 md:px-3 py-2 text-sm font-mono"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowKeypad(true)}
+                            title="Keypad"
+                            className="md:hidden shrink-0 px-2 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-xs font-bold cursor-pointer"
+                          >
+                            123
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => submitRaise(raiseTo)}
+                          className="w-full md:w-auto px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold cursor-pointer whitespace-nowrap"
+                        >
+                          {toCall > 0 ? 'Raise to' : 'Bet'}
+                        </button>
+                      </div>
+                      <div className="flex-1 min-w-0 grid grid-cols-3 md:flex md:flex-wrap items-center gap-1.5 content-center">
                         {shortcuts.map((sc) => (
                           <button
                             key={sc.id}
@@ -1181,7 +1360,7 @@ export default function BotsMode() {
                             data-shortcut={sc.id}
                             onClick={() => submitRaise(sc.amount)}
                             title={isLive ? undefined : betLabel(sc.amount)}
-                            className="px-2.5 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-[11px] font-semibold cursor-pointer"
+                            className="px-1.5 md:px-2.5 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] border border-slate-700/60 text-[11px] font-semibold cursor-pointer text-center whitespace-nowrap"
                           >
                             {sc.label}
                           </button>
@@ -1244,7 +1423,7 @@ export default function BotsMode() {
               <h3 className="text-sm font-bold text-white">Bot stats</h3>
               <button type="button" onClick={() => setShowStats(false)} className="text-xs text-slate-400 hover:text-white cursor-pointer">Close</button>
             </div>
-            <p className="text-[11px] text-slate-500 mb-3">200 simulated baseline hands per bot, then the last 900 hands you play with them. Live tables hide these stats.</p>
+            <p className="text-[11px] text-slate-500 mb-3">300 simulated baseline hands per bot, then the last 900 hands you play with them. Live tables hide these stats.</p>
             {!botStats?.rows?.length ? (
               <p className="text-xs text-slate-400">Simulating…</p>
             ) : (
@@ -1285,13 +1464,70 @@ export default function BotsMode() {
 
       {showHistory && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowHistory(false)}>
-          <div className="bg-[#141922] border border-slate-800 rounded-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-white">Hand History ({history.length})</h3>
-              <button type="button" onClick={() => setShowHistory(false)} className="text-xs text-slate-400 hover:text-white cursor-pointer">Close</button>
+          <div className="bg-[#141922] border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-bold text-white">Hand History ({handRecords.length || history.length})</h3>
+                <div className="flex items-center gap-1 bg-[#181d26] p-0.5 rounded-lg border border-slate-700">
+                  {['chips', 'bb'].map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      onClick={() => setUnit(u)}
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-bold cursor-pointer ${unit === u ? 'bg-amber-500 text-black' : 'text-slate-400 hover:text-white'}`}
+                    >
+                      {u === 'chips' ? 'Chips' : 'BB'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleExportCSV}
+                  disabled={handRecords.length === 0}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download size={13} /> Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportSheets}
+                  disabled={exporting || handRecords.length === 0}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  {exporting ? <Loader2 size={13} className="animate-spin" /> : <FileSpreadsheet size={13} />}
+                  {exporting ? 'Exporting...' : 'Export to Google Sheets'}
+                </button>
+                <button type="button" onClick={() => setShowHistory(false)} className="text-xs text-slate-400 hover:text-white cursor-pointer ml-1">Close</button>
+              </div>
             </div>
-            {history.length === 0 ? (
+            {exportError && (
+              <div className="text-xs text-rose-400 bg-rose-950/60 border border-rose-500/40 p-2.5 rounded-xl">
+                {exportError}
+              </div>
+            )}
+            {exportUrl && (
+              <div className="p-2.5 bg-[#131c17] border border-emerald-500/50 rounded-xl flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs text-emerald-300 font-medium">Exported to Google Sheets ({unit === 'bb' ? 'Big Blinds' : 'Chips'})!</span>
+                <a
+                  href={exportUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white"
+                >
+                  <ExternalLink size={12} /> Open in Google Sheets
+                </a>
+              </div>
+            )}
+            {handRecords.length === 0 && history.length === 0 ? (
               <p className="text-xs text-slate-500">No hands played yet.</p>
+            ) : handRecords.length > 0 ? (
+              <div className="space-y-3">
+                {handRecords.map((h) => (
+                  <HandHistoryCard key={h.id || h.handNumber} h={h} displayUnit={unit} />
+                ))}
+              </div>
             ) : (
               <div className="space-y-2">
                 {history.map((h, i) => (
@@ -1314,6 +1550,20 @@ export default function BotsMode() {
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowSettings(false)}>
           <div className="bg-[#141922] border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-white">Settings</h3>
+            <div>
+              <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Session name</div>
+              <input
+                type="text"
+                value={setup?.sessionName || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSetup((s) => ({ ...s, sessionName: val }));
+                  setGame((g) => (g ? { ...g, sessionName: val } : g));
+                }}
+                placeholder="Session name"
+                className="w-full bg-[#19202b] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
             <div>
               <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Show stack in</div>
               <div className="grid grid-cols-2 gap-2">

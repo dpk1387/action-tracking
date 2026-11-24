@@ -162,13 +162,13 @@ export function betShortcuts({ street, currentBet = 0, bigBlind = 1, pot = 0, mi
     return out;
   }
 
-  push('min', 'Min', min);
+  push('min', 'min', min);
   const fractions = [
-    ['1/3', '⅓ pot', 1 / 3],
-    ['1/2', '½ pot', 0.5],
-    ['3/4', '¾ pot', 0.75],
-    ['pot', 'Pot', 1],
-    ['1.5x', '1.5x pot', 1.5],
+    ['1/3', '1/3', 1 / 3],
+    ['1/2', '1/2', 0.5],
+    ['3/4', '3/4', 0.75],
+    ['pot', 'pot', 1],
+    ['1.5x', '1.5x', 1.5],
   ];
   fractions.forEach(([id, label, frac]) => {
     push(id, label, facing + pot * frac);

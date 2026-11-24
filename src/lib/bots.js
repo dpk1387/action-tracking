@@ -127,30 +127,29 @@ export function nextBlindSeats({ ring, activeSeats, buttonSeat, sbSeat, bbSeat }
 // betLine is the postflop strength that bets, raiseGuard the reluctance to
 // raise a second time, callBonus the slack against raw pot odds.
 const STYLE_PROFILES = {
-  nit: { openPct: 0.13, limpPct: 0.04, threeBetPct: 0.03, coldCallPct: 0.05, fourBetPct: 0.015, callVs3Bet: 0.05, betLine: 0.62, raiseGuard: 0.35, bluff: 0.02, size: 0.6, callBonus: -0.06, aggro: 0.3, maxRaises: 1, reRaiseStep: 0.16 },
-  tag: { openPct: 0.19, limpPct: 0.05, threeBetPct: 0.055, coldCallPct: 0.075, fourBetPct: 0.025, callVs3Bet: 0.07, betLine: 0.55, raiseGuard: 0.2, bluff: 0.09, size: 0.7, callBonus: -0.02, aggro: 0.55, maxRaises: 2, reRaiseStep: 0.1 },
-  lag: { openPct: 0.30, limpPct: 0.08, threeBetPct: 0.10, coldCallPct: 0.12, fourBetPct: 0.04, callVs3Bet: 0.10, betLine: 0.48, raiseGuard: 0.1, bluff: 0.2, size: 0.8, callBonus: 0, aggro: 0.75, maxRaises: 3, reRaiseStep: 0.07 },
-  shark: { openPct: 0.24, limpPct: 0.05, threeBetPct: 0.06, coldCallPct: 0.11, fourBetPct: 0.035, callVs3Bet: 0.085, betLine: 0.5, raiseGuard: 0.15, bluff: 0.17, size: 0.75, callBonus: 0, aggro: 0.68, maxRaises: 2, reRaiseStep: 0.09 },
-  calling_station: { openPct: 0.32, limpPct: 0.30, threeBetPct: 0.01, coldCallPct: 0.38, fourBetPct: 0.005, callVs3Bet: 0.15, betLine: 0.7, raiseGuard: 0.5, bluff: 0.01, size: 0.4, callBonus: 0.16, aggro: 0.08, maxRaises: 1, reRaiseStep: 0.2 },
-  rock: { openPct: 0.14, limpPct: 0.08, threeBetPct: 0.03, coldCallPct: 0.10, fourBetPct: 0.015, callVs3Bet: 0.06, betLine: 0.6, raiseGuard: 0.4, bluff: 0.02, size: 0.45, callBonus: 0.02, aggro: 0.2, maxRaises: 1, reRaiseStep: 0.18 },
-  maniac: { openPct: 0.55, limpPct: 0.10, threeBetPct: 0.22, coldCallPct: 0.28, fourBetPct: 0.08, callVs3Bet: 0.16, betLine: 0.38, raiseGuard: 0, bluff: 0.3, size: 0.95, callBonus: 0.02, extraNoise: 0.06, aggro: 0.9, maxRaises: 4, reRaiseStep: 0.05 },
-  sss: { openPct: 0.22, limpPct: 0.02, threeBetPct: 0.08, coldCallPct: 0.04, fourBetPct: 0.03, callVs3Bet: 0.06, betLine: 0.6, raiseGuard: 0.15, bluff: 0.05, size: 0.9, callBonus: -0.02, aggro: 0.7, maxRaises: 2, reRaiseStep: 0.08, shortStack: true },
+  nit: { openPct: 0.16, limpPct: 0.02, threeBetPct: 0.04, coldCallPct: 0.06, fourBetPct: 0.015, callVs3Bet: 0.055, betLine: 0.62, raiseGuard: 0.35, bluff: 0.02, size: 0.6, callBonus: -0.06, aggro: 0.35, maxRaises: 1, reRaiseStep: 0.16 },
+  tag: { openPct: 0.25, limpPct: 0.02, threeBetPct: 0.08, coldCallPct: 0.14, fourBetPct: 0.032, callVs3Bet: 0.095, betLine: 0.55, raiseGuard: 0.2, bluff: 0.09, size: 0.7, callBonus: -0.02, aggro: 0.58, maxRaises: 2, reRaiseStep: 0.1 },
+  lag: { openPct: 0.38, limpPct: 0.04, threeBetPct: 0.13, coldCallPct: 0.20, fourBetPct: 0.05, callVs3Bet: 0.13, betLine: 0.48, raiseGuard: 0.1, bluff: 0.2, size: 0.8, callBonus: 0, aggro: 0.76, maxRaises: 3, reRaiseStep: 0.07 },
+  shark: { openPct: 0.30, limpPct: 0.02, threeBetPct: 0.095, coldCallPct: 0.16, fourBetPct: 0.042, callVs3Bet: 0.11, betLine: 0.5, raiseGuard: 0.15, bluff: 0.17, size: 0.75, callBonus: 0, aggro: 0.7, maxRaises: 2, reRaiseStep: 0.09 },
+  calling_station: { openPct: 0.11, limpPct: 0.50, threeBetPct: 0.015, coldCallPct: 0.58, fourBetPct: 0.005, callVs3Bet: 0.26, betLine: 0.7, raiseGuard: 0.5, bluff: 0.01, size: 0.4, callBonus: 0.18, aggro: 0.08, maxRaises: 1, reRaiseStep: 0.2 },
+  rock: { openPct: 0.12, limpPct: 0.14, threeBetPct: 0.025, coldCallPct: 0.16, fourBetPct: 0.012, callVs3Bet: 0.065, betLine: 0.6, raiseGuard: 0.4, bluff: 0.02, size: 0.45, callBonus: 0.02, aggro: 0.2, maxRaises: 1, reRaiseStep: 0.18 },
+  maniac: { openPct: 0.60, limpPct: 0.06, threeBetPct: 0.26, coldCallPct: 0.35, fourBetPct: 0.10, callVs3Bet: 0.20, betLine: 0.38, raiseGuard: 0, bluff: 0.3, size: 0.95, callBonus: 0.02, extraNoise: 0.06, aggro: 0.92, maxRaises: 4, reRaiseStep: 0.05 },
+  sss: { openPct: 0.25, limpPct: 0.01, threeBetPct: 0.09, coldCallPct: 0.09, fourBetPct: 0.035, callVs3Bet: 0.075, betLine: 0.6, raiseGuard: 0.15, bluff: 0.05, size: 0.9, callBonus: -0.02, aggro: 0.7, maxRaises: 2, reRaiseStep: 0.08, shortStack: true },
 };
 
 // Each playstyle ships 13 profiles with neutral names and slightly different
 // frequencies, so two nits at the same table do not play identically.
 export const BOT_PROFILE_COUNT = 13;
 
-const FIRST_NAMES = ['Alex', 'Jordan', 'Taylor', 'Morgan', 'Casey', 'Riley', 'Jamie', 'Avery', 'Quinn', 'Rowan', 'Sage', 'Drew', 'Reese'];
-const LAST_NAMES = {
-  nit: 'Bennett',
-  tag: 'Carter',
-  lag: 'Diaz',
-  shark: 'Ellis',
-  calling_station: 'Foster',
-  rock: 'Gray',
-  maniac: 'Hayes',
-  sss: 'Iverson',
+const STYLE_NAMES = {
+  nit: ['Alexander', 'Abigail', 'Anthony', 'Amelia', 'Benjamin', 'Autumn', 'Blake', 'Brianna', 'Christopher', 'Skylar', 'Daniel', 'Caroline', 'Lucas'],
+  tag: ['Charlotte', 'Dominic', 'Claire', 'Elijah', 'Destiny', 'Ethan', 'Eleanor', 'Henry', 'Emily', 'Hudson', 'Chloe', 'Jacob', 'Fiona'],
+  lag: ['Joshua', 'Gemma', 'Caleb', 'Giselle', 'Matthew', 'Grace', 'Miles', 'Harper', 'Nicholas', 'Isabella', 'Oliver', 'Jessica', 'Owen'],
+  shark: ['Kendall', 'Patrick', 'Lydia', 'Robert', 'Melanie', 'Noah', 'Natalie', 'Sebastian', 'Paige', 'Thomas', 'Penelope', 'Tristan', 'Phoebe'],
+  calling_station: ['Tyler', 'Quinn', 'Marcus', 'Lauren', 'William', 'Reese', 'Wyatt', 'Savannah', 'Zachary', 'Serenity', 'Derek', 'Sierra', 'Felix'],
+  rock: ['Sophia', 'Garrett', 'Sydney', 'Justin', 'Shannon', 'Leonard', 'Vanessa', 'Travis', 'Zoey', 'Timothy', 'Beatrice', 'Victor', 'Cassidy'],
+  maniac: ['Xavier', 'Chelsea', 'Arthur', 'Brooke', 'Bradley', 'Georgia', 'Spencer', 'Kimberly', 'Franklin', 'Lindsay', 'Gregory', 'Miranda', 'Jeffrey'],
+  sss: ['Naomi', 'Trevor', 'Daisy', 'Preston', 'April', 'Stephen', 'Iris', 'Simon', 'Kayla', 'Troy', 'Colleen', 'Adam', 'Ruby'],
 };
 
 // Multiplicative offsets that shape one profile out of its style baseline.
@@ -161,24 +160,25 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 function buildProfile(base, m) {
   return {
     ...base,
-    openPct: clamp(base.openPct * (1 + m), 0.03, 0.75),
-    limpPct: clamp(base.limpPct * (1 + m * 0.6), 0, 0.4),
-    threeBetPct: clamp(base.threeBetPct * (1 - m * 0.5), 0.005, 0.3),
-    coldCallPct: clamp(base.coldCallPct * (1 + m * 0.4), 0.02, 0.5),
-    fourBetPct: clamp(base.fourBetPct * (1 - m * 0.5), 0.002, 0.12),
+    openPct: clamp(base.openPct * (1 + m), 0.03, 0.78),
+    limpPct: clamp(base.limpPct * (1 + m * 0.4), 0, 0.6),
+    threeBetPct: clamp(base.threeBetPct * (1 - m * 0.5), 0.005, 0.32),
+    coldCallPct: clamp(base.coldCallPct * (1 + m * 0.35), 0.02, 0.65),
+    fourBetPct: clamp(base.fourBetPct * (1 - m * 0.5), 0.002, 0.14),
     bluff: clamp((base.bluff ?? 0.05) * (1 + m), 0, 0.4),
     aggro: clamp(base.aggro * (1 + m * 0.5), 0.02, 0.98),
   };
 }
 
-/** All 13 profiles for one playstyle: stable ids, neutral names, varied stats. */
+/** All 13 profiles for one playstyle: stable ids, short single names, varied stats. */
 export function botProfilesForStyle(styleId) {
   const baseId = STYLE_PROFILES[styleId] ? styleId : 'tag';
   const base = STYLE_PROFILES[baseId];
+  const names = STYLE_NAMES[baseId] || STYLE_NAMES.tag;
   return Array.from({ length: BOT_PROFILE_COUNT }, (_, i) => ({
     id: `${baseId}-${i + 1}`,
     styleId: baseId,
-    name: `${FIRST_NAMES[i]} ${LAST_NAMES[baseId]}`,
+    name: names[i],
     profile: buildProfile(base, PROFILE_JITTER[i]),
   }));
 }

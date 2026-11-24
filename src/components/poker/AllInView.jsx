@@ -42,10 +42,13 @@ const POSITION_ORDER = {
   HJ: 10,
   CO: 11,
   BTN: 12,
+  D: 12,
+  'D/SB': 12,
 };
 
 function formatPosition(pos) {
   if (!pos) return '—';
+  if (pos === 'D' || pos === 'D/SB') return 'BTN';
   if (pos === 'UTG+1') return '+1';
   if (pos === 'UTG+2') return '+2';
   if (pos === 'UTG+3') return '+3';

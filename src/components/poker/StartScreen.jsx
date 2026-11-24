@@ -36,7 +36,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   const [showDirectorTournamentsModal, setShowDirectorTournamentsModal] = useState(false);
   const [activeTournaments, setActiveTournaments] = useState(() => mttStore.getTournaments().filter((t) => t.active));
 
-  // Tabs for Saved Sessions section: 'in_progress' | 'completed' | 'hand_histories'
+  // Tabs for Saved Sessions section: 'in_progress' | 'completed' | 'bots' | 'hand_histories'
   const [sessionTab, setSessionTab] = useState('in_progress');
   const [completedList, setCompletedList] = useState(() => getCompletedSessions());
   const [viewingCompleted, setViewingCompleted] = useState(null);
@@ -49,15 +49,31 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
 
   const degenVariants = [
     { key: 'second_best', title: '2nd Best', desc: '2nd best hand AT SHOWDOWN wins the pot.' },
-    { key: 'three_two_one', title: '3-2-1', desc: '3 flop cards, 2 turn cards, 1 river card.' },
-    { key: 'ocean', title: 'Ocean', desc: 'After river betting, 6th street (Ocean) is dealt with one more betting round.' },
-    { key: 'red_river', title: 'Red River', desc: 'If river card is red (♦/♥), deal another river card after betting until a black card (♠/♣) lands.' },
     { key: 'win_button', title: 'Win the Button', desc: 'The winner of each hand takes the Button position for the next hand.' },
     { key: 'deuces_wild', title: 'Deuces Wild', desc: 'All 2s are wild! Dealt 22 forces instant reveal, redeal, and collects blinds/antes.' },
   ];
 
   // Variants that share a theme live behind one card with its own submenu.
   const degenCategories = [
+    {
+      key: 'more_cards',
+      title: 'More Cards',
+      desc: 'Variants that deal more than 5 community cards.',
+      variants: [
+        { key: 'three_two_one', title: '3-2-1', desc: '3 flop cards, 2 turn cards, 1 river card.' },
+        { key: 'ocean', title: 'Ocean', desc: 'After river betting, 6th street (Ocean) is dealt with one more betting round.' },
+        { key: 'red_river', title: 'Red River', desc: 'If river card is red (♦/♥), deal another river card after betting until a black card (♠/♣) lands.' },
+      ],
+    },
+    {
+      key: 'bomb_pots',
+      title: 'Bomb Pots',
+      desc: 'Every hand is a bomb pot — everyone pays an ante and sees the flop right away.',
+      variants: [
+        { key: 'bomb_pot', title: 'Bomb Pot', desc: 'Every hand is a bomb pot. Fixed ante in cash; increasing antes in tournaments.' },
+        { key: 'double_board_bomb_pot', title: 'Double Board Bomb Pot', desc: 'Every hand is a double-board bomb pot with two community boards.' },
+      ],
+    },
     {
       key: 'extra_info',
       title: 'Extra Information',
@@ -74,7 +90,6 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
       variants: [
         { key: 'mandatory_3bet', title: 'Mandatory 3-Bet', desc: 'Preflop flat calling/limping is prohibited until a 3-bet occurs.' },
         { key: 'mandatory_raise', title: 'Mandatory Raise', desc: 'On every street you must raise rather than call or limp until a raise has occurred.' },
-        { key: 'mandatory_4bet', title: 'Mandatory 4-Bet', desc: 'Calling and limping are prohibited until a 4-bet occurs.' },
       ],
     },
   ];
@@ -167,20 +182,30 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   const handleClearAllActive = () => {
     setPendingConfirm({
       title: 'Clear all in-progress sessions?',
-      message: `All ${sessions.length + botsInProgress.length} in-progress saved session${sessions.length + botsInProgress.length === 1 ? '' : 's'} will be deleted. Completed sessions and hand histories are untouched.`,
+      message: `All ${sessions.length} in-progress saved session${sessions.length === 1 ? '' : 's'} will be deleted. Completed sessions, bot sessions, and hand histories are untouched.`,
       confirmLabel: 'Clear all',
       onConfirm: async () => {
         setLoadingSessions(true);
         try {
           await discardAllSavedSessions();
           setSessions([]);
-          botsInProgress.forEach((b) => deleteBotsSession(b.id));
-          setBotsSessions(getBotsSessions());
         } catch {
           setListError('Could not clear active sessions.');
         } finally {
           setLoadingSessions(false);
         }
+      },
+    });
+  };
+
+  const handleClearAllBots = () => {
+    setPendingConfirm({
+      title: 'Clear all bot sessions?',
+      message: `All ${botsSessions.length} saved Play Bots session${botsSessions.length === 1 ? '' : 's'} and their hand histories will be permanently deleted.`,
+      confirmLabel: 'Clear all',
+      onConfirm: () => {
+        botsSessions.forEach((b) => deleteBotsSession(b.id));
+        setBotsSessions(getBotsSessions());
       },
     });
   };
@@ -241,7 +266,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
   const hasGuestSaved = Boolean(savedGuestSession?.hand);
   const botsInProgress = botsSessions.filter((s) => s.status === 'in_progress');
   const botsCompleted = botsSessions.filter((s) => s.status === 'complete');
-  const totalInProgressCount = (isAuthenticated ? sessions.length : 0) + activeTournaments.length + (hasGuestSaved ? 1 : 0) + botsInProgress.length;
+  const totalInProgressCount = (isAuthenticated ? sessions.length : 0) + activeTournaments.length + (hasGuestSaved ? 1 : 0);
 
   return (
     <div className="min-h-screen bg-[#121417] flex items-center justify-center p-6 relative">
@@ -331,7 +356,18 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <FolderOpen size={13} /> Complete Sessions {completedList.length + botsCompleted.length > 0 ? `(${completedList.length + botsCompleted.length})` : ''}
+                <FolderOpen size={13} /> Complete Sessions {completedList.length > 0 ? `(${completedList.length})` : ''}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSessionTab('bots')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  sessionTab === 'bots'
+                    ? 'bg-[#2a2f37] text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Bot size={13} /> Bot Sessions {botsSessions.length > 0 ? `(${botsSessions.length})` : ''}
               </button>
               <button
                 type="button"
@@ -346,12 +382,23 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
               </button>
             </div>
 
-            {sessionTab === 'in_progress' && (sessions.length > 0 || botsInProgress.length > 0) && (
+            {sessionTab === 'in_progress' && sessions.length > 0 && (
               <button
                 type="button"
                 onClick={handleClearAllActive}
                 className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
                 title="Delete all in-progress saved sessions"
+              >
+                <Trash2 size={12} /> Clear all
+              </button>
+            )}
+
+            {sessionTab === 'bots' && botsSessions.length > 0 && (
+              <button
+                type="button"
+                onClick={handleClearAllBots}
+                className="text-[11px] text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
+                title="Delete all saved bot sessions"
               >
                 <Trash2 size={12} /> Clear all
               </button>
@@ -372,61 +419,6 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
           {/* TAB 1: IN PROGRESS SESSIONS */}
           {sessionTab === 'in_progress' && (
             <div className="space-y-2.5">
-              {/* Saved Play Bots sessions */}
-              {botsInProgress.map((b) => (
-                <div
-                  key={b.id}
-                  className="rounded-lg border border-sky-500/40 bg-[#1e2227] hover:bg-[#242a30] p-3.5 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow"
-                >
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/bots?s=${encodeURIComponent(b.id)}`)}
-                    className="min-w-0 flex-1 text-left cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <Bot size={15} className="text-sky-400 shrink-0" />
-                      <span className="text-sm font-bold text-white truncate">
-                        Play Bots — {b.setup?.seats || '—'}-max {b.setup?.difficulty ? b.setup.difficulty[0].toUpperCase() + b.setup.difficulty.slice(1) : ''}
-                      </span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950 border border-sky-500/40 text-sky-300 uppercase">
-                        Play Bots
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
-                      <span>Hand #{b.handNumber || 1}</span>
-                      <span>{b.levelLabel ? `Blinds ${b.levelLabel}` : ''}</span>
-                      <span>{b.handCount || 0} hands played</span>
-                    </div>
-                  </button>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/bots?s=${encodeURIComponent(b.id)}`)}
-                      className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer transition-colors shadow"
-                    >
-                      Resume
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPendingConfirm({
-                          title: 'Delete bots session',
-                          message: 'This saved Play Bots session and its recorded hands will be permanently deleted.',
-                          confirmLabel: 'Delete',
-                          onConfirm: () => {
-                            deleteBotsSession(b.id);
-                            setBotsSessions(getBotsSessions());
-                          },
-                        });
-                      }}
-                      title="Delete session"
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
               {/* Active Tournament Director Sessions listed cleanly down here */}
               {activeTournaments.map((t) => (
                 <div
@@ -519,11 +511,11 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                 <div className="text-sm text-slate-400 py-6 text-center">Loading sessions...</div>
               ) : listError ? (
                 <div className="text-sm text-rose-400 py-4">{listError}</div>
-              ) : (isAuthenticated && sessions.length === 0 && !hasGuestSaved && activeTournaments.length === 0 && botsInProgress.length === 0) ? (
+              ) : (isAuthenticated && sessions.length === 0 && !hasGuestSaved && activeTournaments.length === 0) ? (
                 <div className="py-8 text-center text-xs text-slate-500">
                   No in-progress sessions saved.
                 </div>
-              ) : (!isAuthenticated && !hasGuestSaved && activeTournaments.length === 0 && botsInProgress.length === 0) ? (
+              ) : (!isAuthenticated && !hasGuestSaved && activeTournaments.length === 0) ? (
                 <div className="py-8 text-center text-xs text-slate-500">
                   No local in-progress sessions. Sign in to sync cloud sessions across devices.
                 </div>
@@ -583,67 +575,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
           {/* TAB 2: COMPLETE SESSIONS */}
           {sessionTab === 'completed' && (
             <div className="space-y-2.5">
-              {botsCompleted.map((b) => (
-                <div
-                  key={b.id}
-                  onClick={() => setViewingBotsSession(b)}
-                  className="group relative rounded-lg border border-[#2a2f37] bg-[#1e2227] hover:bg-[#242a30] hover:border-sky-500/50 p-3.5 transition-colors cursor-pointer"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 pr-10">
-                      <div className="text-sm font-bold text-white truncate flex items-center gap-2 mb-1">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-950 border border-sky-500/40 text-sky-300 uppercase">Play Bots</span>
-                        <span className="truncate">
-                          {b.setup?.seats || '—'}-max {b.setup?.difficulty ? b.setup.difficulty[0].toUpperCase() + b.setup.difficulty.slice(1) : ''} — {b.outcome === 'win' ? 'You won' : b.outcome === 'bust' ? 'You busted' : 'Ended early'}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
-                        <span className="flex items-center gap-1 text-slate-300 font-semibold">
-                          <FolderOpen size={12} className="text-sky-400" />
-                          {b.handCount || b.handRecords?.length || 0} Hands Recorded
-                        </span>
-                        {b.updatedAt && (
-                          <span className="flex items-center gap-1 text-slate-500">
-                            <Calendar size={12} /> {new Date(b.updatedAt).toLocaleDateString()}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setViewingBotsSession(b);
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-sky-950/80 hover:bg-sky-900 border border-sky-600/50 text-sky-300 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <Eye size={13} /> View Stats
-                      </button>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPendingConfirm({
-                        title: 'Delete bots session',
-                        message: 'This completed Play Bots session, its stats and its hand history will be permanently deleted.',
-                        confirmLabel: 'Delete',
-                        onConfirm: () => {
-                          deleteBotsSession(b.id);
-                          setBotsSessions(getBotsSessions());
-                        },
-                      });
-                    }}
-                    title="Delete bots session"
-                    className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-[#2a2f37] transition-colors cursor-pointer"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
-              {completedList.length === 0 && botsCompleted.length === 0 ? (
+              {completedList.length === 0 ? (
                 <div className="py-10 text-center text-xs text-slate-500">
                   No completed sessions saved yet. When you end a session, save it to view its complete hand history here.
                 </div>
@@ -717,7 +649,140 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
             </div>
           )}
 
-          {/* TAB 3: HAND HISTORIES */}
+          {/* TAB 3: BOT SESSIONS */}
+          {sessionTab === 'bots' && (
+            <div className="space-y-2.5">
+              {botsSessions.length === 0 ? (
+                <div className="py-10 text-center text-xs text-slate-500">
+                  No bot sessions saved yet. Start a Play Bots session to track your games and stats here.
+                </div>
+              ) : (
+                <>
+                  {botsInProgress.map((b) => (
+                    <div
+                      key={b.id}
+                      className="rounded-lg border border-sky-500/40 bg-[#1e2227] hover:bg-[#242a30] p-3.5 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/bots?s=${encodeURIComponent(b.id)}`)}
+                        className="min-w-0 flex-1 text-left cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <Bot size={15} className="text-sky-400 shrink-0" />
+                          <span className="text-sm font-bold text-white truncate">
+                            {b.sessionName ? `${b.sessionName} — ` : ''}Play Bots — {b.setup?.seats === 2 ? 'Heads-up' : `${b.setup?.seats || '—'}-max`} {b.setup?.difficulty ? b.setup.difficulty[0].toUpperCase() + b.setup.difficulty.slice(1) : ''}
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950 border border-sky-500/40 text-sky-300 uppercase">
+                            In Progress
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
+                          <span>Hand #{b.handNumber || 1}</span>
+                          {b.levelLabel && <span>Blinds {b.levelLabel}</span>}
+                          <span>{b.handCount || 0} hands played</span>
+                          {b.updatedAt && (
+                            <span className="flex items-center gap-1 text-slate-500">
+                              <Calendar size={12} /> {new Date(b.updatedAt).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/bots?s=${encodeURIComponent(b.id)}`)}
+                          className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer transition-colors shadow"
+                        >
+                          Resume
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPendingConfirm({
+                              title: 'Delete bots session',
+                              message: 'This saved Play Bots session and its recorded hands will be permanently deleted.',
+                              confirmLabel: 'Delete',
+                              onConfirm: () => {
+                                deleteBotsSession(b.id);
+                                setBotsSessions(getBotsSessions());
+                              },
+                            });
+                          }}
+                          title="Delete session"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {botsCompleted.map((b) => (
+                    <div
+                      key={b.id}
+                      onClick={() => setViewingBotsSession(b)}
+                      className="group relative rounded-lg border border-[#2a2f37] bg-[#1e2227] hover:bg-[#242a30] hover:border-sky-500/50 p-3.5 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0 pr-10">
+                          <div className="text-sm font-bold text-white truncate flex items-center gap-2 mb-1">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-950 border border-emerald-500/40 text-emerald-300 uppercase">Complete</span>
+                            <span className="truncate">
+                              {b.sessionName ? `${b.sessionName} — ` : ''}{b.setup?.seats === 2 ? 'Heads-up' : `${b.setup?.seats || '—'}-max`} {b.setup?.difficulty ? b.setup.difficulty[0].toUpperCase() + b.setup.difficulty.slice(1) : ''} — {b.outcome === 'win' ? 'You won' : b.outcome === 'bust' ? 'You busted' : 'Ended early'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-400 flex items-center gap-3 flex-wrap">
+                            <span className="flex items-center gap-1 text-slate-300 font-semibold">
+                              <FolderOpen size={12} className="text-sky-400" />
+                              {b.handCount || b.handRecords?.length || 0} Hands Recorded
+                            </span>
+                            {b.updatedAt && (
+                              <span className="flex items-center gap-1 text-slate-500">
+                                <Calendar size={12} /> {new Date(b.updatedAt).toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setViewingBotsSession(b);
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-sky-950/80 hover:bg-sky-900 border border-sky-600/50 text-sky-300 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                          >
+                            <Eye size={13} /> View Stats
+                          </button>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPendingConfirm({
+                            title: 'Delete bots session',
+                            message: 'This completed Play Bots session, its stats and its hand history will be permanently deleted.',
+                            confirmLabel: 'Delete',
+                            onConfirm: () => {
+                              deleteBotsSession(b.id);
+                              setBotsSessions(getBotsSessions());
+                            },
+                          });
+                        }}
+                        title="Delete bots session"
+                        className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-[#2a2f37] transition-colors cursor-pointer"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: HAND HISTORIES */}
           {sessionTab === 'hand_histories' && (
             <div className="space-y-2.5">
               {handHistoriesList.length === 0 ? (
@@ -918,7 +983,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
                         </span>
                       </div>
                       <p className="text-xs text-amber-200/70 mt-1 leading-relaxed">
-                        Play wild NLH variants: 2nd Best, 3-2-1, Ocean, Red River, Win the Button, Deuces Wild, plus Extra Information and Mandatory Action games!
+                        Play wild NLH variants: 2nd Best, Win the Button, Deuces Wild, plus More Cards, Bomb Pots, Extra Information, and Mandatory Action games!
                       </p>
                     </div>
                   </div>
@@ -1028,7 +1093,7 @@ export default function StartScreen({ onNewSession, onResumeSession, savedGuestS
             <div className="mt-5 pt-4 border-t border-slate-800 flex justify-end">
               <button
                 type="button"
-                onClick={() => { setShowModeModal(false); setShowDegenSubmenu(false); }}
+                onClick={() => { setShowModeModal(false); setShowDegenSubmenu(false); setShowGoVariants(false); setDegenCategory(null); }}
                 className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 cursor-pointer"
               >
                 Cancel

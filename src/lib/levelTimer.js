@@ -1,4 +1,4 @@
-import { nextHand, parseAmount } from './poker';
+import { nextHand, parseAmount, isBombPotVariant } from './poker';
 
 export const LEVEL_METHODS = [
   { id: 'minutes', label: 'Minutes' },
@@ -278,6 +278,16 @@ export function applyNextLevel(hand) {
   const bbNum = parseAmount(lvl.bigBlind) ?? Number(lvl.bigBlind) ?? 0;
   const sbNum = parseAmount(lvl.smallBlind) ?? Number(lvl.smallBlind) ?? 0;
   const anteNum = parseAmount(lvl.ante) ?? Number(lvl.ante) ?? 0;
+  if (isBombPotVariant(hand.variant) || (sbNum === 0 && bbNum === 0 && anteNum > 0)) {
+    return {
+      ...hand,
+      smallBlind: 0,
+      bigBlind: 0,
+      anteAmount: anteNum,
+      bombAmount: anteNum,
+      blindLevel: target,
+    };
+  }
   const activeCount = (hand.players || []).filter((p) => p.status !== 'eliminated' && p.status !== 'out' && (p.stack > 0 || p.initialStack > 0)).length;
   const isShortHandedSB = hand.sbHalfAnteShortHanded && activeCount < (Number(hand.shortHandedThreshold) || 5);
   const effectiveAnte = hand.anteType === 'bba' && isShortHandedSB ? 'sb_half_ante' : hand.anteType;

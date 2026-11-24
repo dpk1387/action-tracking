@@ -36,6 +36,14 @@ const lvl = (sb, bb, min = '') => ({
   minutes: min,
 });
 
+const bombLvl = (ante, min = '') => ({
+  type: 'level',
+  smallBlind: '0',
+  bigBlind: '0',
+  ante: formatKM(ante),
+  minutes: min,
+});
+
 const brk = (min = 10, race = null) => ({
   type: 'break',
   minutes: min,
@@ -247,6 +255,39 @@ export function suggestNextBlinds(schedule = [], chipDenominations = []) {
   return { smallBlind: formatKM(nextSB), bigBlind: formatKM(nextBB) };
 }
 
+export function bombPotScheduleFor(lowest = 25) {
+  const base = Number(lowest) || 25;
+  const mults = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 40, 50, 60, 80, 100];
+  const out = [];
+  mults.forEach((m, idx) => {
+    out.push(bombLvl(m * base));
+    if ((idx + 1) % 4 === 0 && idx < mults.length - 1) {
+      out.push(brk(10));
+    }
+  });
+  return out;
+}
+
+export function suggestNextAnte(schedule = [], chipDenominations = []) {
+  const denoms = (chipDenominations || []).map(Number).filter((d) => d > 0);
+  const base = denoms.length ? Math.min(...denoms) : 25;
+  const levels = (schedule || []).filter((l) => l && l.type !== 'break' && l.type !== 'color_up');
+  if (levels.length === 0) return formatKM(base);
+  const last = levels[levels.length - 1];
+  const lastAnte = (parseAmount(last.ante) ?? Number(last.ante)) || base;
+  let nextAnte;
+  if (lastAnte < 100) {
+    nextAnte = Math.round((lastAnte * 1.5) / base) * base;
+    if (nextAnte <= lastAnte) nextAnte = lastAnte + base;
+  } else {
+    const raw = lastAnte * 1.5;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = mag >= 1000 ? mag / 2 : mag / 10;
+    nextAnte = Math.max(lastAnte + base, Math.round(raw / step) * step);
+  }
+  return formatKM(nextAnte);
+}
+
 /**
  * Generate a complete tournament blind schedule based on:
  * - level length (minutes)
@@ -256,6 +297,7 @@ export function suggestNextBlinds(schedule = [], chipDenominations = []) {
  * - speed profile ('balanced' vs 'turbo')
  * - lowest chip denomination & selected chipDenominations
  * - starting stack
+ * - bombPot (ante-only increasing schedule)
  */
 export function generateBlindSchedule({
   lowestChip = 25,
@@ -268,6 +310,7 @@ export function generateBlindSchedule({
   chipDenominations = [],
   speed = 'balanced',
   anteType = 'bba',
+  bombPot = false,
 } = {}) {
   const rawBase = Math.max(1, Number(lowestChip) || 25);
   const sortedDenoms = (Array.isArray(chipDenominations) ? chipDenominations : [])
@@ -457,13 +500,24 @@ export function generateBlindSchedule({
     bb = snapToChip(bb, currentMinChip);
     if (bb <= sb) bb = sb * 2;
 
-    schedule.push({
-      type: 'level',
-      smallBlind: formatKM(sb),
-      bigBlind: formatKM(bb),
-      ante: calcAnte(bb, currentMinChip),
-      minutes: lvlMin,
-    });
+    if (bombPot) {
+      const anteVal = sb;
+      schedule.push({
+        type: 'level',
+        smallBlind: '0',
+        bigBlind: '0',
+        ante: formatKM(anteVal),
+        minutes: lvlMin,
+      });
+    } else {
+      schedule.push({
+        type: 'level',
+        smallBlind: formatKM(sb),
+        bigBlind: formatKM(bb),
+        ante: calcAnte(bb, currentMinChip),
+        minutes: lvlMin,
+      });
+    }
     playLevelsCount++;
     elapsedMinutes += lvlMin;
 
@@ -474,7 +528,7 @@ export function generateBlindSchedule({
       const replacement = activeDenoms[1];
       const nextRaw = levelPairs[idx + 1];
       const nextFitsReplacement = nextRaw
-        ? (nextRaw[0] >= replacement && nextRaw[0] % replacement === 0 && nextRaw[1] % replacement === 0)
+        ? (bombPot ? (nextRaw[0] >= replacement && nextRaw[0] % replacement === 0) : (nextRaw[0] >= replacement && nextRaw[0] % replacement === 0 && nextRaw[1] % replacement === 0))
         : false;
       if (sb >= retired * 8 || (nextFitsReplacement && sb >= retired * 4)) {
         colorUpRace = { retired, replacement };

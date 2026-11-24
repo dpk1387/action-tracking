@@ -9,15 +9,15 @@ export const SUIT_RED = { s: false, h: true, d: true, c: false };
 export const POS = {
   2: ['BTN', 'BB'],
   3: ['BTN', 'SB', 'BB'],
-  4: ['BTN', 'SB', 'BB', 'UTG'],
-  5: ['BTN', 'SB', 'BB', 'UTG', 'CO'],
+  4: ['BTN', 'SB', 'BB', 'CO'],
+  5: ['BTN', 'SB', 'BB', 'HJ', 'CO'],
   6: ['BTN', 'SB', 'BB', 'UTG', 'HJ', 'CO'],
-  7: ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'HJ', 'CO'],
-  8: ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'LJ', 'HJ', 'CO'],
-  9: ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'UTG+2', 'LJ', 'HJ', 'CO'],
-  10: ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'UTG+2', 'UTG+3', 'LJ', 'HJ', 'CO'],
-  11: ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'UTG+2', 'UTG+3', 'UTG+4', 'LJ', 'HJ', 'CO'],
-  12: ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'UTG+2', 'UTG+3', 'UTG+4', 'UTG+5', 'LJ', 'HJ', 'CO'],
+  7: ['BTN', 'SB', 'BB', 'UTG', 'LJ', 'HJ', 'CO'],
+  8: ['BTN', 'SB', 'BB', 'UTG', '+1', 'LJ', 'HJ', 'CO'],
+  9: ['BTN', 'SB', 'BB', 'UTG', '+1', '+2', 'LJ', 'HJ', 'CO'],
+  10: ['BTN', 'SB', 'BB', 'UTG', '+1', '+2', '+3', 'LJ', 'HJ', 'CO'],
+  11: ['BTN', 'SB', 'BB', 'UTG', '+1', '+2', '+3', '+4', 'LJ', 'HJ', 'CO'],
+  12: ['BTN', 'SB', 'BB', 'UTG', '+1', '+2', '+3', '+4', '+5', 'LJ', 'HJ', 'CO'],
 };
 
 export const STREET_ORDER = ['preflop', 'flop', 'turn', 'river', 'ocean'];
@@ -43,7 +43,8 @@ export const VARIANTS = {
   pirate_poker: { label: 'Pirate Poker', group: 'extra_info', holeSize: 2, deck: 'full', exposeOne: true },
   mandatory_3bet: { label: 'Mandatory 3-Bet', group: 'mandatory', holeSize: 2, deck: 'full' },
   mandatory_raise: { label: 'Mandatory Raise', group: 'mandatory', holeSize: 2, deck: 'full' },
-  mandatory_4bet: { label: 'Mandatory 4-Bet', group: 'mandatory', holeSize: 2, deck: 'full' },
+  bomb_pot: { label: 'Bomb Pot', group: 'degen', holeSize: 2, deck: 'full' },
+  double_board_bomb_pot: { label: 'Double Board Bomb Pot', group: 'degen', holeSize: 2, deck: 'full' },
   red_river: { label: 'Red River', group: 'degen', holeSize: 2, deck: 'full' },
   win_button: { label: 'Win the Button', group: 'degen', holeSize: 2, deck: 'full' },
   deuces_wild: { label: 'Deuces Wild', group: 'degen', holeSize: 2, deck: 'full' },
@@ -54,6 +55,10 @@ export const GAME_TYPES = { nl: 'No Limit', pl: 'Pot Limit' };
 export function variantMeta(v) {
   if (v === 'holdem') return VARIANTS.nlh;
   return VARIANTS[v] || VARIANTS.nlh;
+}
+
+export function isBombPotVariant(v) {
+  return v === 'bomb_pot' || v === 'double_board_bomb_pot';
 }
 
 // Omaha-family games are always played pot limit.
@@ -158,9 +163,12 @@ export function formatBlinds(hand) {
   const cur = isTourney ? '' : (hand.currency || '');
   const fmt = (v) => `${cur}${formatKM(v)}`;
 
-  if (hand.bombPot) {
-    const bombAmt = hand.bombAmount || (hand.bigBlind ? hand.bigBlind * 5 : 0);
-    return `${fmt(bombAmt)} Ante (Bomb Pot)`;
+  if (hand.bombPot || isBombPotVariant(hand.variant)) {
+    const bombAmt = hand.bombAmount || hand.anteAmount || (hand.bigBlind ? hand.bigBlind * 5 : 0);
+    const label = (hand.doubleBoard || hand.variant === 'double_board_bomb_pot')
+      ? 'Double Board Bomb Pot'
+      : 'Bomb Pot';
+    return `${fmt(bombAmt)} Ante (${label})`;
   }
   if (hand.variant === 'short_deck') {
     const ante = Number(hand.anteAmount) || (hand.mode === 'cash' ? 1 : Number(hand.bigBlind) || 1);
@@ -476,9 +484,7 @@ export function positionForSeat(n, buttonIndex, seatOrderIndex, variant = null) 
     return sLabels[offset] || 'P';
   }
   const labels = POS[n] || POS[10];
-  let label = labels[offset];
-  if (n === 2 && label === 'BTN') label = 'D/SB';
-  return label || 'P';
+  return labels[offset] || 'P';
 }
 
 export function positions(h) {
@@ -545,6 +551,16 @@ export function clone(h) {
 
 export function getButtonIndex(h) {
   return h.players.findIndex((p) => p.seat === h.buttonSeat);
+}
+
+export function getPostflopButtonAnchor(h) {
+  if (!h || !Array.isArray(h.players) || h.players.length === 0) return -1;
+  const bi = getButtonIndex(h);
+  if (bi >= 0) return bi;
+  const n = h.players.length;
+  const nextIdx = h.players.findIndex((p) => Number(p.seat) > Number(h.buttonSeat));
+  const targetIdx = nextIdx >= 0 ? nextIdx : 0;
+  return (targetIdx - 1 + n) % n;
 }
 
 export function getSBIndex(h) {
@@ -664,6 +680,7 @@ export function actionLabel(la, live = false) {
   if (la.type === 'allin') return 'All-in';
   if (la.type === 'sb') return 'SB';
   if (la.type === 'bb') return 'BB';
+  if (la.type === 'ante') return 'Ante';
   if (la.type === '3b') return '3B';
   if (la.type === '4b') return '4B';
   if (la.type === 'straddle') return 'Straddle';
@@ -725,8 +742,11 @@ export function startHand(config, buttonSeat, handNumber) {
     ? Math.round((Number(config.bigBlind) || 0) * 0.5 * 100) / 100
     : (config.anteAmount || 0);
   const variant = config.variant || 'holdem';
-  const bombPot = !!config.bombPot;
-  const bombAmount = Number(config.bombAmount) || config.bigBlind;
+  const isPermBomb = isBombPotVariant(variant);
+  const bombPot = isPermBomb || !!config.bombPot;
+  const bombAmount = Number(config.bombAmount) || (isPermBomb ? (Number(config.anteAmount) || 10) : 0) || config.bigBlind || 10;
+  const permBoards = variant === 'double_board_bomb_pot' ? 2 : 1;
+  const bombBoardsCount = isPermBomb && config.bombBoards == null ? permBoards : (Number(config.bombBoards) || (config.doubleBoard ? 2 : 1));
   const wasKill = !!config.killActive && config.killSeat != null;
 
   const common = {
@@ -734,17 +754,19 @@ export function startHand(config, buttonSeat, handNumber) {
     buttonSeat,
     sbSeat: sbIndex >= 0 ? players[sbIndex].seat : (blindCfg ? Number(blindCfg.sbSeat) : null),
     bbSeat: bbIndex >= 0 ? players[bbIndex].seat : (blindCfg ? Number(blindCfg.bbSeat) : null),
-    smallBlind: config.smallBlind,
-    bigBlind: config.bigBlind,
+    smallBlind: isPermBomb ? 0 : config.smallBlind,
+    bigBlind: isPermBomb ? 0 : config.bigBlind,
     thirdBlind: config.thirdBlind != null ? Number(config.thirdBlind) : (config.bigBlind * 2),
     fourthBlind: config.fourthBlind != null ? Number(config.fourthBlind) : (config.bigBlind * 4),
-    anteType: config.anteType,
-    effectiveAnteType,
+    anteType: isPermBomb ? 'traditional' : config.anteType,
+    effectiveAnteType: isPermBomb ? 'traditional' : effectiveAnteType,
     sbHalfAnteShortHanded: !!config.sbHalfAnteShortHanded,
     shortHandedThreshold: Number(config.shortHandedThreshold) || 5,
     bbaEarlyHalfAnte: !!config.bbaEarlyHalfAnte,
     bbaEarlyHalfAnteLevel: Number(config.bbaEarlyHalfAnteLevel) || 2,
-    anteAmount: (effectiveAnteType === 'bba' || effectiveAnteType === 'btn_ante')
+    anteAmount: isPermBomb
+      ? bombAmount
+      : (effectiveAnteType === 'bba' || effectiveAnteType === 'btn_ante')
       ? (isBBAEarlyHalf ? Math.round((Number(config.bigBlind) || 0) * 0.5 * 100) / 100 : config.bigBlind)
       : effectiveAnteType === 'sb_half_ante'
       ? Math.round((Number(config.bigBlind) || 0) * 0.5 * 100) / 100
@@ -768,10 +790,10 @@ export function startHand(config, buttonSeat, handNumber) {
     pauseStart: config.pauseStart ?? null,
     pendingLevelIdx: config.pendingLevelIdx ?? (config.blindLevel || 0),
     variant,
-    baseVariant: config.baseVariant || (bombPot ? (config.baseVariant || 'holdem') : variant),
+    baseVariant: isPermBomb ? variant : (config.baseVariant || (bombPot ? (config.baseVariant || 'holdem') : variant)),
     bombPot,
     bombAmount,
-    bombBoards: Number(config.bombBoards) || (config.doubleBoard ? 2 : 1),
+    bombBoards: bombBoardsCount,
     sideGames: config.sideGames || {},
     wonPots: config.wonPots || [],
     lastWinnerSeat: config.lastWinnerSeat ?? null,
@@ -781,14 +803,14 @@ export function startHand(config, buttonSeat, handNumber) {
     killType: config.killType || 'kill',
     killIdx: -1,
     killDeferred: false,
-    doubleBoard: bombPot ? (Number(config.bombBoards) >= 2) : !!config.doubleBoard,
-    baseDoubleBoard: config.baseDoubleBoard !== undefined ? config.baseDoubleBoard : !!config.doubleBoard,
+    doubleBoard: bombPot ? (bombBoardsCount >= 2) : !!config.doubleBoard,
+    baseDoubleBoard: isPermBomb ? (variant === 'double_board_bomb_pot') : (config.baseDoubleBoard !== undefined ? config.baseDoubleBoard : !!config.doubleBoard),
     temporaryGames: config.temporaryGames || [],
     isTemporaryGame: !!config.isTemporaryGame,
     temporaryGameTitle: config.temporaryGameTitle || null,
     baseGameType: config.baseGameType || config.gameType || 'nl',
-    baseBombPot: config.baseBombPot !== undefined ? config.baseBombPot : !!config.bombPot,
-    baseBombBoards: config.baseBombBoards || (config.bombBoards || 1),
+    baseBombPot: isPermBomb ? true : (config.baseBombPot !== undefined ? config.baseBombPot : !!config.bombPot),
+    baseBombBoards: isPermBomb ? permBoards : (config.baseBombBoards || (config.bombBoards || 1)),
     runTimes: 1,
     boardB: [],
     boardC: [],
@@ -822,17 +844,19 @@ export function startHand(config, buttonSeat, handNumber) {
       ...common,
       street: 'preflop',
       currentBet: 0,
-      lastRaiseAmount: config.bigBlind,
+      lastRaiseAmount: isPermBomb ? bombAmount : config.bigBlind,
       communityCards: [],
       currentPlayer: -1,
-      message: 'Break in progress – resume play to post blinds and start the hand',
+      message: isPermBomb
+        ? 'Break in progress – resume play to post antes and start the hand'
+        : 'Break in progress – resume play to post blinds and start the hand',
       raiseLevel: 0,
-      allowStraddle: !!config.allowStraddle,
-      allowMultiStraddle: !!config.allowMultiStraddle,
-      mandatoryStraddle: !!config.mandatoryStraddle,
-      maxStraddles: (config.allowStraddle || config.mandatoryStraddle) ? (config.allowMultiStraddle ? 99 : 1) : 0,
+      allowStraddle: !bombPot && !!config.allowStraddle,
+      allowMultiStraddle: !bombPot && !!config.allowMultiStraddle,
+      mandatoryStraddle: !bombPot && !!config.mandatoryStraddle,
+      maxStraddles: (!bombPot && (config.allowStraddle || config.mandatoryStraddle)) ? (config.allowMultiStraddle ? 99 : 1) : 0,
       straddleLevel: 0,
-      straddleOpen: !!config.allowStraddle || !!config.mandatoryStraddle,
+      straddleOpen: !bombPot && (!!config.allowStraddle || !!config.mandatoryStraddle),
       killIdx: -1,
       killDeferred: false,
       blindsPosted: false,
@@ -844,25 +868,28 @@ export function startHand(config, buttonSeat, handNumber) {
       const a = Math.min(bombAmount, p.stack);
       p.stack -= a;
       p.totalBet += a;
+      p.antePaid = (p.antePaid || 0) + a;
       p.currentBet = 0;
+      p.lastAction = { type: 'ante', amount: a };
     });
     players.forEach((p) => { if (p.stack === 0) p.status = 'allin'; });
-    const bCount = Number(config.bombBoards) || (common.doubleBoard ? 2 : 1);
+    const bCount = bombBoardsCount;
     const mainPotAmt = players.reduce((s, p) => s + p.totalBet, 0);
+    const anchor = getPostflopButtonAnchor({ players, buttonSeat });
     return {
       ...common,
       pots: [{ amount: mainPotAmt, eligible: players.map((p) => p.id) }],
       street: 'flop',
       currentBet: 0,
-      lastRaiseAmount: config.bigBlind,
+      lastRaiseAmount: config.bigBlind || bombAmount || 10,
       raiseLevel: 0,
       communityCards: [{ hidden: true }, { hidden: true }, { hidden: true }],
       boardB: bCount >= 2 ? [{ hidden: true }, { hidden: true }, { hidden: true }] : [],
       boardC: bCount >= 3 ? [{ hidden: true }, { hidden: true }, { hidden: true }] : [],
       doubleBoard: bCount >= 2,
       bombBoards: bCount,
-      currentPlayer: firstActiveAfter(players, buttonIndex),
-      message: `Bomb pot (${bCount} board${bCount > 1 ? 's' : ''}) – flop is out, no preflop action`,
+      currentPlayer: bettingFrozen({ players, currentBet: 0 }) ? -1 : firstActiveAfter(players, anchor),
+      message: `${bCount >= 2 ? 'Double board bomb pot' : 'Bomb pot'} – flop is out, no preflop action`,
       allowStraddle: false,
       allowMultiStraddle: false,
       mandatoryStraddle: false,
@@ -988,7 +1015,7 @@ export function startHand(config, buttonSeat, handNumber) {
   let straddleLevel = 0;
   let straddleOpen = straddleEnabled;
 
-  let currentBet = bb;
+  let currentBet = players.reduce((m, p) => Math.max(m, p.currentBet || 0), 0) || bb;
   let lastRaiseAmount = config.bigBlind;
   let raiseLevel = 1;
   let first = bbIndex >= 0 ? firstActiveAfter(players, bbIndex) : firstActiveAfter(players, buttonIndex);
@@ -1077,6 +1104,11 @@ export function startHand(config, buttonSeat, handNumber) {
   players.forEach((p) => {
     if (p.stack === 0) p.status = 'allin';
   });
+
+  if (bettingFrozen({ players, currentBet })) {
+    first = -1;
+    straddleOpen = false;
+  }
 
   return {
     ...common,
@@ -1170,7 +1202,6 @@ function applyOversizedCap(h) {
 const MANDATORY_LABEL = {
   mandatory_3bet: 'Mandatory 3-Bet',
   mandatory_raise: 'Mandatory Raise',
-  mandatory_4bet: 'Mandatory 4-Bet',
 };
 
 /**
@@ -1187,11 +1218,10 @@ export function mandatoryCallBlocker(hand, playerIndex) {
   if (variant === 'mandatory_3bet' && street !== 'preflop') return null;
   const level = Number(hand.raiseLevel) || (street === 'preflop' ? 1 : 0);
   const need = street === 'preflop'
-    ? (variant === 'mandatory_3bet' ? 3 : variant === 'mandatory_raise' ? 2 : 4)
-    : (variant === 'mandatory_4bet' ? 4 : 1);
+    ? (variant === 'mandatory_3bet' ? 3 : 2)
+    : 1;
   if (level >= need) return null;
   if (variant === 'mandatory_3bet' && hand.threeBetOccurred) return null;
-  if (variant === 'mandatory_4bet' && hand.fourBetOccurred) return null;
 
   const idx = playerIndex != null ? playerIndex : hand.currentPlayer;
   const p = idx != null && idx >= 0 ? hand.players?.[idx] : null;
@@ -1205,7 +1235,7 @@ export function mandatoryCallBlocker(hand, playerIndex) {
   if (betWasAllIn) return null;
 
   const label = MANDATORY_LABEL[variant];
-  const what = variant === 'mandatory_3bet' ? 'a 3-bet' : variant === 'mandatory_raise' ? 'a raise' : 'a 4-bet';
+  const what = variant === 'mandatory_3bet' ? 'a 3-bet' : 'a raise';
   const where = street === 'preflop' ? ' preflop' : ' on this street';
   return { label, reason: `${label}: calling or limping is not allowed until there is ${what}${where}. Raise or fold.` };
 }
@@ -1266,13 +1296,12 @@ export function applyAction(hand, playerId, type, amount) {
     const increased = p.currentBet > h.currentBet;
     const wentAllin = p.stack === 0;
     const prevBet = h.currentBet;
-    const prevLastRaise = h.lastRaiseAmount || h.bigBlind;
+    const prevLastRaise = h.lastRaiseAmount || h.bigBlind || h.bombAmount || 10;
     const isShortRaise = wentAllin && increased && (p.currentBet - prevBet) < prevLastRaise;
     let level = h.raiseLevel;
     if (increased) {
       h.raiseLevel = isRaise ? (h.raiseLevel || 1) + 1 : 1;
       if (h.raiseLevel >= 3) h.threeBetOccurred = true;
-    if (h.raiseLevel >= 4) h.fourBetOccurred = true;
       level = h.raiseLevel;
       h.lastRaiseAmount = p.currentBet - prevBet;
       h.currentBet = p.currentBet;
@@ -1302,7 +1331,7 @@ export function applyAction(hand, playerId, type, amount) {
   } else if (type === 'allin') {
     const pay = p.stack;
     const prevBet = h.currentBet;
-    const prevLastRaise = h.lastRaiseAmount || h.bigBlind;
+    const prevLastRaise = h.lastRaiseAmount || h.bigBlind || h.bombAmount || 10;
     p.stack = 0;
     p.currentBet += pay;
     p.totalBet += pay;
@@ -1425,9 +1454,9 @@ export function applyAction(hand, playerId, type, amount) {
           }
           h.players.forEach((p) => { if (p.status === 'active') { p.currentBet = 0; p.hasActed = false; } });
           h.currentBet = 0;
-          h.lastRaiseAmount = h.bigBlind;
+          h.lastRaiseAmount = h.bigBlind || h.bombAmount || 10;
           h.raiseLevel = 0;
-          h.currentPlayer = bettingFrozen(h) ? -1 : firstActiveAfter(h.players, getButtonIndex(h));
+          h.currentPlayer = bettingFrozen(h) ? -1 : firstActiveAfter(h.players, getPostflopButtonAnchor(h));
           h.message = 'Red river! Extra river card added – another round of betting.';
         } else {
           h.phase = 'ended';
@@ -1458,7 +1487,7 @@ export function applyAction(hand, playerId, type, amount) {
           }
         });
         h.currentBet = 0;
-        h.lastRaiseAmount = h.bigBlind;
+        h.lastRaiseAmount = h.bigBlind || h.bombAmount || 10;
         h.raiseLevel = 0;
         h.straddleOpen = false;
         h.killDeferred = false;
@@ -1467,7 +1496,7 @@ export function applyAction(hand, playerId, type, amount) {
         h.passiveBound = {};
         h.street = next;
         h.message = `Dealt the ${next.toUpperCase()}`;
-        h.currentPlayer = firstActiveAfter(h.players, getButtonIndex(h));
+        h.currentPlayer = firstActiveAfter(h.players, getPostflopButtonAnchor(h));
       } else {
         h.shortAllinOpen = false;
         h.message = `Betting complete – deal the ${next.toUpperCase()}`;
@@ -1568,7 +1597,7 @@ export function dealNextStreet(hand, cards = [], hidden = false) {
     }
   });
   h.currentBet = 0;
-  h.lastRaiseAmount = h.bigBlind;
+  h.lastRaiseAmount = h.bigBlind || h.bombAmount || 10;
   h.raiseLevel = 0;
   h.straddleOpen = false;
   h.killDeferred = false;
@@ -1577,7 +1606,7 @@ export function dealNextStreet(hand, cards = [], hidden = false) {
   h.passiveBound = {};
   h.street = next;
   h.message = null;
-  h.currentPlayer = firstActiveAfter(h.players, getButtonIndex(h));
+  h.currentPlayer = firstActiveAfter(h.players, getPostflopButtonAnchor(h));
   if (bettingFrozen(h)) {
     h.currentPlayer = -1;
     const isLastStreet = h.street === 'ocean' || (h.street === 'river' && h.variant !== 'ocean');
@@ -1636,6 +1665,43 @@ export function postBlinds(hand) {
   if (!hand || hand.blindsPosted) return hand;
   const h = clone(hand);
   const n = h.players.length;
+  if (h.bombPot || isBombPotVariant(h.variant)) {
+    const bombAmt = Number(h.bombAmount) || Number(h.anteAmount) || Number(h.bigBlind) || 10;
+    const bCount = h.variant === 'double_board_bomb_pot' ? 2 : (Number(h.bombBoards) || (h.doubleBoard ? 2 : 1));
+    h.players.forEach((p) => {
+      const a = Math.min(bombAmt, p.stack);
+      p.stack -= a;
+      p.totalBet += a;
+      p.antePaid = (p.antePaid || 0) + a;
+      p.currentBet = 0;
+      p.lastAction = { type: 'ante', amount: a };
+      if (p.stack === 0) p.status = 'allin';
+    });
+    const anchor = getPostflopButtonAnchor(h);
+    h.pots = [{ amount: h.players.reduce((s, p) => s + p.totalBet, 0), eligible: h.players.map((p) => p.id) }];
+    h.street = 'flop';
+    h.currentBet = 0;
+    h.lastRaiseAmount = h.bigBlind || bombAmt || 10;
+    h.raiseLevel = 0;
+    h.communityCards = [{ hidden: true }, { hidden: true }, { hidden: true }];
+    h.boardB = bCount >= 2 ? [{ hidden: true }, { hidden: true }, { hidden: true }] : [];
+    h.boardC = bCount >= 3 ? [{ hidden: true }, { hidden: true }, { hidden: true }] : [];
+    h.doubleBoard = bCount >= 2;
+    h.bombBoards = bCount;
+    h.bombPot = true;
+    h.bombAmount = bombAmt;
+    h.currentPlayer = bettingFrozen({ players: h.players, currentBet: 0 }) ? -1 : firstActiveAfter(h.players, anchor);
+    h.allowStraddle = false;
+    h.allowMultiStraddle = false;
+    h.mandatoryStraddle = false;
+    h.mandatoryDoubleStraddle = false;
+    h.maxStraddles = 0;
+    h.straddleLevel = 0;
+    h.straddleOpen = false;
+    h.blindsPosted = true;
+    h.message = `${bCount >= 2 ? 'Double board bomb pot' : 'Bomb pot'} – flop is out, no preflop action`;
+    return h;
+  }
   const buttonIndex = h.players.findIndex((p) => p.seat === h.buttonSeat);
   if (buttonIndex === -1) return h;
   const isThreeBlinds = h.anteType === 'three_blinds' && n >= 3;
@@ -1742,10 +1808,15 @@ export function postBlinds(hand) {
     h.raiseLevel = 1;
     h.currentPlayer = firstActiveAfter(h.players, tbIndex);
   } else {
-    h.currentBet = bb;
+    h.currentBet = h.players.reduce((m, p) => Math.max(m, p.currentBet || 0), 0) || bb;
     h.lastRaiseAmount = h.bigBlind;
     h.raiseLevel = 1;
     h.currentPlayer = firstActiveAfter(h.players, bbIndex);
+  }
+
+  if (bettingFrozen({ players: h.players, currentBet: h.currentBet })) {
+    h.currentPlayer = -1;
+    h.straddleOpen = false;
   }
 
   h.blindsPosted = true;
@@ -1763,6 +1834,43 @@ export function endHand(hand) {
 export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnte) {
   const h = clone(hand);
   if (h.actionHistory && h.actionHistory.length > 0) return h;
+  if (isBombPotVariant(h.variant)) {
+    if (h.street !== 'preflop' && h.street !== 'flop') return h;
+    const anteVal = Number(newAnte) || Number(newBigBlind) || Number(h.anteAmount) || Number(h.bombAmount) || 10;
+    h.players.forEach((p) => {
+      p.stack = p.initialStack;
+      p.currentBet = 0;
+      p.totalBet = 0;
+      p.antePaid = 0;
+      p.lastAction = null;
+      p.hasActed = false;
+      p.status = 'active';
+      p._wasCapped = false;
+    });
+    if (h.blindsPosted !== false) {
+      h.players.forEach((p) => {
+        const a = Math.min(anteVal, p.stack);
+        p.stack -= a;
+        p.totalBet += a;
+        p.antePaid = a;
+        p.lastAction = { type: 'ante', amount: a };
+        if (p.stack === 0) p.status = 'allin';
+      });
+      h.pots = [{ amount: h.players.reduce((s, p) => s + p.totalBet, 0), eligible: h.players.map((p) => p.id) }];
+    }
+    h.smallBlind = 0;
+    h.bigBlind = 0;
+    h.anteAmount = anteVal;
+    h.bombAmount = anteVal;
+    h.currentBet = 0;
+    h.lastRaiseAmount = anteVal;
+    h.raiseLevel = 0;
+    const anchor = getPostflopButtonAnchor(h);
+    h.currentPlayer = (h.blindsPosted === false || bettingFrozen({ players: h.players, currentBet: 0 }))
+      ? -1
+      : firstActiveAfter(h.players, anchor);
+    return h;
+  }
   if (h.street !== 'preflop') return h;
   if (h.bombPot) return h;
   const sb = newSmallBlind;
@@ -1888,10 +1996,14 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
     h.currentPlayer = firstActiveAfter(h.players, tbIndex);
   } else {
     const bbActual = h.players[bbIndex].currentBet || bb;
-    h.currentBet = bbActual;
+    h.currentBet = h.players.reduce((m, p) => Math.max(m, p.currentBet || 0), 0) || bbActual;
     h.lastRaiseAmount = bb;
     h.raiseLevel = 1;
     h.currentPlayer = firstActiveAfter(h.players, bbIndex);
+  }
+  if (bettingFrozen({ players: h.players, currentBet: h.currentBet })) {
+    h.currentPlayer = -1;
+    h.straddleOpen = false;
   }
   return h;
 }
@@ -1936,56 +2048,51 @@ function getDeadAnte(p, idx, opts = {}) {
 }
 
 export function computePots(players, opts = {}) {
-  // Side-pot layers follow each player's total commitment, because a dead
-  // ante is still real money in the pot. Deriving layers from live (non-ante)
-  // chips used to leave a phantom top layer whenever the ante payer was all-in
-  // for the same total as everyone else (e.g. heads-up), and that layer was
-  // then awarded to the other player.
+  // Dead antes (BBA, BTN ante, traditional antes) are dead money in the pot
+  // and can be won by any non-folded contender regardless of whether they cover
+  // the ante. Side-pot layers are derived solely from live (non-ante) bets.
   const contribs = players.map((p, idx) => {
     const contrib = Math.max(0, (p.initialStack ?? p.stack ?? 0) - (p.stack ?? 0));
     const deadAnte = Math.min(contrib, getDeadAnte(p, idx, opts));
-    return { id: p.id, name: p.name, contrib, deadAnte, status: p.status };
+    const liveContrib = Math.max(0, contrib - deadAnte);
+    return { id: p.id, name: p.name, contrib, deadAnte, liveContrib, status: p.status };
   });
-  const totalPot = contribs.reduce((s, c) => s + c.contrib, 0);
+  const totalPot = Math.round(contribs.reduce((s, c) => s + c.contrib, 0) * 100) / 100;
+  const totalDeadAnte = Math.round(contribs.reduce((s, c) => s + c.deadAnte, 0) * 100) / 100;
   const hasAllIn = contribs.some((c) => c.status === 'allin' && c.contrib > 0);
-  if (!hasAllIn) {
-    const eligible = contribs.filter((c) => c.contrib > 0 && c.status !== 'folded').map((c) => c.id);
-    return [{ amount: totalPot, eligible }];
+  const allNonFoldedWithContrib = contribs.filter((c) => c.contrib > 0 && c.status !== 'folded').map((c) => c.id);
+  const liveLevels = [...new Set(contribs.filter((c) => c.liveContrib > 0).map((c) => c.liveContrib))].sort((a, b) => a - b);
+
+  if (!hasAllIn || liveLevels.length === 0) {
+    return [{ amount: totalPot, eligible: allNonFoldedWithContrib }];
   }
-  const levels = [...new Set(contribs.filter((c) => c.contrib > 0).map((c) => c.contrib))].sort((a, b) => a - b);
+
   const pots = [];
   let prev = 0;
-  for (const level of levels) {
+  for (const level of liveLevels) {
     const amount = level - prev;
-    const contributors = contribs.filter((c) => c.contrib >= level);
-    const potAmount = amount * contributors.length;
+    const contributors = contribs.filter((c) => c.liveContrib >= level);
+    const potAmount = Math.round(amount * contributors.length * 100) / 100;
     const eligible = contribs
-      .filter((c) => c.contrib >= level && c.status !== 'folded')
+      .filter((c) => c.liveContrib >= level && c.status !== 'folded')
       .map((c) => c.id);
     pots.push({ amount: potAmount, eligible });
     prev = level;
   }
-  // The last layer of the lone deepest stack can never be matched. When that
-  // excess is only his dead ante, the ante belongs to the main pot for
-  // everyone still in the hand rather than coming back to him.
-  if (pots.length > 1) {
-    const last = pots[pots.length - 1];
-    if (last.eligible.length === 1) {
-      const top = contribs.find((c) => c.id === last.eligible[0]);
-      const nextLevel = levels[levels.length - 2];
-      if (top && top.deadAnte > 0 && top.contrib - nextLevel <= top.deadAnte + 1e-9) {
-        const below = pots[pots.length - 2];
-        below.amount += last.amount;
-        if (!below.eligible.includes(top.id)) below.eligible = [...below.eligible, top.id];
-        pots.pop();
-      }
+
+  if (totalDeadAnte > 0) {
+    if (pots.length > 0 && JSON.stringify(pots[0].eligible) === JSON.stringify(allNonFoldedWithContrib)) {
+      pots[0].amount = Math.round((pots[0].amount + totalDeadAnte) * 100) / 100;
+    } else {
+      pots.unshift({ amount: totalDeadAnte, eligible: allNonFoldedWithContrib });
     }
   }
+
   const merged = [];
   for (const pot of pots) {
     const last = merged[merged.length - 1];
     if (last && JSON.stringify(last.eligible) === JSON.stringify(pot.eligible)) {
-      last.amount += pot.amount;
+      last.amount = Math.round((last.amount + pot.amount) * 100) / 100;
     } else {
       merged.push({ ...pot });
     }
@@ -1993,35 +2100,46 @@ export function computePots(players, opts = {}) {
   return merged;
 }
 
-// Returns the part of a bet no other player could match (an all-in shove
-// covered by a shorter stack) to the player who made it. Awards have not run
-// yet, so contributions are still readable from initialStack - stack.
+// Returns the part of a live bet no other player could match (an all-in shove
+// covered by a shorter stack, or an active player's blind/bet against a short
+// all-in) to the player who made it. Dead antes stay in the pot for everyone.
 export function refundUncontestedPots(hand) {
   const h = clone(hand);
   if (h._refundsApplied) return h;
-  // Match on total commitments, ante included: a dead ante is real money
-  // already in the pot, so a shover's chips are matched by the ante payer's
-  // ante too. Excluding it used to hand the big blind's ante back to the
-  // shover as an "uncalled" excess (e.g. heads-up 5,000 vs 5,000 with a
-  // 50 BBA left the shover alive with 50 behind).
-  const entries = h.players.map((p) => {
+  const opts = bbaPotOpts(h);
+  const entries = h.players.map((p, idx) => {
     const contrib = Math.max(0, (p.initialStack ?? p.stack ?? 0) - (p.stack ?? 0));
-    return { p, live: contrib };
+    const deadAnte = Math.min(contrib, getDeadAnte(p, idx, opts));
+    const live = Math.max(0, contrib - deadAnte);
+    return { p, live };
   });
   entries.sort((a, b) => b.live - a.live);
   const top = entries[0];
   const second = entries[1];
-  const uncalled = top ? top.live - (second ? second.live : 0) : 0;
-  // Only an all-in player's uncalled chips come back. A folded player's
-  // unmatched chips stay in the pot as dead money, and a normal fold-out win
-  // is not an all-in at all, so its pot must not be reduced.
-  if (!top || uncalled <= 0 || top.p.status === 'folded' || top.p.status !== 'allin') {
+  const uncalled = top ? Math.max(0, top.live - (second ? second.live : 0)) : 0;
+  const nonFolded = h.players.filter((p) => p.status !== 'folded');
+  const isAllInPot = nonFolded.length >= 2 && nonFolded.some((p) => p.status === 'allin');
+  // Only refund when the top bettor is all-in (e.g. shoved over a shorter stack
+  // who called or folded) OR in a multi-way/heads-up all-in showdown where a
+  // covering player put in more live chips (including a big blind vs short SB).
+  if (!top || uncalled <= 0 || top.p.status === 'folded' || (top.p.status !== 'allin' && !isAllInPot)) {
     h._refundsApplied = true;
     return h;
   }
   const excess = Math.round(uncalled * 100) / 100;
+  const hadStreetBet = (top.p.currentBet || 0) > 0;
   top.p.stack = Math.round((top.p.stack + excess) * 100) / 100;
   top.p.totalBet = Math.max(0, Math.round(((top.p.totalBet || 0) - excess) * 100) / 100);
+  if (hadStreetBet) {
+    top.p.currentBet = Math.max(0, Math.round(((top.p.currentBet || 0) - excess) * 100) / 100);
+    if (top.p.lastAction && typeof top.p.lastAction.amount === 'number') {
+      top.p.lastAction = {
+        ...top.p.lastAction,
+        amount: Math.max(0, Math.round((top.p.lastAction.amount - excess) * 100) / 100),
+      };
+    }
+    h.currentBet = Math.max(0, ...h.players.filter((pl) => pl.status !== 'folded').map((pl) => pl.currentBet || 0));
+  }
   top.p.refunded = Math.round(((top.p.refunded || 0) + excess) * 100) / 100;
   h.refunds = [{ playerId: top.p.id, amount: excess }];
   h._refundsApplied = true;
@@ -2040,17 +2158,27 @@ function chopOrder(winners, players, buttonSeat) {
   return winners.slice().sort((a, b) => distFromButton(a) - distFromButton(b));
 }
 
+function effectiveSplitUnit(amount, unit) {
+  const u = Number(unit) || 1;
+  if (u > 1 && Math.abs(amount - Math.round(amount / u) * u) < 1e-6) {
+    return u;
+  }
+  const cents = Math.round(amount * 100);
+  return cents % 100 === 0 ? 1 : 0.01;
+}
+
 function chopSplit(amount, winners, players, buttonSeat, unit) {
   if (winners.length <= 1) {
     return [{ playerId: winners[0], amount }];
   }
-  const totalUnits = Math.round(amount / unit);
+  const u = effectiveSplitUnit(amount, unit);
+  const totalUnits = Math.round(amount / u);
   const baseUnits = Math.floor(totalUnits / winners.length);
   const extraUnits = totalUnits - baseUnits * winners.length;
   const sorted = chopOrder(winners, players, buttonSeat);
   return sorted.map((wid, i) => ({
     playerId: wid,
-    amount: (baseUnits + (i < extraUnits ? 1 : 0)) * unit,
+    amount: Math.round((baseUnits + (i < extraUnits ? 1 : 0)) * u * 100) / 100,
   }));
 }
 
@@ -2121,14 +2249,15 @@ export function awardPots(hand, winnersMap, options = {}) {
     const lowArr = options.winnersLow ? arrOf(options.winnersLow[i]) : null;
 
     if (cArr && cArr.length && bArr && bArr.length) {
-      const totalUnits = Math.round(pot.amount / unit);
+      const effUnit = effectiveSplitUnit(pot.amount, unit);
+      const totalUnits = Math.round(pot.amount / effUnit);
       const thirdUnits = Math.floor(totalUnits / 3);
-      const aAmount = thirdUnits * unit;
-      const bAmount = thirdUnits * unit;
-      const cAmount = (totalUnits - thirdUnits * 2) * unit;
-      const aShares = chopSplit(aAmount, aArr, h.players, h.buttonSeat, unit);
-      const bShares = chopSplit(bAmount, bArr, h.players, h.buttonSeat, unit);
-      const cShares = chopSplit(cAmount, cArr, h.players, h.buttonSeat, unit);
+      const aAmount = Math.round(thirdUnits * effUnit * 100) / 100;
+      const bAmount = Math.round(thirdUnits * effUnit * 100) / 100;
+      const cAmount = Math.round((pot.amount - aAmount - bAmount) * 100) / 100;
+      const aShares = chopSplit(aAmount, aArr, h.players, h.buttonSeat, effUnit);
+      const bShares = chopSplit(bAmount, bArr, h.players, h.buttonSeat, effUnit);
+      const cShares = chopSplit(cAmount, cArr, h.players, h.buttonSeat, effUnit);
       aShares.forEach((s) => {
         const w = h.players.find((p) => p.id === s.playerId);
         if (w) w.stack += s.amount;
@@ -2148,11 +2277,13 @@ export function awardPots(hand, winnersMap, options = {}) {
       && !(lowArr.length === aArr.length && aArr.every((id) => lowArr.includes(id)))) {
       // Hi/Lo (PLO8): half the pot to the best high hand, half to the best low,
       // with the odd chip going to the high half.
-      const totalUnits = Math.round(pot.amount / unit);
+      const effUnit = effectiveSplitUnit(pot.amount, unit);
+      const totalUnits = Math.round(pot.amount / effUnit);
       const lowUnits = Math.floor(totalUnits / 2);
-      const highUnits = totalUnits - lowUnits;
-      const highShares = chopSplit(highUnits * unit, aArr, h.players, h.buttonSeat, unit);
-      const lowShares = chopSplit(lowUnits * unit, lowArr, h.players, h.buttonSeat, unit);
+      const lowAmount = Math.round(lowUnits * effUnit * 100) / 100;
+      const highAmount = Math.round((pot.amount - lowAmount) * 100) / 100;
+      const highShares = chopSplit(highAmount, aArr, h.players, h.buttonSeat, effUnit);
+      const lowShares = chopSplit(lowAmount, lowArr, h.players, h.buttonSeat, effUnit);
       highShares.forEach((s) => {
         const w = h.players.find((p) => p.id === s.playerId);
         if (w) w.stack += s.amount;
@@ -2164,12 +2295,13 @@ export function awardPots(hand, winnersMap, options = {}) {
         h.winners.push({ potIndex: i, playerId: s.playerId, amount: s.amount, part: 'low' });
       });
     } else if (bArr && bArr.length) {
-      const totalUnits = Math.round(pot.amount / unit);
+      const effUnit = effectiveSplitUnit(pot.amount, unit);
+      const totalUnits = Math.round(pot.amount / effUnit);
       const halfUnits = Math.floor(totalUnits / 2);
-      const aAmount = halfUnits * unit;
-      const bAmount = (totalUnits - halfUnits) * unit;
-      const aShares = chopSplit(aAmount, aArr, h.players, h.buttonSeat, unit);
-      const bShares = chopSplit(bAmount, bArr, h.players, h.buttonSeat, unit);
+      const aAmount = Math.round(halfUnits * effUnit * 100) / 100;
+      const bAmount = Math.round((pot.amount - aAmount) * 100) / 100;
+      const aShares = chopSplit(aAmount, aArr, h.players, h.buttonSeat, effUnit);
+      const bShares = chopSplit(bAmount, bArr, h.players, h.buttonSeat, effUnit);
       aShares.forEach((s) => {
         const w = h.players.find((p) => p.id === s.playerId);
         if (w) w.stack += s.amount;
@@ -2419,20 +2551,30 @@ export function nextHand(hand) {
     pendingLevelIdx: hand.pendingLevelIdx,
     variant: hand.nextHandBombPot
       ? (hand.nextHandBombPot.variant || 'plo6')
+      : isBombPotVariant(hand.variant)
+      ? hand.variant
       : hand.bombPot
       ? (hand.baseVariant || 'holdem')
       : hand.variant,
-    baseVariant: hand.baseVariant || hand.variant,
-    baseDoubleBoard: hand.baseDoubleBoard !== undefined ? hand.baseDoubleBoard : (hand.doubleBoard ?? false),
-    bombPot: !!hand.nextHandBombPot,
+    baseVariant: isBombPotVariant(hand.variant) ? hand.variant : (hand.baseVariant || hand.variant),
+    baseDoubleBoard: isBombPotVariant(hand.variant)
+      ? (hand.variant === 'double_board_bomb_pot')
+      : (hand.baseDoubleBoard !== undefined ? hand.baseDoubleBoard : (hand.doubleBoard ?? false)),
+    bombPot: isBombPotVariant(hand.variant) || !!hand.nextHandBombPot,
     bombAmount: hand.nextHandBombPot
       ? (hand.nextHandBombPot.anteAmount || hand.nextHandBombPot.bombAmount || hand.bombAmount || (hand.bigBlind * 5))
+      : isBombPotVariant(hand.variant)
+      ? (Number(hand.anteAmount) || Number(hand.bombAmount) || 10)
       : hand.bombAmount,
     bombBoards: hand.nextHandBombPot
       ? (hand.nextHandBombPot.boardCount || hand.nextHandBombPot.bombBoards || 2)
+      : isBombPotVariant(hand.variant)
+      ? (hand.variant === 'double_board_bomb_pot' ? 2 : 1)
       : (hand.baseDoubleBoard ? 2 : 1),
     doubleBoard: hand.nextHandBombPot
       ? ((hand.nextHandBombPot.boardCount || hand.nextHandBombPot.bombBoards || 2) >= 2)
+      : isBombPotVariant(hand.variant)
+      ? (hand.variant === 'double_board_bomb_pot')
       : (hand.baseDoubleBoard ?? false),
     runTimes: 1,
     boardB: [],
@@ -2529,6 +2671,8 @@ export function formatSessionName(hand) {
   const num = hand.handNumber || 1;
   const isBomb = !!hand.bombPot;
   const v = (hand.variant || 'nlh').toLowerCase();
+  if (v === 'bomb_pot') return `Bomb Pot - Hand #${num}`;
+  if (v === 'double_board_bomb_pot') return `Double Board Bomb Pot - Hand #${num}`;
 
   let label = "Hold'em";
   if (v === 'plo6') label = 'PLO6';
@@ -3049,6 +3193,14 @@ export function calculateEffectiveM(player, hand) {
   const sb = Number(hand.smallBlind) || 0;
   const bb = Number(hand.bigBlind) || 0;
   const playersRemaining = (hand.players || []).filter((p) => (p.stack || 0) > 0).length || (hand.players || []).length || 1;
+
+  if (isBombPotVariant(hand.variant) || (sb === 0 && bb === 0 && hand.bombPot)) {
+    const anteVal = Number(hand.bombAmount || hand.anteAmount) || 0;
+    const orbitCost = anteVal * playersRemaining;
+    if (orbitCost <= 0) return null;
+    const basicM = stack / orbitCost;
+    return basicM * (playersRemaining / 10);
+  }
 
   let antes = 0;
   if (hand.anteType === 'traditional' && Number(hand.anteAmount) > 0) {

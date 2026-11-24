@@ -2,14 +2,14 @@ import React from 'react';
 import { Plus, X, ChevronUp, ChevronDown, GripVertical, Coffee, Coins } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { suggestAnte, formatKM, parseAmount } from '@/lib/poker';
-import { suggestNextBlinds } from '@/lib/tournamentStructures';
+import { suggestNextBlinds, suggestNextAnte } from '@/lib/tournamentStructures';
 
-export default function BlindScheduleEditor({ schedule, onChange, anteType, chipDenominations, allowBreaks = true }) {
-  const isBBA = anteType === 'bba';
-  const isBtnAnte = anteType === 'btn_ante';
-  const isSBHalfAnte = anteType === 'sb_half_ante';
-  const isNone = anteType === 'none' || anteType === 'three_blinds';
-  const isTraditional = anteType === 'traditional';
+export default function BlindScheduleEditor({ schedule, onChange, anteType, chipDenominations, allowBreaks = true, isBombPot = false }) {
+  const isBBA = !isBombPot && anteType === 'bba';
+  const isBtnAnte = !isBombPot && anteType === 'btn_ante';
+  const isSBHalfAnte = !isBombPot && anteType === 'sb_half_ante';
+  const isNone = !isBombPot && (anteType === 'none' || anteType === 'three_blinds');
+  const isTraditional = isBombPot || anteType === 'traditional';
 
   const ensureType = (item) => {
     if (item.type === 'color_up') {
@@ -32,6 +32,17 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
   };
 
   const addLevel = () => {
+    if (isBombPot) {
+      const nextAnte = suggestNextAnte(schedule, chipDenominations);
+      onChange([...schedule, {
+        type: 'level',
+        smallBlind: 0,
+        bigBlind: 0,
+        ante: formatKM(nextAnte),
+        minutes: '',
+      }]);
+      return;
+    }
     const suggestion = suggestNextBlinds(schedule, chipDenominations);
     onChange([...schedule, {
       type: 'level',
@@ -77,8 +88,18 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
   return (
     <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3">
       <div className="flex items-center justify-between mb-2">
-        <div className="text-xs text-slate-400">Blind schedule – drag or use arrows to reorder</div>
+        <div className="text-xs text-slate-400">
+          {isBombPot ? 'Ante schedule – drag or use arrows to reorder' : 'Blind schedule – drag or use arrows to reorder'}
+        </div>
       </div>
+      {isBombPot && (
+        <div className="flex items-center gap-1.5 px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          <span className="w-[14px] shrink-0" />
+          <span className="w-6 shrink-0">Lvl</span>
+          <span className="flex-1">Ante</span>
+          <span className="w-20 text-right pr-7">Duration</span>
+        </div>
+      )}
       <DragDropContext onDragEnd={onDragEnd}>
         <Droppable droppableId="schedule">
           {(provided) => (
@@ -231,33 +252,39 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
                           <GripVertical size={14} />
                         </span>
                         <span className="text-[11px] text-slate-500 w-6 shrink-0">{levelNum}</span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={item.smallBlind}
-                          onChange={(e) => updateRow(i, 'smallBlind', e.target.value)}
-                          onBlur={(e) => {
-                            const p = parseAmount(e.target.value);
-                            if (p != null) updateRow(i, 'smallBlind', formatKM(p));
-                          }}
-                          className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm"
-                        />
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={item.bigBlind}
-                          onChange={(e) => updateRow(i, 'bigBlind', e.target.value)}
-                          onBlur={(e) => {
-                            const p = parseAmount(e.target.value);
-                            if (p != null) updateRow(i, 'bigBlind', formatKM(p));
-                          }}
-                          className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm"
-                        />
+                        {!isBombPot && (
+                          <>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={item.smallBlind}
+                              onChange={(e) => updateRow(i, 'smallBlind', e.target.value)}
+                              onBlur={(e) => {
+                                const p = parseAmount(e.target.value);
+                                if (p != null) updateRow(i, 'smallBlind', formatKM(p));
+                              }}
+                              className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm"
+                            />
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={item.bigBlind}
+                              onChange={(e) => updateRow(i, 'bigBlind', e.target.value)}
+                              onBlur={(e) => {
+                                const p = parseAmount(e.target.value);
+                                if (p != null) updateRow(i, 'bigBlind', formatKM(p));
+                              }}
+                              className="flex-1 min-w-0 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm"
+                            />
+                          </>
+                        )}
                         <input
                           type="text"
                           inputMode="decimal"
                           value={
-                            (isBBA || isBtnAnte)
+                            isBombPot
+                              ? (item.ante ?? '')
+                              : (isBBA || isBtnAnte)
                               ? item.bigBlind
                               : isSBHalfAnte
                               ? formatKM(Math.max(1, Math.round((parseAmount(item.bigBlind) ?? Number(item.bigBlind)) * 0.5)))
@@ -265,7 +292,8 @@ export default function BlindScheduleEditor({ schedule, onChange, anteType, chip
                               ? (item.ante != null && item.ante !== '' ? item.ante : suggestAnte(parseAmount(item.bigBlind) ?? Number(item.bigBlind)))
                               : (item.ante || 0)
                           }
-                          disabled={isBBA || isBtnAnte || isSBHalfAnte || isNone}
+                          disabled={!isBombPot && (isBBA || isBtnAnte || isSBHalfAnte || isNone)}
+                          placeholder={isBombPot ? 'Ante' : undefined}
                           onChange={(e) => updateRow(i, 'ante', e.target.value)}
                           onBlur={(e) => {
                             const p = parseAmount(e.target.value);
