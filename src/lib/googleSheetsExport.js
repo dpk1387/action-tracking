@@ -54,6 +54,18 @@ const SUIT_UNICODE = {
   '♣': '♣',
 };
 
+const STYLE_NAME_MAP = {
+  tag: 'TAG',
+  lag: 'LAG',
+  calling_station: 'Calling Station',
+  rock: 'Rock',
+  nit: 'Nit',
+  shark: 'Shark',
+  maniac: 'Maniac',
+  sss: 'Short Stack Specialist',
+  random: 'Random',
+};
+
 export function formatSingleCard(c) {
   if (!c) return '';
   if (typeof c === 'string') {
@@ -76,6 +88,326 @@ export function formatCards(cards) {
     .map(formatSingleCard)
     .filter(Boolean)
     .join(' ');
+}
+
+export function shouldResolveEffectiveActions(hand, options = {}) {
+  const explicitGameType = options.gameType || hand?.gameType;
+  const isBotsLive = explicitGameType === 'live' || options.live === true || hand?.isLive === true;
+  if (isBotsLive) return false;
+  const amountsHidden = options.hideAmounts === true || hand?.hideAmounts === true;
+  if (amountsHidden) return false;
+  return true;
+}
+
+export function resolveEffectiveOnlineActions(hand, rawHistory, seatedPlayers) {
+  if (!Array.isArray(rawHistory) || rawHistory.length === 0) return rawHistory;
+
+  const streetOrder = ['preflop', 'flop', 'turn', 'river', 'ocean'];
+  const blindTypes = new Set(['sb', 'bb', 'bba', '3b', '4b', 'straddle', 'ante', 'btn_ante', 'kill']);
+
+  const playerKey = (act) => {
+    if (act.playerId != null) {
+      const idx = seatedPlayers.findIndex((pl) => pl.id === act.playerId);
+      if (idx >= 0) return idx;
+    }
+    if (act.player) {
+      const idx = seatedPlayers.findIndex((pl) => pl.name === act.player);
+      if (idx >= 0) return idx;
+    }
+    if (act.seat != null) {
+      const idx = seatedPlayers.findIndex((pl) => pl.seat === Number(act.seat));
+      if (idx >= 0) return idx;
+    }
+    return -1;
+  };
+
+  const initLiveStack = {};
+  const actualLiveTotal = {};
+  const anteType = String(hand.effectiveAnteType || hand.anteType || '').toLowerCase();
+  const isBombPot = Boolean(hand.bombPot || hand.variant === 'bomb_pot' || hand.variant === 'double_board_bomb_pot');
+  const anteAmt = isBombPot ? (Number(hand.bombAmount ?? hand.anteAmount) || 0) : (Number(hand.anteAmount) || 0);
+  const bbAmt = Number(hand.bigBlind) || 0;
+  const sbAmt = Number(hand.smallBlind) || 0;
+
+  seatedPlayers.forEach((pl, idx) => {
+    const startSt = pl.initialStack != null ? Number(pl.initialStack) : (pl.stack != null ? Number(pl.stack) : 0);
+    let deadAnte = 0;
+    if (pl.antePaid != null) {
+      deadAnte = Math.min(startSt, Math.max(0, Number(pl.antePaid) || 0));
+    } else if (anteAmt > 0) {
+      if (isBombPot || anteType === 'traditional' || hand.variant === 'short_deck') {
+        deadAnte = Math.min(anteAmt, startSt);
+      } else if ((anteType === 'bba' || anteType === 'sb_half_ante') && hand.bbSeat != null && Number(pl.seat) === Number(hand.bbSeat)) {
+        const bbPost = Math.min(bbAmt, startSt);
+        deadAnte = Math.min(anteAmt, Math.max(0, startSt - bbPost));
+      } else if (anteType === 'btn_ante' && hand.buttonSeat != null && Number(pl.seat) === Number(hand.buttonSeat)) {
+        deadAnte = Math.min(anteAmt, startSt);
+      }
+    }
+    initLiveStack[idx] = Math.max(0, startSt - deadAnte);
+    actualLiveTotal[idx] = pl.totalBet != null ? Math.max(0, Number(pl.totalBet) - deadAnte) : null;
+  });
+
+  const byStreet = {};
+  streetOrder.forEach((st) => { byStreet[st] = []; });
+  rawHistory.forEach((act, seqIdx) => {
+    const st = (act.street || 'preflop').toLowerCase();
+    if (!byStreet[st]) byStreet[st] = [];
+    byStreet[st].push({ act, seqIdx });
+  });
+
+  const remLiveStack = { ...initLiveStack };
+  const hasFolded = {};
+  seatedPlayers.forEach((_, idx) => { hasFolded[idx] = false; });
+  const streetInfo = {};
+
+  streetOrder.forEach((st) => {
+    const list = byStreet[st] || [];
+    if (list.length === 0 && st !== 'preflop') return;
+
+    const foldedAtStreetStart = { ...hasFolded };
+    const rawContrib = {};
+    seatedPlayers.forEach((_, idx) => { rawContrib[idx] = 0; });
+
+    if (st === 'preflop' && !isBombPot) {
+      const hasBlindActs = list.some(({ act }) => blindTypes.has(String(act.type || act.action || '').toLowerCase()));
+      if (!hasBlindActs) {
+        if (hand.variant === 'short_deck') {
+          if (hand.buttonSeat != null && anteAmt > 0) {
+            const btnIdx = seatedPlayers.findIndex((pl) => Number(pl.seat) === Number(hand.buttonSeat));
+            if (btnIdx >= 0) {
+              rawContrib[btnIdx] = Math.min(anteAmt, remLiveStack[btnIdx]);
+            }
+          }
+        } else {
+          if (hand.sbSeat != null) {
+            const sbIdx = seatedPlayers.findIndex((pl) => Number(pl.seat) === Number(hand.sbSeat));
+            if (sbIdx >= 0) {
+              rawContrib[sbIdx] = Math.min(sbAmt, remLiveStack[sbIdx]);
+            }
+          }
+          if (hand.bbSeat != null) {
+            const bbIdx = seatedPlayers.findIndex((pl) => Number(pl.seat) === Number(hand.bbSeat));
+            if (bbIdx >= 0) {
+              rawContrib[bbIdx] = Math.min(bbAmt, remLiveStack[bbIdx]);
+            }
+          }
+        }
+      }
+    }
+
+    const perActionRaw = [];
+    list.forEach(({ act, seqIdx }) => {
+      const pIdx = playerKey(act);
+      const rawName = String(act.action || act.type || '');
+      const lower = rawName.toLowerCase();
+      if (pIdx < 0) {
+        perActionRaw.push({ act, seqIdx, pIdx, rawBetTo: 0, isBlind: false });
+        return;
+      }
+      if (lower === 'fold') {
+        hasFolded[pIdx] = true;
+        perActionRaw.push({ act, seqIdx, pIdx, rawBetTo: rawContrib[pIdx], isFold: true });
+        return;
+      }
+      if (lower === 'check') {
+        perActionRaw.push({ act, seqIdx, pIdx, rawBetTo: rawContrib[pIdx], isCheck: true });
+        return;
+      }
+      const isBlind = blindTypes.has(lower);
+      let newBetTo = rawContrib[pIdx];
+      if (act.betTo != null) {
+        newBetTo = Number(act.betTo);
+      } else if (lower === 'call') {
+        const pay = Number(act.callAmount != null ? act.callAmount : act.chips) || 0;
+        newBetTo = rawContrib[pIdx] + pay;
+      } else if (/^all[- ]?in$/i.test(rawName)) {
+        newBetTo = remLiveStack[pIdx];
+      } else if (isBlind) {
+        if (['straddle', 'kill', 'sb', 'bb', '3b', '4b', 'btn_ante'].includes(lower)) {
+          newBetTo = Number(act.chips ?? act.amount) || rawContrib[pIdx];
+        }
+      } else {
+        newBetTo = Number(act.chips ?? act.amount) || rawContrib[pIdx];
+      }
+      newBetTo = Math.min(remLiveStack[pIdx], Math.max(rawContrib[pIdx], newBetTo));
+      rawContrib[pIdx] = newBetTo;
+      perActionRaw.push({ act, seqIdx, pIdx, rawBetTo: newBetTo, isBlind });
+    });
+
+    const contendersEnd = seatedPlayers
+      .map((_, idx) => idx)
+      .filter((idx) => !hasFolded[idx] && remLiveStack[idx] > 0);
+
+    streetInfo[st] = {
+      rawContrib,
+      remStart: { ...remLiveStack },
+      foldedAtStreetStart,
+      contendersEnd,
+      perActionRaw,
+    };
+
+    seatedPlayers.forEach((_, idx) => {
+      remLiveStack[idx] = Math.max(0, remLiveStack[idx] - rawContrib[idx]);
+    });
+  });
+
+  const activeStreets = streetOrder.filter((st) => streetInfo[st]);
+  const nonFoldedAtHandEnd = seatedPlayers.filter((_, idx) => !hasFolded[idx]).length;
+
+  if (nonFoldedAtHandEnd >= 2) {
+    const totalRawLive = {};
+    seatedPlayers.forEach((_, idx) => { totalRawLive[idx] = 0; });
+    activeStreets.forEach((st) => {
+      const info = streetInfo[st];
+      seatedPlayers.forEach((_, idx) => {
+        totalRawLive[idx] += info.rawContrib[idx] || 0;
+      });
+    });
+
+    seatedPlayers.forEach((_, idx) => {
+      const actual = actualLiveTotal[idx];
+      const rawTot = totalRawLive[idx];
+      let excessToRemove = actual != null && rawTot > actual ? (rawTot - actual) : 0;
+      if (excessToRemove > 0) {
+        for (let i = activeStreets.length - 1; i >= 0 && excessToRemove > 0; i--) {
+          const info = streetInfo[activeStreets[i]];
+          const c = info.rawContrib[idx] || 0;
+          if (c > 0) {
+            const cut = Math.min(c, excessToRemove);
+            info.rawContrib[idx] = c - cut;
+            excessToRemove -= cut;
+          }
+        }
+      }
+    });
+  }
+
+  activeStreets.forEach((st) => {
+    const info = streetInfo[st];
+    if (info.contendersEnd.length >= 2) {
+      const entries = seatedPlayers
+        .map((_, idx) => ({ idx, val: info.rawContrib[idx] || 0 }))
+        .sort((a, b) => b.val - a.val);
+      if (entries.length >= 2 && entries[0].val > entries[1].val) {
+        info.rawContrib[entries[0].idx] = entries[1].val;
+      }
+    }
+  });
+
+  const rewrittenBySeq = {};
+  activeStreets.forEach((st) => {
+    const info = streetInfo[st];
+    const effFinal = info.rawContrib;
+    const foldedSoFar = { ...info.foldedAtStreetStart };
+    const currBet = {};
+    seatedPlayers.forEach((_, idx) => { currBet[idx] = 0; });
+
+    let effMaxBet = 0;
+    let effRaiseLevel = st === 'preflop' && !isBombPot ? 1 : 0;
+
+    if (st === 'preflop' && !isBombPot) {
+      const hasBlindActs = info.perActionRaw.some((x) => x.isBlind);
+      if (!hasBlindActs) {
+        if (hand.variant === 'short_deck') {
+          if (hand.buttonSeat != null && anteAmt > 0) {
+            const btnIdx = seatedPlayers.findIndex((pl) => Number(pl.seat) === Number(hand.buttonSeat));
+            if (btnIdx >= 0) currBet[btnIdx] = Math.min(anteAmt, effFinal[btnIdx], info.remStart[btnIdx]);
+          }
+          effMaxBet = Math.max(anteAmt, ...Object.values(currBet));
+        } else {
+          if (hand.sbSeat != null) {
+            const sbIdx = seatedPlayers.findIndex((pl) => Number(pl.seat) === Number(hand.sbSeat));
+            if (sbIdx >= 0) currBet[sbIdx] = Math.min(sbAmt, effFinal[sbIdx], info.remStart[sbIdx]);
+          }
+          if (hand.bbSeat != null) {
+            const bbIdx = seatedPlayers.findIndex((pl) => Number(pl.seat) === Number(hand.bbSeat));
+            if (bbIdx >= 0) currBet[bbIdx] = Math.min(bbAmt, effFinal[bbIdx], info.remStart[bbIdx]);
+          }
+          effMaxBet = Math.max(bbAmt, ...Object.values(currBet));
+        }
+      } else {
+        effMaxBet = Math.max(bbAmt, ...Object.values(currBet));
+      }
+    }
+
+    info.perActionRaw.forEach(({ act, seqIdx, pIdx, rawBetTo, isFold, isCheck, isBlind }) => {
+      if (isFold) {
+        if (pIdx >= 0) foldedSoFar[pIdx] = true;
+        rewrittenBySeq[seqIdx] = act;
+        return;
+      }
+      if (pIdx < 0 || isCheck) {
+        rewrittenBySeq[seqIdx] = act;
+        return;
+      }
+      if (isBlind) {
+        currBet[pIdx] = Math.min(rawBetTo, effFinal[pIdx]);
+        effMaxBet = Math.max(effMaxBet, currBet[pIdx]);
+        rewrittenBySeq[seqIdx] = act;
+        return;
+      }
+
+      let maxCap = effFinal[pIdx];
+      if (info.contendersEnd.length <= 1) {
+        const maxOppRem = Math.max(
+          0,
+          ...seatedPlayers.map((_, qIdx) => (qIdx !== pIdx && !foldedSoFar[qIdx] ? info.remStart[qIdx] : 0))
+        );
+        if (maxOppRem > 0) {
+          maxCap = Math.min(maxCap, maxOppRem);
+        }
+      }
+
+      const effBetTo = Math.max(currBet[pIdx], Math.min(rawBetTo, maxCap));
+      const effPay = Math.max(0, effBetTo - currBet[pIdx]);
+      const isEffectiveAllIn = info.remStart[pIdx] > 0 && effBetTo >= info.remStart[pIdx];
+
+      let nextAction = act.action;
+      let nextChips = act.chips;
+      let nextRaiseLevel = act.raiseLevel;
+      let nextAggressive = act.isAggressive;
+
+      if (effMaxBet === 0) {
+        if (effBetTo > 0) {
+          effMaxBet = effBetTo;
+          effRaiseLevel = 1;
+          nextAction = isEffectiveAllIn ? 'All-in' : 'Bet';
+          nextChips = effBetTo;
+          nextRaiseLevel = 1;
+          nextAggressive = true;
+        } else if (isEffectiveAllIn || /^all[- ]?in$/i.test(act.action || '')) {
+          nextAction = 'All-in';
+          nextChips = 0;
+          nextRaiseLevel = 1;
+          nextAggressive = true;
+        }
+      } else if (effBetTo > effMaxBet) {
+        effMaxBet = effBetTo;
+        effRaiseLevel = Math.max(effRaiseLevel + 1, 2);
+        nextAction = effRaiseLevel >= 3 ? `${effRaiseLevel}-bet` : 'Raise';
+        nextChips = effBetTo;
+        nextRaiseLevel = effRaiseLevel;
+        nextAggressive = true;
+      } else {
+        nextAction = 'Call';
+        nextChips = effPay;
+        nextRaiseLevel = effRaiseLevel;
+        nextAggressive = false;
+      }
+
+      currBet[pIdx] = effBetTo;
+      rewrittenBySeq[seqIdx] = {
+        ...act,
+        action: nextAction,
+        chips: nextChips,
+        raiseLevel: nextRaiseLevel,
+        isAggressive: nextAggressive,
+      };
+    });
+  });
+
+  return rawHistory.map((act, idx) => rewrittenBySeq[idx] || act);
 }
 
 export function buildHandRows(hand, options = {}) {
@@ -159,55 +491,6 @@ export function buildHandRows(hand, options = {}) {
     seatHeaderRow.push(label);
   });
 
-  // Chip stack rank among seated players at start of hand (1 = chip leader)
-  const sortedByStack = [...seatedPlayers].sort((a, b) => {
-    const sa = a.initialStack != null ? a.initialStack : (a.stack || 0);
-    const sb = b.initialStack != null ? b.initialStack : (b.stack || 0);
-    return sb - sa;
-  });
-
-  const rankRow = ['Rank'];
-  seatedPlayers.forEach((p) => {
-    if (p.rank != null && p.rank !== '') {
-      rankRow.push(p.rank);
-      return;
-    }
-    const myStack = p.initialStack != null ? p.initialStack : (p.stack || 0);
-    const rankIdx = sortedByStack.findIndex((x) => (x.initialStack != null ? x.initialStack : (x.stack || 0)) === myStack);
-    rankRow.push(rankIdx >= 0 ? rankIdx + 1 : '');
-  });
-
-  const STYLE_NAME_MAP = {
-    tag: 'TAG',
-    lag: 'LAG',
-    calling_station: 'Calling Station',
-    rock: 'Rock',
-    nit: 'Nit',
-    shark: 'Shark',
-    maniac: 'Maniac',
-    sss: 'Short Stack Specialist',
-    random: 'Random',
-  };
-
-  const playstyleRow = ['Playstyle'];
-  seatedPlayers.forEach((p) => {
-    const seatObj = Array.isArray(options.seats)
-      ? options.seats.find((s) => s?.name === p.name || s?.seat === p.seat)
-      : null;
-    const isHero = p.isHero || p.name === 'You' || !!seatObj?.isHero;
-    if (isHero) {
-      playstyleRow.push('Hero');
-      return;
-    }
-    const raw = p.playstyle || p.style || p.styleId || seatObj?.styleId || options.styles?.[p.name] || '';
-    if (raw) {
-      const lower = String(raw).toLowerCase().replace(/-/g, '_');
-      playstyleRow.push(STYLE_NAME_MAP[lower] || raw);
-    } else {
-      playstyleRow.push('—');
-    }
-  });
-
   const stackRow = ['Stack'];
   seatedPlayers.forEach((p) => {
     const st = p.initialStack != null ? p.initialStack : p.stack;
@@ -221,11 +504,15 @@ export function buildHandRows(hand, options = {}) {
     handRow.push(formatCards(sortGoHoleCards(hc)));
   });
 
-  const rawHistory = Array.isArray(hand.actions) && hand.actions.length > 0
+  const rawActions = Array.isArray(hand.actions) && hand.actions.length > 0
     ? hand.actions
     : Array.isArray(hand.actionHistory)
     ? hand.actionHistory
     : [];
+
+  const rawHistory = shouldResolveEffectiveActions(hand, options)
+    ? resolveEffectiveOnlineActions(hand, rawActions, seatedPlayers)
+    : rawActions;
 
   const streetOrder = ['preflop', 'flop', 'turn', 'river', 'ocean'];
   const actionsByStreet = {
@@ -267,8 +554,12 @@ export function buildHandRows(hand, options = {}) {
     return -1;
   };
 
-  const formatActionText = (act) => {
-    const actName = act.action || act.type || '';
+  const formatActionText = (act, fallbackRaiseLevel = 0) => {
+    let actName = act.action || act.type || '';
+    if (/^raise$/i.test(actName)) {
+      const lvl = Number(act.raiseLevel) || fallbackRaiseLevel || 2;
+      if (lvl >= 3) actName = `${lvl}-bet`;
+    }
     const hasChips = act.chips != null || act.amount != null || act.callAmount != null;
     const chipsVal = act.chips != null ? act.chips : (act.callAmount != null ? act.callAmount : act.amount);
     let amtStr = '';
@@ -276,6 +567,19 @@ export function buildHandRows(hand, options = {}) {
       amtStr = isBB ? ` ${fmtVal(chipsVal)}` : ` ${money(chipsVal, cur)}`;
     }
     return `${actName}${amtStr}`.trim();
+  };
+
+  const nextStreetRaiseLevel = (act, currentLevel, isPreflop) => {
+    if (act.raiseLevel != null && Number(act.raiseLevel) > 0) {
+      return Math.max(currentLevel, Number(act.raiseLevel));
+    }
+    const raw = String(act.action || act.type || '');
+    const m = raw.match(/^(\d+)-bet$/i);
+    if (m) return Math.max(currentLevel, Number(m[1]));
+    if (/^bet$/i.test(raw)) return Math.max(currentLevel, 1);
+    if (/^raise$/i.test(raw)) return Math.max(currentLevel + 1, isPreflop ? 2 : 2);
+    if (/^all[- ]?in$/i.test(raw) && act.isAggressive) return currentLevel + 1;
+    return currentLevel;
   };
 
   const actionRows = [];
@@ -308,8 +612,10 @@ export function buildHandRows(hand, options = {}) {
       let currentRow = blinds.length > 0 ? makeEmptyRow('') : makeEmptyRow(streetLabel);
       let lastColumnIndex = -1;
       let hasActionsInRow = false;
+      let streetRaiseLevel = 1;
 
       regular.forEach((act) => {
+        streetRaiseLevel = nextStreetRaiseLevel(act, streetRaiseLevel, true);
         const colIdx = getColForPlayer(act);
         if (colIdx <= 0) return;
 
@@ -319,7 +625,7 @@ export function buildHandRows(hand, options = {}) {
           hasActionsInRow = false;
         }
 
-        currentRow[colIdx] = formatActionText(act);
+        currentRow[colIdx] = formatActionText(act, streetRaiseLevel);
         hasActionsInRow = true;
         lastColumnIndex = colIdx;
       });
@@ -332,8 +638,10 @@ export function buildHandRows(hand, options = {}) {
       let currentRow = makeEmptyRow(streetLabel);
       let lastColumnIndex = -1;
       let hasActionsInRow = false;
+      let streetRaiseLevel = 0;
 
       acts.forEach((act) => {
+        streetRaiseLevel = nextStreetRaiseLevel(act, streetRaiseLevel, false);
         const colIdx = getColForPlayer(act);
         if (colIdx <= 0) return;
 
@@ -343,7 +651,7 @@ export function buildHandRows(hand, options = {}) {
           hasActionsInRow = false;
         }
 
-        currentRow[colIdx] = formatActionText(act);
+        currentRow[colIdx] = formatActionText(act, streetRaiseLevel);
         hasActionsInRow = true;
         lastColumnIndex = colIdx;
       });
@@ -369,17 +677,27 @@ export function buildHandRows(hand, options = {}) {
         wonByIdx[idx] = (wonByIdx[idx] || 0) + (Number(amt) || 0);
       }
     });
-    Object.entries(wonByIdx).forEach(([idxStr, wonAmt]) => {
-      const idx = Number(idxStr);
-      const pl = seatedPlayers[idx];
+    seatedPlayers.forEach((pl, idx) => {
       const col = idx + 1;
+      const wonAmt = wonByIdx[idx] || 0;
       const hasDistinctEnd = pl.endStack != null && pl.initialStack != null && pl.endStack !== pl.initialStack;
       const netProfit = hasDistinctEnd
         ? (pl.endStack - pl.initialStack)
         : (wonAmt - (Number(pl.totalBet) || 0));
-      const profit = Math.max(0, netProfit);
-      winRow[col] = isBB ? `Win ${fmtVal(profit)}` : `Win ${money(profit, cur)}`;
-      winCellCoords.push({ rowOffset: winRowOffset, colIndex: col });
+      const startStack = pl.initialStack != null ? Number(pl.initialStack) : (pl.stack != null ? Number(pl.stack) : 0);
+      const finalStack = pl.endStack != null ? Number(pl.endStack) : (startStack + netProfit);
+      const isEliminated = startStack > 0 && finalStack <= 0;
+
+      if (wonByIdx[idx] != null && netProfit >= 0) {
+        winRow[col] = isBB ? `Win ${fmtVal(netProfit)}` : `Win ${money(netProfit, cur)}`;
+        winCellCoords.push({ rowOffset: winRowOffset, colIndex: col });
+      } else if (isEliminated) {
+        winRow[col] = 'Eliminated';
+        winCellCoords.push({ rowOffset: winRowOffset, colIndex: col });
+      } else if (netProfit < 0) {
+        const loss = Math.abs(netProfit);
+        winRow[col] = isBB ? `-${fmtVal(loss)}` : money(-loss, cur);
+      }
     });
     actionRows.push(winRow);
     streetEndRowIndices.push(actionRows.length - 1);
@@ -389,10 +707,8 @@ export function buildHandRows(hand, options = {}) {
     headerRow,      // index 0
     boardRow,       // index 1
     seatHeaderRow,  // index 2
-    rankRow,        // index 3
-    playstyleRow,   // index 4
-    stackRow,       // index 5
-    handRow,        // index 6
+    stackRow,       // index 3
+    handRow,        // index 4
     ...actionRows,
     [],             // Blank separator row
   ];
@@ -400,12 +716,12 @@ export function buildHandRows(hand, options = {}) {
   const borderBottomOffsets = [
     0, // below headerRow
     1, // below boardRow
-    6, // below handRow
-    ...streetEndRowIndices.map((idx) => 7 + idx),
+    4, // below handRow
+    ...streetEndRowIndices.map((idx) => 5 + idx),
   ];
 
   const winCells = winCellCoords.map((c) => ({
-    rowOffset: 7 + c.rowOffset,
+    rowOffset: 5 + c.rowOffset,
     colIndex: c.colIndex,
   }));
 
@@ -475,6 +791,8 @@ export function exportHandsToCSV(hands, options = {}) {
 
 export const STATS_SHEET_COLUMNS = [
   { key: 'player', label: 'Player' },
+  { key: 'rank', label: 'Rank' },
+  { key: 'playstyle', label: 'Playstyle' },
   { key: 'hands', label: 'Hands' },
   { key: 'vpip', label: 'VPIP%' },
   { key: 'pfr', label: 'PFR%' },
@@ -521,26 +839,116 @@ export function buildStatsRows(hands, options = {}) {
   if (allFoundNames.includes(heroName)) addName(heroName);
   allFoundNames.forEach(addName);
 
-  const fmtNum1 = (n) => (Math.round(Number(n) * 10) / 10).toFixed(1);
+  const resolvePlaystyle = (name) => {
+    if (name === heroName || name === 'You') return 'Hero';
+    const seatObj = Array.isArray(options.seats)
+      ? options.seats.find((s) => s?.name === name)
+      : null;
+    if (seatObj?.isHero) return 'Hero';
+    let raw = seatObj?.playstyle || seatObj?.style || seatObj?.styleId || options.styles?.[name];
+    if (!raw) {
+      for (let i = (hands || []).length - 1; i >= 0; i--) {
+        const pl = (hands[i]?.players || []).find((p) => p.name === name);
+        if (pl) {
+          raw = pl.playstyle || pl.style || pl.styleId;
+          if (raw) break;
+        }
+      }
+    }
+    if (raw) {
+      const lower = String(raw).toLowerCase().replace(/-/g, '_');
+      return STYLE_NAME_MAP[lower] || raw;
+    }
+    return '—';
+  };
 
-  const fmtStatCell = (key, stats) => {
-    if (key === 'hands') return stats.hands;
-    const val = stats[key];
+  const sortedHands = [...(hands || [])].sort((a, b) => (a.handNumber || 0) - (b.handNumber || 0));
+  const lastHand = sortedHands[sortedHands.length - 1];
+
+  const getPlayerFinalStatus = (name) => {
+    const seatObj = Array.isArray(options.seats)
+      ? options.seats.find((s) => s?.name === name)
+      : null;
+    if (seatObj?.rank != null && seatObj.rank !== '') {
+      return { explicitRank: Number(seatObj.rank) };
+    }
+    if (lastHand) {
+      const pl = (lastHand.players || []).find((p) => p.name === name);
+      if (pl?.rank != null && pl.rank !== '') {
+        return { explicitRank: Number(pl.rank) };
+      }
+      if (pl) {
+        const stackVal = pl.endStack != null ? pl.endStack : (pl.stack != null ? pl.stack : (pl.initialStack || 0));
+        return { lastHandNumber: lastHand.handNumber || 1, finalStack: stackVal };
+      }
+    }
+    for (let i = sortedHands.length - 1; i >= 0; i--) {
+      const h = sortedHands[i];
+      const pl = (h.players || []).find((p) => p.name === name);
+      if (pl) {
+        const stackVal = pl.endStack != null ? pl.endStack : (pl.stack != null ? pl.stack : (pl.initialStack || 0));
+        return { lastHandNumber: h.handNumber || (i + 1), finalStack: stackVal };
+      }
+    }
+    return { lastHandNumber: 0, finalStack: 0 };
+  };
+
+  const activePlayers = orderedNames
+    .map((name) => {
+      const stats = computePlayerStats(hands, name);
+      const playstyle = resolvePlaystyle(name);
+      const status = getPlayerFinalStatus(name);
+      return { name, stats, playstyle, status, rank: null };
+    })
+    .filter((entry) => entry.stats && entry.stats.hands > 0);
+
+  const allExplicit = activePlayers.length > 0 && activePlayers.every((p) => p.status.explicitRank != null);
+  if (allExplicit) {
+    activePlayers.forEach((p) => { p.rank = p.status.explicitRank; });
+  } else {
+    const rankedList = [...activePlayers].sort((a, b) => {
+      if (a.status.explicitRank != null && b.status.explicitRank != null) {
+        return a.status.explicitRank - b.status.explicitRank;
+      }
+      const aAlive = (a.status.finalStack || 0) > 0 && a.status.lastHandNumber === (lastHand?.handNumber || 1);
+      const bAlive = (b.status.finalStack || 0) > 0 && b.status.lastHandNumber === (lastHand?.handNumber || 1);
+      if (aAlive && bAlive) {
+        return (b.status.finalStack || 0) - (a.status.finalStack || 0);
+      }
+      if (aAlive && !bAlive) return -1;
+      if (!aAlive && bAlive) return 1;
+      if (a.status.lastHandNumber !== b.status.lastHandNumber) {
+        return b.status.lastHandNumber - a.status.lastHandNumber;
+      }
+      return (b.status.finalStack || 0) - (a.status.finalStack || 0);
+    });
+
+    rankedList.forEach((p, idx) => {
+      p.rank = p.status.explicitRank != null ? p.status.explicitRank : (idx + 1);
+    });
+  }
+
+  const fmtNum1 = (n) => {
+    const r = Math.round(Number(n) * 10) / 10;
+    return Number.isInteger(r) ? String(r) : r.toFixed(1);
+  };
+
+  const fmtStatCell = (key, p) => {
+    if (key === 'rank') return p.rank ?? '—';
+    if (key === 'playstyle') return p.playstyle ?? '—';
+    if (key === 'hands') return p.stats.hands;
+    const val = p.stats[key];
     if (val == null) return '—';
     if (key === 'af') return Number.isFinite(val) ? fmtNum1(val) : '∞';
     return `${fmtNum1(val)}%`;
   };
-
-  const activePlayers = orderedNames
-    .map((name) => ({ name, stats: computePlayerStats(hands, name) }))
-    .filter((entry) => entry.stats && entry.stats.hands > 0);
 
   const headerRow = ['Stat', ...activePlayers.map((p) => p.name)];
   const statRows = STATS_SHEET_COLUMNS
     .filter((c) => c.key !== 'player')
     .map((col) => [
       col.label,
-      ...activePlayers.map((p) => fmtStatCell(col.key, p.stats)),
+      ...activePlayers.map((p) => fmtStatCell(col.key, p)),
     ]);
 
   return [headerRow, ...statRows];
@@ -944,28 +1352,59 @@ export async function exportHandsToGoogleSheet(hands, options = {}) {
       const statDefs = STATS_SHEET_COLUMNS.filter((c) => c.key !== 'player');
       statDefs.forEach((col, idx) => {
         const rowIdx = 1 + idx;
-        const numberFormat = col.key === 'hands'
-          ? { type: 'NUMBER', pattern: '#,##0' }
-          : col.key === 'af'
-          ? { type: 'NUMBER', pattern: '0.0' }
-          : { type: 'PERCENT', pattern: '0.0%' };
-        requests.push({
-          repeatCell: {
-            range: {
-              sheetId: statsSheetId,
-              startRowIndex: rowIdx,
-              endRowIndex: rowIdx + 1,
-              startColumnIndex: 1,
-              endColumnIndex: statsNumCols,
-            },
-            cell: {
-              userEnteredFormat: {
-                numberFormat,
+        if (col.key === 'playstyle') return;
+        if (col.key === 'hands' || col.key === 'rank') {
+          requests.push({
+            repeatCell: {
+              range: {
+                sheetId: statsSheetId,
+                startRowIndex: rowIdx,
+                endRowIndex: rowIdx + 1,
+                startColumnIndex: 1,
+                endColumnIndex: statsNumCols,
               },
+              cell: {
+                userEnteredFormat: {
+                  numberFormat: { type: 'NUMBER', pattern: '#,##0' },
+                },
+              },
+              fields: 'userEnteredFormat.numberFormat',
             },
-            fields: 'userEnteredFormat.numberFormat',
-          },
-        });
+          });
+          return;
+        }
+        const rowValues = statsRows[rowIdx] || [];
+        for (let colIdx = 1; colIdx < statsNumCols; colIdx++) {
+          const rawCell = String(rowValues[colIdx] ?? '');
+          if (!rawCell || rawCell === '—' || rawCell === '∞') continue;
+          let numberFormat;
+          if (col.key === 'af') {
+            numberFormat = rawCell.includes('.')
+              ? { type: 'NUMBER', pattern: '0.0' }
+              : { type: 'NUMBER', pattern: '0' };
+          } else {
+            numberFormat = /\.\d+%$/.test(rawCell) && !/\.0%$/.test(rawCell)
+              ? { type: 'PERCENT', pattern: '0.0%' }
+              : { type: 'PERCENT', pattern: '0%' };
+          }
+          requests.push({
+            repeatCell: {
+              range: {
+                sheetId: statsSheetId,
+                startRowIndex: rowIdx,
+                endRowIndex: rowIdx + 1,
+                startColumnIndex: colIdx,
+                endColumnIndex: colIdx + 1,
+              },
+              cell: {
+                userEnteredFormat: {
+                  numberFormat,
+                },
+              },
+              fields: 'userEnteredFormat.numberFormat',
+            },
+          });
+        }
       });
     }
   }

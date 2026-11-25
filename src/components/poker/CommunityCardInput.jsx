@@ -152,6 +152,14 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
     else { setTextA(''); setTextB(''); setTextC(''); }
   };
 
+  const handleDealNormalStreet = () => {
+    if (!textA.trim() && (!dbl || !textB.trim()) && (!isTriple || !textC.trim())) {
+      dealHidden();
+    } else {
+      dealReal();
+    }
+  };
+
   const fillHidden = () => {
     setError('');
     const allowed = variantRanks(hand.variant);
@@ -557,16 +565,88 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
           </div>
         </>
       ) : !isAllInShowdown && complete && next ? (
-        /* 4. Normal street deal (hidden) */
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-xs text-slate-400">Deal the {streetUpper}{boardsLabel} – board stays hidden unless there's an all-in.</div>
-          <div className="flex items-center gap-2">
-            <button onClick={dealHidden} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer font-semibold">
+        /* 4. Normal street deal (optional cards or hidden) */
+        <>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-xs text-slate-400">
+              Deal the {streetUpper}{boardsLabel} – enter cards (optional) or deal hidden. Use T for ten.
+            </div>
+            {renderRunItButtons()}
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTarget('A')}
+                className={`w-16 shrink-0 text-xs text-left font-bold rounded px-1.5 py-1 ${activeTarget === 'A' ? 'text-amber-300 bg-amber-950/60 border border-amber-600/60' : 'text-slate-400'}`}
+              >
+                Board 1
+              </button>
+              <input
+                value={textA}
+                onFocus={() => setActiveTarget('A')}
+                onChange={(e) => setTextA(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleDealNormalStreet()}
+                placeholder={`${countHint} (or deal hidden)`}
+                className="flex-1 rounded-lg bg-[#15181d] border border-[#2a2f37] focus:border-amber-500 px-3 py-2 text-white text-sm"
+              />
+            </div>
+            {dbl && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTarget('B')}
+                  className={`w-16 shrink-0 text-xs text-left font-bold rounded px-1.5 py-1 ${activeTarget === 'B' ? 'text-amber-300 bg-amber-950/60 border border-amber-600/60' : 'text-slate-400'}`}
+                >
+                  Board 2
+                </button>
+                <input
+                  value={textB}
+                  onFocus={() => setActiveTarget('B')}
+                  onChange={(e) => setTextB(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleDealNormalStreet()}
+                  placeholder={`${countHint} (or deal hidden)`}
+                  className="flex-1 rounded-lg bg-[#15181d] border border-[#2a2f37] focus:border-amber-500 px-3 py-2 text-white text-sm"
+                />
+              </div>
+            )}
+            {isTriple && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTarget('C')}
+                  className={`w-16 shrink-0 text-xs text-left font-bold rounded px-1.5 py-1 ${activeTarget === 'C' ? 'text-amber-300 bg-amber-950/60 border border-amber-600/60' : 'text-slate-400'}`}
+                >
+                  Board 3
+                </button>
+                <input
+                  value={textC}
+                  onFocus={() => setActiveTarget('C')}
+                  onChange={(e) => setTextC(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleDealNormalStreet()}
+                  placeholder={`${countHint} (or deal hidden)`}
+                  className="flex-1 rounded-lg bg-[#15181d] border border-[#2a2f37] focus:border-amber-500 px-3 py-2 text-white text-sm"
+                />
+              </div>
+            )}
+          </div>
+          {renderBoardKeyboard()}
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <button
+              onClick={handleDealNormalStreet}
+              className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer font-semibold shadow transition-colors"
+            >
               Deal {streetUpper}
+            </button>
+            <button
+              onClick={dealHidden}
+              className="rounded-lg bg-[#242930] hover:bg-[#303742] text-slate-300 hover:text-white border border-slate-700 text-sm px-4 py-2 cursor-pointer font-medium transition-colors"
+            >
+              Deal {streetUpper} (Hidden)
             </button>
             {renderRunItButtons()}
           </div>
-        </div>
+        </>
       ) : (
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs text-slate-400">

@@ -142,14 +142,14 @@ const STYLE_PROFILES = {
 export const BOT_PROFILE_COUNT = 13;
 
 const STYLE_NAMES = {
-  nit: ['Alexander', 'Abigail', 'Anthony', 'Amelia', 'Benjamin', 'Autumn', 'Blake', 'Brianna', 'Christopher', 'Skylar', 'Daniel', 'Caroline', 'Lucas'],
-  tag: ['Charlotte', 'Dominic', 'Claire', 'Elijah', 'Destiny', 'Ethan', 'Eleanor', 'Henry', 'Emily', 'Hudson', 'Chloe', 'Jacob', 'Fiona'],
-  lag: ['Joshua', 'Gemma', 'Caleb', 'Giselle', 'Matthew', 'Grace', 'Miles', 'Harper', 'Nicholas', 'Isabella', 'Oliver', 'Jessica', 'Owen'],
-  shark: ['Kendall', 'Patrick', 'Lydia', 'Robert', 'Melanie', 'Noah', 'Natalie', 'Sebastian', 'Paige', 'Thomas', 'Penelope', 'Tristan', 'Phoebe'],
-  calling_station: ['Tyler', 'Quinn', 'Marcus', 'Lauren', 'William', 'Reese', 'Wyatt', 'Savannah', 'Zachary', 'Serenity', 'Derek', 'Sierra', 'Felix'],
-  rock: ['Sophia', 'Garrett', 'Sydney', 'Justin', 'Shannon', 'Leonard', 'Vanessa', 'Travis', 'Zoey', 'Timothy', 'Beatrice', 'Victor', 'Cassidy'],
-  maniac: ['Xavier', 'Chelsea', 'Arthur', 'Brooke', 'Bradley', 'Georgia', 'Spencer', 'Kimberly', 'Franklin', 'Lindsay', 'Gregory', 'Miranda', 'Jeffrey'],
-  sss: ['Naomi', 'Trevor', 'Daisy', 'Preston', 'April', 'Stephen', 'Iris', 'Simon', 'Kayla', 'Troy', 'Colleen', 'Adam', 'Ruby'],
+  nit: ['Elijah', 'Amelia', 'Elias', 'Penelope', 'Benjamin', 'Lainey', 'Liam', 'Camila', 'Maverick', 'Evelyn', 'Grayson', 'Nora', 'Asher'],
+  tag: ['Levi', 'Aurora', 'James', 'Eliana', 'Julian', 'Mila', 'Cooper', 'Aria', 'Samuel', 'Ellie', 'Alexander', 'Luna', 'Nova'],
+  lag: ['Theo', 'Emma', 'Leo', 'Lily', 'Lucas', 'Ivy', 'Muhammad', 'Scarlett', 'Hudson', 'Harper', 'Mateo', 'Gianna', 'Luke'],
+  shark: ['Wyatt', 'Delilah', 'Oliver', 'Olivia', 'Noah', 'Stella', 'Waylon', 'Violet', 'Santiago', 'Avery', 'Luca', 'Willow', 'Elena'],
+  calling_station: ['Weston', 'Ella', 'Carter', 'Sophia', 'Mason', 'Paisley', 'Sebastian', 'Iris', 'Josiah', 'Valentina', 'Isaiah', 'Layla', 'Daniel'],
+  rock: ['Ezra', 'Ayla', 'Owen', 'Zoe', 'Ethan', 'Mia', 'Theodore', 'Sofia', 'Silas', 'Eleanor', 'Rowan', 'Elizabeth', 'Charlotte'],
+  maniac: ['Gabriel', 'Isabella', 'Michael', 'Lucy', 'Jack', 'Amara', 'Bennett', 'Sadie', 'Ezekiel', 'Ava', 'Joseph', 'Abigail', 'Henry'],
+  sss: ['Atlas', 'Isla', 'William', 'Chloe', 'Thomas', 'Hazel', 'Enzo', 'Riley', 'David', 'Zoey', 'Isaac', 'Emilia', 'Naomi'],
 };
 
 // Multiplicative offsets that shape one profile out of its style baseline.
@@ -280,13 +280,18 @@ export function parseStyleSpec(text) {
  */
 export function assignStyles(specs, count, rng = Math.random) {
   const parsed = {};
+  const excluded = new Set();
   let minSum = 0;
   for (const [id, text] of Object.entries(specs || {})) {
-    const spec = parseStyleSpec(text);
+    const raw = String(text ?? '').trim();
+    const spec = parseStyleSpec(raw);
     const label = BOT_STYLES.find((s) => s.id === id)?.label || id;
     if (!spec) return { error: `${label}: use a number like 2 or a range like 2-3.` };
     parsed[id] = spec;
     minSum += spec.min;
+    if (raw !== '' && spec.max === 0) {
+      excluded.add(id);
+    }
   }
   if (minSum > count) {
     return { error: `Those counts need at least ${minSum} bots, but the table has ${count}.` };
@@ -305,7 +310,15 @@ export function assignStyles(specs, count, rng = Math.random) {
   }
   const pool = [];
   Object.entries(counts).forEach(([id, n]) => { for (let i = 0; i < n; i++) pool.push(id); });
-  while (pool.length < count) pool.push('random');
+  if (pool.length < count) {
+    const allowedStyles = Object.keys(STYLE_PROFILES).filter((id) => !excluded.has(id));
+    if (!allowedStyles.length) {
+      return { error: 'All playstyles are set to 0. Leave at least one blank or enter a count above 0.' };
+    }
+    while (pool.length < count) {
+      pool.push(allowedStyles[Math.floor(rng() * allowedStyles.length)]);
+    }
+  }
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];

@@ -302,18 +302,18 @@ export default function PokerTable({
             : la.type === 'check'
             ? 'Check'
             : la.type === 'allin'
-            ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur, hand, activeUnit)}`)
+            ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(hideAmounts ? (la.rawAmount || la.amount) : la.amount, cur, hand, activeUnit)}`)
             : la.type === 'straddle'
             ? `Straddle ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === 'kill'
             ? `Kill ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
             : la.type === 'bet' || la.type === 'raise'
-            ? (isAllInPlayer
-                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount, cur, hand, activeUnit)}`)
+            ? (isAllInPlayer && (hideAmounts || !la.isEffective)
+                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(hideAmounts ? (la.rawAmount || la.amount) : la.amount, cur, hand, activeUnit)}`)
                 : `${raiseLabelLocal(la.raiseLevel)} ${formatBetAmount(la.amount, cur, hand, activeUnit)}`)
             : la.type === 'call'
-            ? (isAllInPlayer
-                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(la.amount != null ? la.amount : p.currentBet, cur, hand, activeUnit)}`)
+            ? (isAllInPlayer && (hideAmounts || !la.isEffective)
+                ? (actionEnded && isSoleDeepest ? '' : `All in for ${formatBetAmount(hideAmounts ? (la.rawAmount || (la.amount != null ? la.amount : p.currentBet)) : (la.amount != null ? la.amount : p.currentBet), cur, hand, activeUnit)}`)
                 : `Call ${formatBetAmount(la.callAmount != null ? la.callAmount : la.amount, cur, hand, activeUnit)}`)
             : la.type === 'sb'
             ? `SB ${formatBetAmount(la.amount, cur, hand, activeUnit)}`
@@ -483,9 +483,10 @@ export default function PokerTable({
                     ? 'OOT: check/call'
                     : oot.kind === 'aggressive'
                     ? (() => {
-                        const lvl = oot.raiseLevel || 1;
+                        const lvl = oot.raiseLevel || 2;
                         const tier = lvl <= 1 ? 'bet' : lvl === 2 ? 'raise' : `${lvl}-bet`;
-                        return `OOT: ${tier}${oot.amount ? ' ' + formatBetAmount(oot.amount, cur, hand, activeUnit) : ''}`;
+                        const sep = lvl >= 2 ? ' to ' : ' ';
+                        return `OOT: ${tier}${oot.amount ? sep + formatBetAmount(oot.amount, cur, hand, activeUnit) : ''}`;
                       })()
                     : `OOT: ${oot.kind}`;
                   return (
@@ -532,8 +533,8 @@ export default function PokerTable({
           <div className="text-xs text-slate-400 uppercase tracking-wider">Pot</div>
           <div className="text-3xl font-bold text-white tabular-nums">{potShown ? formatPotAmount(pot, cur, hand, activeUnit) : '—'}</div>
           {potShown && sidePots.length > 0 && (
-            <div className="text-[10px] text-amber-300/80 mt-0.5">
-              Side pots: {sidePots.map((sp) => formatSidePotAmount(sp.amount, cur, hand, activeUnit)).join(' / ')}
+            <div className="text-xs text-amber-300/85 tabular-nums mt-0.5 text-center">
+              {sidePots.map((sp) => formatSidePotAmount(sp.amount, cur, hand, activeUnit)).join(' / ')}
             </div>
           )}
         </div>

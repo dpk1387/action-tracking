@@ -46,7 +46,7 @@ export default function ActionHistory({ history = [], hideAmounts }) {
                   <tr key={i} className="text-slate-300 border-t border-[#2a2f37]/50">
                     <td className="py-1">{STREET_LABEL[a.street]}</td>
                     <td className="py-1">{a.player}</td>
-                    <td className="py-1">{a.action}</td>
+                    <td className="py-1">{hideAmounts ? (a.rawAction || a.action) : (a.effectiveAction || a.action)}</td>
                     <td className="py-1 text-right">{hideAmounts ? '—' : (a.chips || '')}</td>
                     <td className="py-1 text-right">{hideAmounts ? '—' : a.pot}</td>
                   </tr>

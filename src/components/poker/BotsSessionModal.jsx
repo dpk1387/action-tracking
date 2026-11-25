@@ -83,6 +83,8 @@ export default function BotsSessionModal({ session, onClose }) {
         filenamePrefix: customName ? customName.replace(/\s+/g, '_') : 'Play_Bots_Hand_History',
         seats: session?.seats,
         heroName,
+        gameType: isLive ? 'live' : 'online',
+        live: isLive,
       });
     } catch (e) {
       setExportError(e?.message || 'Failed to export CSV.');
@@ -108,6 +110,8 @@ export default function BotsSessionModal({ session, onClose }) {
         sessionName: customName,
         seats: session?.seats,
         heroName,
+        gameType: isLive ? 'live' : 'online',
+        live: isLive,
       });
       if (res?.spreadsheetUrl) {
         setExportResult(res);
@@ -272,7 +276,7 @@ export default function BotsSessionModal({ session, onClose }) {
             ) : (
               <div className="space-y-3">
                 {records.map((h) => (
-                  <HandHistoryCard key={h.id || h.handNumber} h={h} displayUnit={unit} />
+                  <HandHistoryCard key={h.id || h.handNumber} h={h} displayUnit={unit} isLive={isLive} />
                 ))}
               </div>
             )}

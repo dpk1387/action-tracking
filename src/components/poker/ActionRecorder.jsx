@@ -102,6 +102,46 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
     ? `All-in ${money((cp?.currentBet || 0) + (cp?.stack || 0), cur)}`
     : `Straddle ${money(straddleAmt, cur)}`;
 
+  const playerStack = cp ? cp.stack : 0;
+  const showKeypadK = playerStack >= 1000;
+  const showKeypadM = playerStack >= 1000000;
+  const keypadKeys = [
+    '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.',
+    ...(showKeypadK ? ['K'] : []),
+    ...(showKeypadM ? ['M'] : []),
+    '⌫',
+  ];
+
+  const handleKeypadPress = (key) => {
+    if (key === '⌫') {
+      setAmount((prev) => (prev ? prev.slice(0, -1) : ''));
+      return;
+    }
+    if (key === '.') {
+      setAmount((prev) => {
+        if (!prev) return '0.';
+        if (prev.includes('.')) return prev;
+        return prev + '.';
+      });
+      return;
+    }
+    if (key === 'K') {
+      setAmount((prev) => {
+        if (!prev || prev.includes('K') || prev.includes('k') || prev.includes('M') || prev.includes('m')) return prev;
+        return prev + 'K';
+      });
+      return;
+    }
+    if (key === 'M') {
+      setAmount((prev) => {
+        if (!prev || prev.includes('M') || prev.includes('m') || prev.includes('K') || prev.includes('k')) return prev;
+        return prev + 'M';
+      });
+      return;
+    }
+    setAmount((prev) => prev + key);
+  };
+
   const submitRaise = () => {
     if (!cp) return;
     if (!othersHaveChips) {
@@ -128,9 +168,11 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
     }
     onAction('allin');
   };
-  const minRaiseVal = Math.min(minRaise, maxTotalCommitment);
-  const minRaiseClamped = isPL ? Math.min(minRaiseVal, potRaiseTo) : minRaiseVal;
-  const canMinRaise = canRaise && minRaiseClamped > (cp?.currentBet || 0);
+  const canMinRaise = canRaise
+    && maxTotalCommitment >= minRaise
+    && (!isPL || potRaiseTo >= minRaise)
+    && minRaise > (cp?.currentBet || 0);
+  const showMinRaise = canMinRaise && !mustAllinToCall && !ootPassiveBound;
   const submitMinRaise = () => {
     if (!cp) return;
     if (!othersHaveChips) {
@@ -138,9 +180,9 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
       return;
     }
     if (!canMinRaise) return;
-    onAction(isBet ? 'bet' : 'raise', minRaiseClamped);
+    onAction(isBet ? 'bet' : 'raise', minRaise);
   };
-  const minRaiseLabel = `${isBet ? 'Min bet' : 'Min raise'} ${money(minRaiseClamped, cur)}`;
+  const minRaiseLabel = `${isBet ? 'Min bet' : 'Min raise'} ${money(minRaise, cur)}`;
 
   const handleFold = () => {
     if (canCheck) {
@@ -210,7 +252,7 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
           raiseInputRef.current?.select();
         }
       } else if (key === 'M') {
-        if (canMinRaise && !mustAllinToCall && !ootPassiveBound) {
+        if (showMinRaise) {
           e.preventDefault();
           submitMinRaise();
         }
@@ -230,7 +272,7 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
-    cp, canCheck, toCall, mustAllinToCall, canRaise, canMinRaise, minRaiseClamped,
+    cp, canCheck, toCall, mustAllinToCall, canRaise, canMinRaise, showMinRaise, minRaise,
     canStraddle, straddleAmt, straddlePutsAllIn, isPL, isFL, flCanRaise, flRaiseTo,
     isBet, ootPassiveBound, onUndo, canUndo, muckArmed
   ]);
@@ -325,66 +367,88 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
             onClick={() => onAction('call')}
             disabled={disableCall}
             title={mandatoryBlock ? mandatoryBlock.reason : ''}
-            className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3.5 py-2 font-medium disabled:opacity-30 disabled:cursor-not-allowed flex items-center shadow cursor-pointer"
+            className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3.5 py-2 font-normal disabled:opacity-30 disabled:cursor-not-allowed flex items-center shadow cursor-pointer"
           >
             <span>{callLabel}</span>
             <KeyBadge label="C" />
           </button>
         )}
         {isFL ? (
-          <button
-            onClick={() => onAction(isBet ? 'bet' : 'raise', flRaiseTo)}
-            disabled={!flCanRaise || mustAllinToCall || ootPassiveBound}
-            className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center"
-          >
-            <span>{flLabel}{flCap ? ' (capped)' : ''}</span>
-            <KeyBadge label="R" />
-          </button>
+          !mustAllinToCall && flCanRaise && !ootPassiveBound && (
+            <button
+              onClick={() => onAction(isBet ? 'bet' : 'raise', flRaiseTo)}
+              className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3 py-2 flex items-center"
+            >
+              <span>{flLabel}{flCap ? ' (capped)' : ''}</span>
+              <KeyBadge label="R" />
+            </button>
+          )
         ) : (
           <>
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <input
-                  ref={raiseInputRef}
-                  type="text"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      submitRaise();
-                    } else if (e.key === 'Escape') {
-                      e.target.blur();
-                    }
-                  }}
-                  placeholder={isDesktop ? 'Chips (R)' : 'Chips'}
-                  disabled={!canRaise || mustAllinToCall || ootPassiveBound}
-                  className="w-28 rounded-lg bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-30"
-                />
-                <button
-                  onClick={submitRaise}
-                  disabled={!canRaise || overLimit || mustAllinToCall || ootPassiveBound}
-                  className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center"
-                >
-                  <span>{isBet ? 'Bet' : 'Raise'}</span>
-                  <KeyBadge label="R" />
-                </button>
-              </div>
-              {isPL && overLimit && (
-                <div className="text-[10px] text-rose-400">
-                  {`Over pot limit – max ${money(potRaiseTo, cur)}`}
+            {!mustAllinToCall && canRaise && !ootPassiveBound && (
+              <div className="flex flex-col gap-1 w-full sm:w-auto">
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={raiseInputRef}
+                    type="text"
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        submitRaise();
+                      } else if (e.key === 'Escape') {
+                        e.target.blur();
+                      }
+                    }}
+                    placeholder={isDesktop ? 'Chips (R)' : 'Chips'}
+                    className="w-28 rounded-lg bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                  />
+                  <button
+                    onClick={submitRaise}
+                    disabled={overLimit}
+                    className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center cursor-pointer"
+                  >
+                    <span>{isBet ? 'Bet' : 'Raise'}</span>
+                    <KeyBadge label="R" />
+                  </button>
                 </div>
-              )}
-            </div>
-            <button
-              onClick={submitMinRaise}
-              disabled={!canMinRaise || mustAllinToCall || ootPassiveBound}
-              className="rounded-lg bg-[#3a4a3a] hover:bg-[#4a5a4a] text-white text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center"
-            >
-              <span>{minRaiseLabel}</span>
-              <KeyBadge label="M" />
-            </button>
+                {/* Mobile Keypad row for chips text box */}
+                <div className="flex items-center gap-1 overflow-x-auto py-1 sm:hidden">
+                  {keypadKeys.map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => handleKeypadPress(k)}
+                      className={`h-8 min-w-[28px] px-2 rounded-md text-xs font-bold transition-colors shrink-0 flex items-center justify-center cursor-pointer ${
+                        k === 'K' || k === 'M'
+                          ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 active:bg-emerald-800'
+                          : k === '⌫'
+                          ? 'bg-rose-950/70 text-rose-300 border border-rose-800/60 active:bg-rose-900'
+                          : 'bg-[#2a2f37] text-white border border-[#3b434e] active:bg-[#3f4754]'
+                      }`}
+                    >
+                      {k}
+                    </button>
+                  ))}
+                </div>
+                {isPL && overLimit && (
+                  <div className="text-[10px] text-rose-400">
+                    {`Over pot limit – max ${money(potRaiseTo, cur)}`}
+                  </div>
+                )}
+              </div>
+            )}
+            {showMinRaise && !mustAllinToCall && (
+              <button
+                onClick={submitMinRaise}
+                className="rounded-lg bg-[#3a4a3a] hover:bg-[#4a5a4a] text-white text-sm px-3 py-2 flex items-center cursor-pointer"
+              >
+                <span>{minRaiseLabel}</span>
+                <KeyBadge label="M" />
+              </button>
+            )}
             {canStraddle && !mustAllinToCall && !ootPassiveBound && (
               <button
                 onClick={() => onAction(straddlePutsAllIn ? 'allin' : 'straddle', straddleAmt)}

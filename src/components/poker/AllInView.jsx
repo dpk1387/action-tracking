@@ -177,10 +177,10 @@ function formatEquity(val, isSecured = false, isMultipleBoards = false) {
   return `${Math.round(num)}%`;
 }
 
-function getPlayerLastActionText(player, currency, hand) {
+function getPlayerLastActionText(player, currency, hand, hideAmounts = false, activeUnit = 'chips') {
   if (!player) return 'Waiting';
   if (player.status === 'folded') return 'Fold';
-  const isAllInPlayer = player.status === 'allin' || player.stack <= 0;
+  const isAllInPlayer = player.status === 'allin' || player.stack <= 0 || player.lastAction?.type === 'allin';
   const isSoleDeepest = hand ? hasSoleDeepestStack(hand, player.id) : false;
   const frozen = hand ? bettingFrozen(hand) : false;
   const actionEnded = hand ? (frozen || hand.currentPlayer === -1 || hand.phase === 'ended' || hand.phase === 'awarded') : false;
@@ -198,16 +198,16 @@ function getPlayerLastActionText(player, currency, hand) {
     if (frozen) return isSoleDeepest ? '' : 'All-in';
     return 'Waiting';
   }
-  const callAmt = la.callAmount != null ? formatBetAmount(la.callAmount, currency) : (la.amount != null ? formatBetAmount(la.amount, currency) : '');
-  const amt = la.amount != null ? formatBetAmount(la.amount, currency) : '';
+  const callAmt = la.callAmount != null ? formatBetAmount(la.callAmount, currency, hand, activeUnit) : (la.amount != null ? formatBetAmount(la.amount, currency, hand, activeUnit) : '');
+  const amt = la.amount != null ? formatBetAmount(la.amount, currency, hand, activeUnit) : '';
   switch (la.type) {
     case 'fold': return 'Fold';
     case 'check': return 'Check';
     case 'allin': return (amt ? `All in for ${amt}` : 'All-in');
-    case 'call': return isAllInPlayer ? (amt ? `All in for ${amt}` : 'All-in') : (callAmt ? `Call ${callAmt}` : 'Call');
+    case 'call': return (isAllInPlayer && (hideAmounts || !la.isEffective)) ? (amt ? `All in for ${amt}` : 'All-in') : (callAmt ? `Call ${callAmt}` : 'Call');
     case 'bet':
     case 'raise': {
-      if (isAllInPlayer) {
+      if (isAllInPlayer && (hideAmounts || !la.isEffective)) {
         return amt ? `All in for ${amt}` : 'All-in';
       }
       const lbl = raiseLabelLocal(la.raiseLevel);
@@ -747,7 +747,7 @@ export default function AllInView({
     const isSoleDeepest = hand ? hasSoleDeepestStack(hand, p.id) : false;
 
     const toCall = isCurrentActor ? Math.max(0, (hand.currentBet || 0) - (p.currentBet || 0)) : 0;
-    const rawAction = isFadingFold ? 'Fold' : getPlayerLastActionText(p, cur, hand);
+    const rawAction = isFadingFold ? 'Fold' : getPlayerLastActionText(p, cur, hand, hideAmounts, activeUnit);
     const wonAmount = boardWinningsInfo.playerWinnings[p.id];
     const hasWonBoard = wonAmount != null && wonAmount > 0;
     const winText = hasWonBoard ? `Win ${money(wonAmount, cur)}` : null;

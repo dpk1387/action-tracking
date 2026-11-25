@@ -210,6 +210,11 @@ export default function GoModeView({
     : 0;
   const effectiveMaxRaise = isPL ? Math.min(maxRaise, rawPotRaiseTo) : maxRaise;
   const isPotCapped = isPL && rawPotRaiseTo < maxRaise;
+  const goOtherNonFolded = cp ? players.filter((p) => p.id !== cp.id && p.status !== 'folded') : [];
+  const goOthersHaveChips = goOtherNonFolded.some((p) => (p.stack || 0) > 0);
+  const goCanReopenRaise = cp ? (!hand?.shortAllinOpen || !cp.hasActed || (cp.currentBet || 0) < (hand?.currentBet || 0)) : false;
+  const goCanRaise = cp ? ((cp.stack || 0) > toCall && goCanReopenRaise && goOthersHaveChips) : false;
+  const canMinRaise = goCanRaise && effectiveMaxRaise >= minRaise && minRaise > (cp?.currentBet || 0);
 
   // Smallest chip on the table for this level; bet steps are half a big blind
   // rounded to that chip, and every size we produce is aligned to it.
@@ -658,9 +663,11 @@ export default function GoModeView({
         raiseInputRef.current?.focus();
         raiseInputRef.current?.select();
       } else if (key === 'm') {
-        e.preventDefault();
-        setRaiseInput(String(Math.min(minRaise, effectiveMaxRaise || minRaise)));
-        raiseInputRef.current?.focus();
+        if (canMinRaise) {
+          e.preventDefault();
+          setRaiseInput(String(minRaise));
+          raiseInputRef.current?.focus();
+        }
       } else if (key === '+' || key === '=' || key === '-') {
         // Bet size steps by half a big blind, clamped to the legal raise range.
         e.preventDefault();
@@ -674,7 +681,7 @@ export default function GoModeView({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cp, canCheck, disableCall, toCall, minRaise, effectiveMaxRaise, isPL, raiseInput, needsTurnAck, cpPin, pinUnlocked, pinPromptOpen, pinEntry, isAllInSituation, stepSize, minChip]);
+  }, [cp, canCheck, disableCall, toCall, minRaise, effectiveMaxRaise, canMinRaise, isPL, raiseInput, needsTurnAck, cpPin, pinUnlocked, pinPromptOpen, pinEntry, isAllInSituation, stepSize, minChip]);
 
   const isShowdownComplete = Boolean(
     isAllInSituation && (commCards.length >= targetBoardLen || hand?.phase === 'awarded' || hand?.phase === 'ended')
@@ -1430,7 +1437,7 @@ export default function GoModeView({
                 disabled={disableCall}
                 onClick={() => submitGoAction('call')}
                 title={mandatoryBlock ? mandatoryBlock.reason : 'Shortcut: C'}
-                className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-white font-extrabold text-sm cursor-pointer transition-colors shadow-lg"
+                className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed text-white font-normal text-sm cursor-pointer transition-colors shadow-lg"
               >
                 Call {formatFullBetAmount(toCall, cur, hand, activeUnit)}{' '}
                 <span className="kbd-shortcut-hint hidden md:inline text-[10px] text-emerald-200 font-mono font-normal">(C)</span>
@@ -1451,65 +1458,69 @@ export default function GoModeView({
           </div>
 
           {/* Bet / Raise Controls: Shorthand Input + Stepper Buttons */}
-          <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
-            {/* Stepper Down (- step) */}
-            <button
-              type="button"
-              onClick={() => handleStepBet(-1)}
-              className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center font-black text-base cursor-pointer border border-slate-700"
-              title="Decrease bet"
-            >
-              <ChevronDown size={18} />
-            </button>
+          {goCanRaise && (
+            <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
+              {/* Stepper Down (- step) */}
+              <button
+                type="button"
+                onClick={() => handleStepBet(-1)}
+                className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center font-black text-base cursor-pointer border border-slate-700"
+                title="Decrease bet"
+              >
+                <ChevronDown size={18} />
+              </button>
 
-            {/* Text Input (Accepts 5k, 2.5m, etc.) */}
-            <input
-              ref={raiseInputRef}
-              type="text"
-              value={raiseInput}
-              onChange={(e) => setRaiseInput(e.target.value)}
-              placeholder={`Min ${minRaise}`}
-              className="w-32 px-3 py-2 rounded-xl bg-[#11141b] border border-slate-700 text-white text-sm font-bold text-center focus:outline-none focus:border-amber-400"
-              title="Shortcut: R to focus"
-            />
+              {/* Text Input (Accepts 5k, 2.5m, etc.) */}
+              <input
+                ref={raiseInputRef}
+                type="text"
+                value={raiseInput}
+                onChange={(e) => setRaiseInput(e.target.value)}
+                placeholder={`Min ${minRaise}`}
+                className="w-32 px-3 py-2 rounded-xl bg-[#11141b] border border-slate-700 text-white text-sm font-bold text-center focus:outline-none focus:border-amber-400"
+                title="Shortcut: R to focus"
+              />
 
-            {/* Stepper Up (+ step) */}
-            <button
-              type="button"
-              onClick={() => handleStepBet(1)}
-              className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center font-black text-base cursor-pointer border border-slate-700"
-              title="Increase bet"
-            >
-              <ChevronUp size={18} />
-            </button>
+              {/* Stepper Up (+ step) */}
+              <button
+                type="button"
+                onClick={() => handleStepBet(1)}
+                className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center font-black text-base cursor-pointer border border-slate-700"
+                title="Increase bet"
+              >
+                <ChevronUp size={18} />
+              </button>
 
-            {/* Bet / Raise Button */}
-            <button
-              type="button"
-              onClick={handleExecuteRaise}
-              disabled={!raiseInput || parseBetShorthand(raiseInput) < minRaise || (isPL && parseBetShorthand(raiseInput) > effectiveMaxRaise)}
-              className="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black font-bold text-xs cursor-pointer shadow"
-            >
-              {isPL && raiseInput && parseBetShorthand(raiseInput) > effectiveMaxRaise
-                ? `Max ${effectiveMaxRaise}`
-                : (hand?.currentBet || 0) > 0
-                ? 'Raise'
-                : 'Bet'}
-            </button>
+              {/* Bet / Raise Button */}
+              <button
+                type="button"
+                onClick={handleExecuteRaise}
+                disabled={!raiseInput || parseBetShorthand(raiseInput) < minRaise || (isPL && parseBetShorthand(raiseInput) > effectiveMaxRaise)}
+                className="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black font-bold text-xs cursor-pointer shadow"
+              >
+                {isPL && raiseInput && parseBetShorthand(raiseInput) > effectiveMaxRaise
+                  ? `Max ${effectiveMaxRaise}`
+                  : (hand?.currentBet || 0) > 0
+                  ? 'Raise'
+                  : 'Bet'}
+              </button>
 
-            {/* Quick Reset Min (Shortcut: M) */}
-            <button
-              type="button"
-              onClick={() => {
-                setRaiseInput(String(Math.min(minRaise, effectiveMaxRaise || minRaise)));
-                raiseInputRef.current?.focus();
-              }}
-              className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs cursor-pointer border border-slate-700"
-              title="Shortcut: M"
-            >
-              Min <span className="kbd-shortcut-hint hidden md:inline">(M)</span>
-            </button>
-          </div>
+              {/* Quick Reset Min (Shortcut: M) */}
+              {canMinRaise && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRaiseInput(String(minRaise));
+                    raiseInputRef.current?.focus();
+                  }}
+                  className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs cursor-pointer border border-slate-700"
+                  title="Shortcut: M"
+                >
+                  Min <span className="kbd-shortcut-hint hidden md:inline">(M)</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ) : null}
 

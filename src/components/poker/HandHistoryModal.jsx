@@ -18,7 +18,7 @@ export default function HandHistoryModal({ onClose }) {
     setError('');
     setExportUrl(null);
     try {
-      const res = await exportHandsToGoogleSheet(hands, { unit });
+      const res = await exportHandsToGoogleSheet(hands, { unit, hideAmounts: Boolean(session.hideAmounts) });
       if (res.spreadsheetUrl) {
         setExportUrl(res.spreadsheetUrl);
       } else {
@@ -34,7 +34,7 @@ export default function HandHistoryModal({ onClose }) {
   const handleExportCSV = () => {
     if (!hands.length) return;
     try {
-      exportHandsToCSV(hands, { unit });
+      exportHandsToCSV(hands, { unit, hideAmounts: Boolean(session.hideAmounts) });
     } catch (e) {
       setError(e?.message || 'Export to CSV failed.');
     }
@@ -130,7 +130,7 @@ export default function HandHistoryModal({ onClose }) {
             </div>
           ) : (
             [...hands].reverse().map((h) => (
-              <HandHistoryCard key={h.handNumber} h={h} displayUnit={unit} />
+              <HandHistoryCard key={h.handNumber} h={h} displayUnit={unit} hideAmounts={Boolean(session.hideAmounts)} />
             ))
           )}
         </div>

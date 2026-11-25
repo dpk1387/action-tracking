@@ -285,15 +285,13 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
   const effectiveMistake = street === 'preflop' ? (tuning.mistake || 0) * 0.12 : (tuning.mistake || 0);
   if (effectiveMistake > 0 && rng() < effectiveMistake) {
     const roll = rng();
-    const mayRaise = canRaise && raisesSoFar < cap;
+    const mayOpenBet = canRaise && (street === 'preflop' ? raiseLevel <= 1 : raiseLevel === 0);
     if (toCall <= 0) {
-      const reckless = mayRaise ? raiseTarget(hand, cp, (hand.currentBet || 0) + pot * 0.6) : null;
-      return roll < 0.6 || !reckless ? { type: 'check' } : { type: 'raise', amount: reckless };
+      const reckless = mayOpenBet ? raiseTarget(hand, cp, (hand.currentBet || 0) + pot * 0.6) : null;
+      return roll < 0.65 || !reckless ? { type: 'check' } : { type: 'raise', amount: reckless };
     }
-    if (roll < 0.4) return { type: 'fold' };
-    if (roll < 0.85 || !mayRaise) return { type: 'call' };
-    const wild = raiseTarget(hand, cp, (hand.currentBet || 0) * 2.5);
-    return wild ? { type: 'raise', amount: wild } : { type: 'call' };
+    if (roll < 0.45) return { type: 'fold' };
+    return { type: 'call' };
   }
 
   if (street === 'preflop') {
@@ -331,9 +329,9 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
       : posFactor;
     const openPct = Math.min(0.92, profile.openPct * passiveCap * (reads?.openMul || 1) * stealMul);
     const threeBetPosFactor = dealtCount === 2
-      ? (isBB ? 2.1 : 1.9)
-      : Math.min(1.6, Math.max(0.75, posFactor * 0.88));
-    const threeBetPct = Math.min(0.5, profile.threeBetPct * threeBetPosFactor * (reads?.threeBetMul || 1));
+      ? (isBB ? 1.55 : 1.45)
+      : Math.min(1.3, Math.max(0.75, posFactor * 0.78));
+    const threeBetPct = Math.min(0.24, profile.threeBetPct * threeBetPosFactor * (reads?.threeBetMul || 1));
     const limpScale = posFactor > 1 ? Math.min(1.6, 1 + (posFactor - 1) * 0.5) : Math.max(0.95, posFactor);
     const limpPct = profile.limpPct * limpScale;
     const isLoosePassive = (profile.aggro ?? 0.5) < 0.25 && profile.coldCallPct >= 0.35;
@@ -358,8 +356,15 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
           if (toCall > 0 && top <= Math.min(0.95, openPct + limpPct * 0.6)) return { type: 'call' };
           return toCall === 0 ? { type: 'check' } : { type: 'fold' };
         }
-        if (top <= openPct * 0.75 && canRaise) return shove();
-        if (top <= Math.min(0.95, Math.max(openPct * 1.1, threeBetPct + profile.coldCallPct)) && toCall <= stack) return { type: 'call' };
+        if (raiseLevel === 2) {
+          const reShovePct = Math.min(0.24, Math.max(threeBetPct * 1.15, openPct * 0.36));
+          if (top <= reShovePct && canRaise) return shove();
+          if (top <= Math.min(0.6, Math.max(openPct * 0.75, threeBetPct + profile.coldCallPct)) && toCall <= stack) return { type: 'call' };
+          return { type: 'fold' };
+        }
+        const fourBetShovePct = Math.min(0.10, Math.max(profile.fourBetPct * 1.35, 0.035));
+        if (top <= fourBetShovePct && canRaise) return shove();
+        if (top <= Math.min(0.18, profile.callVs3Bet * 1.15) && toCall <= stack) return { type: 'call' };
         return { type: 'fold' };
       }
       // Hard / pro: push-fold charts scaled gently by archetype looseness.
@@ -427,7 +432,8 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
       return { type: 'fold' };
     }
     if (raiseLevel === 3) {
-      if (top <= profile.fourBetPct && canRaise) {
+      const fourBetCap = Math.min(0.075, profile.fourBetPct * (inPosition ? 1.05 : 0.9));
+      if (top <= fourBetCap && canRaise) {
         if (stack <= bb * 30) return shove();
         const amount = raiseTarget(hand, cp, (hand.currentBet || 0) * 2.3);
         if (amount) return { type: 'raise', amount };
@@ -473,9 +479,11 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
 
   const maxRaises = Math.min(Number(tuning.maxRaises) || 2, Math.max(1, Math.min(4, Number(profile.maxRaises) || 2)));
   const raisesMade = Math.max(0, (raiseLevel || 0) - 1);
+  const hasStrongDraw = street !== 'river' && (draw.flushDraw || draw.straightDraw);
+  const hasComboDraw = street === 'flop' && draw.flushDraw && (draw.straightDraw || draw.gutshot);
   const raiseStep = profile.reRaiseStep ?? 0.06 + (1 - (profile.aggro || 0)) * 0.08;
   const raiseStrengthNeed = Math.min(0.96, profile.betLine + raiseStep * raisesMade);
-  const raiseOdds = Math.max(0.06, 0.38 + (profile.aggro || 0) * 0.5 - raisesMade * 0.1);
+  const raiseOdds = Math.max(0.06, 0.38 + (profile.aggro || 0) * 0.5 - raisesMade * 0.12);
   const showdownMul = reads?.showdown != null
     ? clamp(1.25 - (reads.showdown - 20) / 60, 0.55, 1.35)
     : 1;
@@ -504,10 +512,11 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
         if (strength >= 0.78 && rng() < 0.22) return { type: 'check' };
       }
     }
-    if (strength >= profile.betLine && canRaise && raisesMade < maxRaises) {
+    const leadStrength = cat === 0 && !hasStrongDraw ? strength - 0.16 : strength;
+    if (leadStrength >= profile.betLine && canRaise && raisesMade < maxRaises) {
       const amount = sizeTo(fraction);
       if (amount) {
-        if (strength > 0.85 && stack <= pot * 1.4) return shove();
+        if (strength > 0.85 && cat >= 1 && stack <= pot * 1.4) return shove();
         return { type: 'raise', amount };
       }
     }
@@ -531,14 +540,31 @@ export function decideBotAction({ hand, playerIndex, holeCards, styleId, profile
   }
 
   const canRaiseMore = canRaise && raisesMade < maxRaises;
-  const raiseLine = Math.max(profile.betLine, callThreshold + 0.14, raiseStrengthNeed);
-  if (canRaiseMore && strength >= raiseLine && rng() < raiseOdds) {
-    if (strength > 0.82 && stack <= pot * 1.3) return shove();
+  // Require real made hands (or flop/turn draws for a single raise) before escalating
+  // postflop: random-hand equity alone inflates Ace/King high into fake 3-bets/4-bets.
+  const valueHandQualifies = raisesMade >= 2
+    ? (cat >= 2 && strength >= 0.86)
+    : raisesMade === 1
+      ? (cat >= 2 || (cat === 1 && strength >= 0.80) || (hasComboDraw && strength >= 0.68))
+      : (cat >= 1 || (hasStrongDraw && strength >= 0.62));
+  const raiseLine = Math.max(
+    profile.betLine,
+    callThreshold + 0.14,
+    raisesMade === 1 ? Math.max(0.74, raiseStrengthNeed + 0.08) : raisesMade >= 2 ? 0.86 : raiseStrengthNeed,
+  );
+  if (canRaiseMore && valueHandQualifies && strength >= raiseLine && rng() < raiseOdds) {
+    if (strength > 0.82 && cat >= 2 && stack <= pot * 1.3) return shove();
     const amount = sizeTo(betFraction(tuning, texture, rng, streetsLeft));
     if (amount) return { type: 'raise', amount };
   }
-  // A bluff raise over a single bet only, and only when the hand has real equity.
-  if (canRaiseMore && raisesMade === 0 && strength >= raiseStrengthNeed - 0.1 && rng() < profile.bluff * 0.35 * (1 - profile.raiseGuard) * bluffMul) {
+  // A bluff raise over a single bet only, never a 3-bet or 4-bet, and requiring draw equity or blockers.
+  if (
+    canRaiseMore
+    && raisesMade === 0
+    && (hasStrongDraw || cat >= 1 || (street === 'river' && blockers > 0.05))
+    && strength >= raiseStrengthNeed - 0.1
+    && rng() < profile.bluff * 0.3 * (1 - profile.raiseGuard) * bluffMul
+  ) {
     const amount = sizeTo(0.6);
     if (amount) return { type: 'raise', amount };
   }

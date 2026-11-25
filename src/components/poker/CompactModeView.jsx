@@ -194,9 +194,11 @@ export default function CompactModeView({
     onAction('allin');
   };
 
-  const minRaiseVal = Math.min(minRaise, maxTotalCommitment);
-  const minRaiseClamped = isPL ? Math.min(minRaiseVal, potRaiseTo) : minRaiseVal;
-  const canMinRaise = canRaise && minRaiseClamped > (cp?.currentBet || 0);
+  const canMinRaise = canRaise
+    && maxTotalCommitment >= minRaise
+    && (!isPL || potRaiseTo >= minRaise)
+    && minRaise > (cp?.currentBet || 0);
+  const showMinRaise = canMinRaise && !mustAllinToCall && !ootPassiveBound;
   const submitMinRaise = () => {
     if (!cp) return;
     if (!othersHaveChips) {
@@ -204,9 +206,9 @@ export default function CompactModeView({
       return;
     }
     if (!canMinRaise) return;
-    onAction(isBet ? 'bet' : 'raise', minRaiseClamped);
+    onAction(isBet ? 'bet' : 'raise', minRaise);
   };
-  const minRaiseLabel = `${isBet ? 'Min bet' : 'Min raise'} ${money(minRaiseClamped, cur)}`;
+  const minRaiseLabel = `${isBet ? 'Min bet' : 'Min raise'} ${money(minRaise, cur)}`;
 
   const handleKeypadKey = (key) => {
     if (!canRaise || mustAllinToCall || ootPassiveBound) return;
@@ -316,7 +318,7 @@ export default function CompactModeView({
           raiseInputRef.current?.select();
         }
       } else if (key === 'M') {
-        if (canMinRaise && !mustAllinToCall && !ootPassiveBound) {
+        if (showMinRaise) {
           e.preventDefault();
           submitMinRaise();
         }
@@ -336,7 +338,7 @@ export default function CompactModeView({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
-    cp, canCheck, toCall, mustAllinToCall, canRaise, canMinRaise, minRaiseClamped,
+    cp, canCheck, toCall, mustAllinToCall, canRaise, canMinRaise, showMinRaise, minRaise,
     canStraddle, straddleAmt, straddlePutsAllIn, isPL, isFL, flCanRaise, flRaiseTo,
     isBet, ootPassiveBound, onUndo, canUndo, muckArmed
   ]);
@@ -1303,7 +1305,7 @@ export default function CompactModeView({
               onClick={() => onAction('call')}
               disabled={disableCall}
               title={mandatoryBlock ? mandatoryBlock.reason : ''}
-              className="py-3 px-2 rounded-xl bg-emerald-800 hover:bg-emerald-700 disabled:opacity-25 disabled:cursor-not-allowed text-white font-medium text-sm transition-all shadow-md flex items-center justify-center border border-emerald-600/60 cursor-pointer truncate"
+              className="py-3 px-2 rounded-xl bg-emerald-800 hover:bg-emerald-700 disabled:opacity-25 disabled:cursor-not-allowed text-white font-normal text-sm transition-all shadow-md flex items-center justify-center border border-emerald-600/60 cursor-pointer truncate"
             >
               <span className="truncate">{callLabel}</span>
               <KeyBadge label="C" />
@@ -1312,144 +1314,156 @@ export default function CompactModeView({
 
           {/* Row 2: Bet / Raise input & submit + Min Raise */}
           {!isFL ? (
-            <>
-              {/* Desktop Bet/Raise input + buttons */}
-              <div className="hidden sm:grid sm:grid-cols-12 gap-2 items-center">
-                <div className="sm:col-span-8 flex items-center gap-1.5">
-                  <input
-                    ref={raiseInputRef}
-                    type="text"
-                    inputMode="decimal"
-                    value={raiseAmount}
-                    onChange={(e) => setRaiseAmount(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        submitRaise();
-                      } else if (e.key === 'Escape') {
-                        e.target.blur();
-                      }
-                    }}
-                    placeholder="Amount"
-                    disabled={!canRaise || mustAllinToCall || ootPassiveBound}
-                    className="flex-1 rounded-xl bg-[#11141b] border border-slate-700 focus:border-amber-400 px-3 py-2.5 text-white font-bold text-sm disabled:opacity-30 transition-colors shadow-inner"
-                  />
-                  <button
-                    type="button"
-                    onClick={submitRaise}
-                    disabled={!canRaise || overLimit || mustAllinToCall || ootPassiveBound}
-                    className="px-4 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm shadow-md flex items-center justify-center shrink-0 cursor-pointer transition-colors"
-                  >
-                    <span>{canCheck ? 'Bet' : 'Raise'}</span>
-                    <KeyBadge label="R" />
-                  </button>
-                </div>
+            !mustAllinToCall && canRaise && !ootPassiveBound && (
+              <>
+                {/* Desktop Bet/Raise input + buttons */}
+                <div className="hidden sm:grid sm:grid-cols-12 gap-2 items-center">
+                  <div className={`${showMinRaise ? 'sm:col-span-8' : 'sm:col-span-12'} flex items-center gap-1.5`}>
+                    <input
+                      ref={raiseInputRef}
+                      type="text"
+                      inputMode="decimal"
+                      value={raiseAmount}
+                      onChange={(e) => setRaiseAmount(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          submitRaise();
+                        } else if (e.key === 'Escape') {
+                          e.target.blur();
+                        }
+                      }}
+                      placeholder="Amount"
+                      disabled={!canRaise || mustAllinToCall || ootPassiveBound}
+                      className="flex-1 rounded-xl bg-[#11141b] border border-slate-700 focus:border-amber-400 px-3 py-2.5 text-white font-bold text-sm disabled:opacity-30 transition-colors shadow-inner"
+                    />
+                    <button
+                      type="button"
+                      onClick={submitRaise}
+                      disabled={!canRaise || overLimit || mustAllinToCall || ootPassiveBound}
+                      className="px-4 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm shadow-md flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+                    >
+                      <span>{canCheck ? 'Bet' : 'Raise'}</span>
+                      <KeyBadge label="R" />
+                    </button>
+                  </div>
 
-                <div className="sm:col-span-4">
-                  <button
-                    type="button"
-                    onClick={submitMinRaise}
-                    disabled={!canMinRaise || mustAllinToCall || ootPassiveBound}
-                    className="w-full py-2.5 px-2 rounded-xl bg-[#2e3746] hover:bg-[#3b4759] disabled:opacity-30 disabled:cursor-not-allowed text-slate-200 font-bold text-xs shadow-md flex items-center justify-center border border-slate-600 cursor-pointer transition-colors truncate"
-                  >
-                    <span className="truncate">{minRaiseLabel}</span>
-                    <KeyBadge label="M" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Mobile-only Bet Sizing Keypad */}
-              <div className="flex flex-col gap-2 sm:hidden">
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className={`flex-1 rounded-xl bg-[#11141b] border px-3 py-2 font-mono text-base font-black flex items-center justify-between shadow-inner ${
-                      overLimit ? 'border-rose-500 text-rose-300' : 'border-slate-700 text-white'
-                    } ${(!canRaise || mustAllinToCall || ootPassiveBound) ? 'opacity-30' : ''}`}
-                  >
-                    <span className={raiseAmount ? 'text-white' : 'text-slate-500 font-sans text-sm font-semibold'}>
-                      {raiseAmount ? `${cur}${raiseAmount}` : 'Tap keypad amount'}
-                    </span>
-                    {raiseAmount && (
+                  {showMinRaise && (
+                    <div className="sm:col-span-4">
                       <button
                         type="button"
-                        onClick={() => handleKeypadKey('C')}
-                        className="text-[11px] font-sans font-bold text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-slate-800"
+                        onClick={submitMinRaise}
+                        className="w-full py-2.5 px-2 rounded-xl bg-[#2e3746] hover:bg-[#3b4759] text-slate-200 font-bold text-xs shadow-md flex items-center justify-center border border-slate-600 cursor-pointer transition-colors truncate"
                       >
-                        Clear
+                        <span className="truncate">{minRaiseLabel}</span>
+                        <KeyBadge label="M" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Mobile-only Bet Sizing Keypad */}
+                <div className="flex flex-col gap-2 sm:hidden">
+                  <div className="flex items-center gap-1.5">
+                    <div
+                      className={`flex-1 rounded-xl bg-[#11141b] border px-3 py-2 font-mono text-base font-black flex items-center justify-between shadow-inner ${
+                        overLimit ? 'border-rose-500 text-rose-300' : 'border-slate-700 text-white'
+                      }`}
+                    >
+                      <span className={raiseAmount ? 'text-white' : 'text-slate-500 font-sans text-sm font-semibold'}>
+                        {raiseAmount ? `${cur}${raiseAmount}` : 'Tap keypad amount'}
+                      </span>
+                      {raiseAmount && (
+                        <button
+                          type="button"
+                          onClick={() => handleKeypadKey('C')}
+                          className="text-[11px] font-sans font-bold text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-slate-800"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    {showMinRaise && (
+                      <button
+                        type="button"
+                        onClick={submitMinRaise}
+                        className="py-2 px-3 rounded-xl bg-[#2e3746] active:bg-[#3b4759] text-slate-200 font-bold text-xs shadow-md border border-slate-600 shrink-0"
+                      >
+                        {minRaiseLabel}
                       </button>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={submitMinRaise}
-                    disabled={!canMinRaise || mustAllinToCall || ootPassiveBound}
-                    className="py-2 px-3 rounded-xl bg-[#2e3746] active:bg-[#3b4759] disabled:opacity-30 text-slate-200 font-bold text-xs shadow-md border border-slate-600 shrink-0"
-                  >
-                    {minRaiseLabel}
-                  </button>
-                </div>
 
-                <div className="grid grid-cols-4 gap-1.5">
-                  {['7', '8', '9', 'K', '4', '5', '6', 'M', '1', '2', '3', '⌫'].map((k) => {
-                    const isMult = k === 'K' || k === 'M';
-                    const isBack = k === '⌫';
-                    return (
-                      <button
-                        key={k}
-                        type="button"
-                        disabled={!canRaise || mustAllinToCall || ootPassiveBound}
-                        onClick={() => handleKeypadKey(k)}
-                        className={`py-2.5 rounded-xl font-black text-base shadow transition-transform active:scale-95 disabled:opacity-30 border ${
-                          isMult
-                            ? 'bg-emerald-950/70 active:bg-emerald-900 text-emerald-300 border-emerald-700/60'
-                            : isBack
-                            ? 'bg-rose-950/60 active:bg-rose-900 text-rose-300 border-rose-800/60'
-                            : 'bg-[#1f2632] active:bg-[#2c3647] text-white border-slate-700/80'
-                        }`}
-                      >
-                        {k}
-                      </button>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    disabled={!canRaise || mustAllinToCall || ootPassiveBound}
-                    onClick={() => handleKeypadKey('.')}
-                    className="py-2.5 rounded-xl bg-[#1f2632] active:bg-[#2c3647] text-white font-black text-base shadow border border-slate-700/80 active:scale-95 disabled:opacity-30"
-                  >
-                    .
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!canRaise || mustAllinToCall || ootPassiveBound}
-                    onClick={() => handleKeypadKey('0')}
-                    className="py-2.5 rounded-xl bg-[#1f2632] active:bg-[#2c3647] text-white font-black text-base shadow border border-slate-700/80 active:scale-95 disabled:opacity-30"
-                  >
-                    0
-                  </button>
-                  <button
-                    type="button"
-                    onClick={submitRaise}
-                    disabled={!canRaise || overLimit || mustAllinToCall || ootPassiveBound || !raiseAmount}
-                    className="col-span-2 py-2.5 rounded-xl bg-amber-700 active:bg-amber-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-black text-sm shadow-md flex items-center justify-center transition-transform active:scale-95"
-                  >
-                    {canCheck ? 'Bet' : 'Raise'}
-                  </button>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[
+                      '7', '8', '9', (cp?.stack || 0) >= 1000 ? 'K' : null,
+                      '4', '5', '6', (cp?.stack || 0) >= 1000000 ? 'M' : null,
+                      '1', '2', '3', '⌫',
+                    ].map((k, idx) => {
+                      if (!k) {
+                        return <div key={`empty-${idx}`} className="py-2.5 rounded-xl border border-transparent" />;
+                      }
+                      const isMult = k === 'K' || k === 'M';
+                      const isBack = k === '⌫';
+                      return (
+                        <button
+                          key={k}
+                          type="button"
+                          disabled={!canRaise || mustAllinToCall || ootPassiveBound}
+                          onClick={() => handleKeypadKey(k)}
+                          className={`py-2.5 rounded-xl font-black text-base shadow transition-transform active:scale-95 disabled:opacity-30 border ${
+                            isMult
+                              ? 'bg-emerald-950/70 active:bg-emerald-900 text-emerald-300 border-emerald-700/60'
+                              : isBack
+                              ? 'bg-rose-950/60 active:bg-rose-900 text-rose-300 border-rose-800/60'
+                              : 'bg-[#1f2632] active:bg-[#2c3647] text-white border-slate-700/80'
+                          }`}
+                        >
+                          {k}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      disabled={!canRaise || mustAllinToCall || ootPassiveBound}
+                      onClick={() => handleKeypadKey('.')}
+                      className="py-2.5 rounded-xl bg-[#1f2632] active:bg-[#2c3647] text-white font-black text-base shadow border border-slate-700/80 active:scale-95 disabled:opacity-30"
+                    >
+                      .
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canRaise || mustAllinToCall || ootPassiveBound}
+                      onClick={() => handleKeypadKey('0')}
+                      className="py-2.5 rounded-xl bg-[#1f2632] active:bg-[#2c3647] text-white font-black text-base shadow border border-slate-700/80 active:scale-95 disabled:opacity-30"
+                    >
+                      0
+                    </button>
+                    <button
+                      type="button"
+                      onClick={submitRaise}
+                      disabled={!canRaise || overLimit || mustAllinToCall || ootPassiveBound || !raiseAmount}
+                      className="col-span-2 py-2.5 rounded-xl bg-amber-700 active:bg-amber-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-black text-sm shadow-md flex items-center justify-center transition-transform active:scale-95"
+                    >
+                      {canCheck ? 'Bet' : 'Raise'}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </>
+              </>
+            )
           ) : (
-            <div>
-              <button
-                type="button"
-                onClick={() => onAction(isBet ? 'bet' : 'raise', flRaiseTo)}
-                disabled={!flCanRaise || mustAllinToCall || ootPassiveBound}
-                className="w-full py-3 px-3 rounded-xl bg-[#3c4e3c] hover:bg-[#4c624c] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm shadow-md flex items-center justify-center border border-emerald-600/60 cursor-pointer"
-              >
-                <span>{flLabel}{flCap ? ' (capped)' : ''}</span>
-                <KeyBadge label="R" />
-              </button>
-            </div>
+            !mustAllinToCall && flCanRaise && !ootPassiveBound && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => onAction(isBet ? 'bet' : 'raise', flRaiseTo)}
+                  className="w-full py-3 px-3 rounded-xl bg-[#3c4e3c] hover:bg-[#4c624c] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm shadow-md flex items-center justify-center border border-emerald-600/60 cursor-pointer"
+                >
+                  <span>{flLabel}{flCap ? ' (capped)' : ''}</span>
+                  <KeyBadge label="R" />
+                </button>
+              </div>
+            )
           )}
 
           {/* Row 3: Special Actions: Straddle, Pot, All-in */}

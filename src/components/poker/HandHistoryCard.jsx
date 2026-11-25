@@ -1,6 +1,7 @@
 import React from 'react';
 import { money, SUIT_SYMBOL, SUIT_RED, rankDisplay } from '@/lib/poker';
 import { sortGoHoleCards } from '@/lib/goMode';
+import { shouldResolveEffectiveActions, resolveEffectiveOnlineActions } from '@/lib/googleSheetsExport';
 
 const STREETS = ['preflop', 'flop', 'turn', 'river'];
 
@@ -17,7 +18,7 @@ function MiniCard({ card }) {
   );
 }
 
-export default function HandHistoryCard({ h, displayUnit = 'chips' }) {
+export default function HandHistoryCard({ h, displayUnit = 'chips', isLive = false, hideAmounts = false }) {
   const isBB = displayUnit === 'bb';
   const bb = Number(h.bigBlind) || 1;
   const fmtVal = (val) => {
@@ -29,7 +30,16 @@ export default function HandHistoryCard({ h, displayUnit = 'chips' }) {
   const cur = isBB ? '' : h.currency;
   const byStreet = {};
   STREETS.forEach((s) => { byStreet[s] = {}; });
-  (h.actions || []).forEach((a) => {
+  const rawActions = Array.isArray(h.actions) && h.actions.length > 0 ? h.actions : (Array.isArray(h.actionHistory) ? h.actionHistory : []);
+  const players = h.players || [];
+  const hasSeats = players.some((p) => p && p.seat != null);
+  const seatedPlayers = hasSeats
+    ? players.filter((p) => p && p.seat != null).sort((a, b) => a.seat - b.seat)
+    : players.filter(Boolean);
+  const resolvedActions = shouldResolveEffectiveActions(h, { live: isLive, hideAmounts })
+    ? resolveEffectiveOnlineActions(h, rawActions, seatedPlayers)
+    : rawActions;
+  resolvedActions.forEach((a) => {
     if (!byStreet[a.street]) byStreet[a.street] = {};
     const amtStr = a.chips ? ` ${isBB ? fmtVal(a.chips) : money(a.chips, cur)}` : '';
     const label = `${a.action}${amtStr}`.trim();
@@ -115,57 +125,34 @@ export default function HandHistoryCard({ h, displayUnit = 'chips' }) {
             </tr>
           </thead>
           <tbody>
-            {(() => {
-              const sortedByStack = [...(h.players || [])].sort((a, b) => {
-                const sa = a.initialStack != null ? a.initialStack : (a.stack || 0);
-                const sb = b.initialStack != null ? b.initialStack : (b.stack || 0);
-                return sb - sa;
-              });
+            {(h.players || []).map((p) => {
+              const rawHoles = (holeCardsMap[p.id] ?? holeCardsMap[String(p.id)]) || p.holeCards || [];
+              const pHoles = sortGoHoleCards(rawHoles);
 
-              return (h.players || []).map((p) => {
-                const rawHoles = (holeCardsMap[p.id] ?? holeCardsMap[String(p.id)]) || p.holeCards || [];
-                const pHoles = sortGoHoleCards(rawHoles);
-                const myStack = p.initialStack != null ? p.initialStack : (p.stack || 0);
-                const rIdx = sortedByStack.findIndex((x) => (x.initialStack != null ? x.initialStack : (x.stack || 0)) === myStack);
-                const rankVal = p.rank != null && p.rank !== '' ? p.rank : (rIdx >= 0 ? rIdx + 1 : null);
-                const styleVal = p.playstyle || p.style || (p.styleId ? p.styleId.toUpperCase() : (p.name === 'You' ? 'Hero' : ''));
-
-                return (
-                  <tr key={p.id} className="border-b border-[#15181d] align-top">
-                    <td className="py-1.5 pr-2">
-                      <div className="text-white font-medium flex items-center gap-1.5 flex-wrap">
-                        <span>{p.name}</span>
-                        {pHoles.length > 0 && (
-                          <span className="inline-flex items-center gap-0.5">
-                            {pHoles.map((c, ci) => <MiniCard key={ci} card={c} />)}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 flex-wrap">
-                        <span>
-                          {(() => {
-                            let pos = p.position || '';
-                            if (/^UTG\+\d+$/.test(pos)) pos = pos.slice(3);
-                            if (pos === 'BTN' || pos === 'D' || pos === 'D/SB') pos = (h.players || []).length === 2 ? 'D/SB' : 'BTN';
-                            return pos;
-                          })()}
+              return (
+                <tr key={p.id} className="border-b border-[#15181d] align-top">
+                  <td className="py-1.5 pr-2">
+                    <div className="text-white font-medium flex items-center gap-1.5 flex-wrap">
+                      <span>{p.name}</span>
+                      {pHoles.length > 0 && (
+                        <span className="inline-flex items-center gap-0.5">
+                          {pHoles.map((c, ci) => <MiniCard key={ci} card={c} />)}
                         </span>
-                        <span>·</span>
-                        <span>{isBB ? `${fmtVal(p.stack)} BB` : money(p.stack, cur)}</span>
-                        {rankVal != null && (
-                          <>
-                            <span>·</span>
-                            <span className="text-slate-300">#{rankVal}</span>
-                          </>
-                        )}
-                        {styleVal ? (
-                          <>
-                            <span>·</span>
-                            <span className="text-amber-300 font-semibold">{styleVal}</span>
-                          </>
-                        ) : null}
-                      </div>
-                    </td>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 flex-wrap">
+                      <span>
+                        {(() => {
+                          let pos = p.position || '';
+                          if (/^UTG\+\d+$/.test(pos)) pos = pos.slice(3);
+                          if (pos === 'BTN' || pos === 'D' || pos === 'D/SB') pos = (h.players || []).length === 2 ? 'D/SB' : 'BTN';
+                          return pos;
+                        })()}
+                      </span>
+                      <span>·</span>
+                      <span>{isBB ? `${fmtVal(p.stack)} BB` : money(p.stack, cur)}</span>
+                    </div>
+                  </td>
                     {STREETS.map((s) => (
                       <td key={s} className="py-1.5 px-2 text-slate-300 text-xs whitespace-nowrap">
                         {byStreet[s]?.[p.name] || <span className="text-slate-600">—</span>}
@@ -188,10 +175,9 @@ export default function HandHistoryCard({ h, displayUnit = 'chips' }) {
                         }
                       })()}
                     </td>
-                  </tr>
-                );
-              });
-            })()}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

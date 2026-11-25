@@ -43,7 +43,7 @@ import {
 import { saveCompletedSession } from '@/lib/completedSessionsStore';
 import { saveHandHistory, findHandHistoryByCode, deleteHandHistory } from '@/lib/handHistoriesStore';
 import {
-  startHand, applyAction, dealNextStreet, fillBoard, endHand, computePots, awardPots, nextHand,
+  startHand, applyAction, reconcileHandHideAmounts, dealNextStreet, fillBoard, endHand, computePots, awardPots, nextHand,
   positionForSeat, getButtonIndex, money, formatPotAmount, formatPotOutcome, formatSessionName, getMultipleBoardWinPercentages, potTotal, STREET_LABEL, calcEquity, VARIANTS, GAME_TYPES, variantMeta, tryAutoWinners, winningHandCards, refundUncontestedPots, effectiveHoleSize, holeCardsComplete, recomputeBlindsForLevel, postBlinds, bbaPotOpts, recordOutOfTurn, formatBlinds, bettingFrozen, isAllInShowdown, parseAmount, clone, calcAnteForType,
   goDiscardStage, rebuyBlocker, isPotLimitVariant, goModeSupported, isBombPotVariant,
 } from '@/lib/poker';
@@ -82,6 +82,38 @@ export default function PokerTracker() {
   const [holeCards, setHoleCards] = useState({});
   const [equity, setEquity] = useState(null);
   const [hideAmounts, setHideAmounts] = useState(false);
+  const updateHideAmounts = (nextVal) => {
+    const resolved = typeof nextVal === 'function' ? nextVal(hideAmounts) : Boolean(nextVal);
+    setHideAmounts(resolved);
+    if (!isGoMode) {
+      const currentHandNum = hand?.handNumber;
+      const reconciledHand = hand ? reconcileHandHideAmounts(hand, resolved) : hand;
+      setHand((prev) => (prev ? reconcileHandHideAmounts(prev, resolved) : prev));
+      setHistory((prevHist) =>
+        Array.isArray(prevHist)
+          ? prevHist.map((snap) => (snap ? reconcileHandHideAmounts(snap, resolved) : snap))
+          : prevHist
+      );
+      if (currentHandNum != null && reconciledHand) {
+        sessionStore.set((s) => ({
+          ...s,
+          hideAmounts: resolved,
+          history: Array.isArray(s.history)
+            ? s.history.map((item) =>
+                item && item.handNumber === currentHandNum
+                  ? {
+                      ...item,
+                      hideAmounts: resolved,
+                      actions: reconciledHand.actionHistory,
+                      actionHistory: reconciledHand.actionHistory,
+                    }
+                  : item
+              )
+            : s.history,
+        }));
+      }
+    }
+  };
   const [showRebuy, setShowRebuy] = useState(false);
   const [showReentry, setShowReentry] = useState(false);
   const [ruleNotice, setRuleNotice] = useState(null);
@@ -503,6 +535,8 @@ export default function PokerTracker() {
     sessionStore.addHand({
       handNumber: h.handNumber,
       variant: h.variant,
+      gameType: h.gameType || config?.gameType || 'nl',
+      hideAmounts: Boolean(hideAmounts),
       buttonSeat: h.buttonSeat,
       sbSeat: h.sbSeat,
       bbSeat: h.bbSeat,
@@ -534,6 +568,7 @@ export default function PokerTracker() {
         endStack: p.stack,
         stack: p.initialStack != null ? p.initialStack : p.stack,
         totalBet: p.totalBet || 0,
+        antePaid: p.antePaid || 0,
         position: positionForSeat(h.players.length, bi, i, h.variant),
       })),
     });
@@ -732,7 +767,7 @@ export default function PokerTracker() {
     }
 
     setCalledClockActive(false);
-    let next = applyAction(hand, actingPlayerId, type, amount);
+    let next = applyAction(hand, actingPlayerId, type, amount, { resolveEffective: isGoMode || !hideAmounts });
     if (next && next.error) { setActionError(next.error); return; }
     if (isGoMode && next) {
       const nf = next.players.filter((p) => p.status !== 'folded');
@@ -814,7 +849,7 @@ export default function PokerTracker() {
   const handleFoldOutOfTurn = (playerId) => {
     if (playerId == null) return;
     const savedTurn = hand.currentPlayer;
-    const next = applyAction(hand, playerId, 'fold');
+    const next = applyAction(hand, playerId, 'fold', undefined, { resolveEffective: isGoMode || !hideAmounts });
     if (next && next.error) { setActionError(next.error); return; }
     if (bettingFrozen(next)) {
       next.currentPlayer = -1;
@@ -1720,7 +1755,7 @@ export default function PokerTracker() {
         const type = toCall === 0 ? 'check' : 'call';
         const t = setTimeout(() => {
           pushHistory(hand);
-          setHand(applyAction(hand, hand.currentPlayer, type));
+          setHand(applyAction(hand, hand.currentPlayer, type, undefined, { resolveEffective: isGoMode || !hideAmounts }));
         }, 350);
         return () => clearTimeout(t);
       }
@@ -1736,7 +1771,7 @@ export default function PokerTracker() {
       if (amt >= minRaise && amt <= cp.currentBet + cp.stack) {
         const t = setTimeout(() => {
           pushHistory(hand);
-          setHand(applyAction(hand, hand.currentPlayer, hand.currentBet > 0 ? 'raise' : 'bet', amt));
+          setHand(applyAction(hand, hand.currentPlayer, hand.currentBet > 0 ? 'raise' : 'bet', amt, { resolveEffective: isGoMode || !hideAmounts }));
         }, 350);
         return () => clearTimeout(t);
       }
@@ -2128,6 +2163,7 @@ export default function PokerTracker() {
         smallBlind: hand?.smallBlind || config?.smallBlind || 25,
         bigBlind: hand?.bigBlind || config?.bigBlind || 50,
         playerNames: (hand?.players || config?.players || []).map((p) => p.name || `Player ${p.seat}`),
+        hideAmounts: Boolean(hideAmounts),
         hands: hist,
       });
     }
@@ -2201,6 +2237,7 @@ export default function PokerTracker() {
           smallBlind: hand?.smallBlind || config?.smallBlind || 25,
           bigBlind: hand?.bigBlind || config?.bigBlind || 50,
           playerNames: (hand?.players || config?.players || []).map((p) => p.name || `Player ${p.seat}`),
+          hideAmounts: Boolean(hideAmounts),
           hands: hands,
           completedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -2221,6 +2258,7 @@ export default function PokerTracker() {
             smallBlind: hand?.smallBlind || config?.smallBlind || 25,
             bigBlind: hand?.bigBlind || config?.bigBlind || 50,
             playerNames: (hand?.players || config?.players || []).map((p) => p.name || `Player ${p.seat}`),
+            hideAmounts: Boolean(hideAmounts),
             hands: hands,
           });
         }
@@ -2461,7 +2499,7 @@ export default function PokerTracker() {
             showPosition={showPosition}
             suitColors={suitColors}
             actionDisplayMode={actionDisplayMode}
-            onToggleHideAmounts={() => setHideAmounts((v) => !v)}
+            onToggleHideAmounts={() => updateHideAmounts((v) => !v)}
             onDeal={handleDeal}
             onDealBoard={handleDealBoard}
             onFillBoard={handleFillBoard}
@@ -3269,7 +3307,7 @@ export default function PokerTracker() {
             setConfig((prev) => (prev ? { ...prev, sessionName: val } : prev));
             setHand((prev) => (prev ? { ...prev, sessionName: val } : prev));
           }
-          if (newVals.hideAmounts !== undefined) setHideAmounts(newVals.hideAmounts);
+          if (newVals.hideAmounts !== undefined) updateHideAmounts(newVals.hideAmounts);
           if (newVals.showPosition !== undefined) setShowPosition(newVals.showPosition);
           if (newVals.displayUnit !== undefined) setDisplayUnit(newVals.displayUnit);
           if (newVals.suitColors !== undefined) setSuitColors(newVals.suitColors);

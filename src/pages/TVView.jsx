@@ -93,14 +93,15 @@ function getPlayerEquity(equity, p, hand, holeCards) {
   return `${Math.round(pct)}%`;
 }
 
-function getBroadcastActionText(p, isTurn, hand, cur, isSoleDeepest, actionEnded, viewOption = 'grid', lastActionPlayerName = null, activeUnit = 'chips') {
+function getBroadcastActionText(p, isTurn, hand, cur, isSoleDeepest, actionEnded, viewOption = 'grid', lastActionPlayerName = null, activeUnit = 'chips', hideAmounts = false) {
   if (p.status === 'folded') return 'FOLDED';
 
   const allin = p.status === 'allin' || p.stack <= 0 || p.lastAction?.type === 'allin';
+  const hasEffectiveType = Boolean(!hideAmounts && p.lastAction?.isEffective && (p.lastAction.type === 'call' || p.lastAction.type === 'bet' || p.lastAction.type === 'raise'));
   if (actionEnded && isSoleDeepest) {
     return '';
   }
-  if (allin) {
+  if (allin && !hasEffectiveType) {
     const amt = p.lastAction?.amount || p.currentBet;
     return amt ? `ALL IN FOR ${formatBetAmount(amt, cur, hand, activeUnit)}` : 'ALL-IN';
   }
@@ -540,7 +541,7 @@ export default function TVView() {
                 const isSoleDeepest = hasSoleDeepestStack(hand, p.id);
                 const lastActionPlayerName = getLastActionPlayerName(hand);
                 const effectiveViewOption = (viewOption === 'last_action' || actionDisplayMode === 'last_action' || actionDisplayMode === 'last_only') ? 'last_action' : viewOption;
-                const actionText = getBroadcastActionText(p, isTurn, hand, cur, isSoleDeepest, actionEnded, effectiveViewOption, lastActionPlayerName, activeUnit);
+                const actionText = getBroadcastActionText(p, isTurn, hand, cur, isSoleDeepest, actionEnded, effectiveViewOption, lastActionPlayerName, activeUnit, hideAmounts);
 
                 // Hole cards & equity are ONLY displayed if it's an all-in situation AND player is not folded or out
                 const pCards = (!isFolded && !isOut) ? (holeCards[p.id] ?? holeCards[String(p.id)] ?? []) : [];

@@ -11,6 +11,22 @@ function gcdFn(a, b) {
   return a;
 }
 
+function parseChipToken(val) {
+  if (typeof val === 'number') return isFinite(val) ? val : 0;
+  if (val == null) return 0;
+  const s = String(val).trim().replace(/,/g, '');
+  const m = s.match(/^([0-9]*\.?[0-9]+)\s*([kmKM])?$/);
+  if (!m) {
+    const n = Number(s);
+    return isFinite(n) ? n : 0;
+  }
+  const num = parseFloat(m[1]);
+  const suf = (m[2] || '').toLowerCase();
+  if (suf === 'k') return num * 1000;
+  if (suf === 'm') return num * 1000000;
+  return num;
+}
+
 // Denominations still in play: all checked denominations minus those retired by
 // chip-race breaks the timer has already passed (tLevel indexes the schedule).
 export function chipsInPlay(hand) {
@@ -25,12 +41,13 @@ export function chipsInPlay(hand) {
   const retired = new Set();
   for (let i = 0; i < tLevel && i < schedule.length; i++) {
     const item = schedule[i];
-    if (item && item.type === 'break' && item.race) {
-      retired.add(Number(item.race.retired));
+    if (item && (item.type === 'break' || item.type === 'color_up') && item.race && item.race.retired != null) {
+      const r = parseChipToken(item.race.retired);
+      if (r > 0) retired.add(r);
     }
   }
   return denoms
-    .map((d) => Number(d))
+    .map((d) => parseChipToken(d))
     .filter((d) => d > 0 && !retired.has(d))
     .sort((a, b) => a - b);
 }

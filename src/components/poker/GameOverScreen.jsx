@@ -17,7 +17,7 @@ export default function GameOverScreen({ gameOver, isCash, onNewSession }) {
     setError('');
     setExportResult(null);
     try {
-      const res = await exportHandsToGoogleSheet(hands);
+      const res = await exportHandsToGoogleSheet(hands, { hideAmounts: Boolean(session.hideAmounts) });
       setExportResult(res);
     } catch (e) {
       setError(e?.message || 'Export failed.');
@@ -29,7 +29,7 @@ export default function GameOverScreen({ gameOver, isCash, onNewSession }) {
   const handleExportCSV = () => {
     if (!hands.length) return;
     try {
-      exportHandsToCSV(hands);
+      exportHandsToCSV(hands, { hideAmounts: Boolean(session.hideAmounts) });
     } catch (e) {
       setError(e?.message || 'Export CSV failed.');
     }

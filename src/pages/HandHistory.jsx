@@ -21,7 +21,7 @@ export default function HandHistory() {
     setError('');
     setExportUrl(null);
     try {
-      const res = await exportHandsToGoogleSheet(hands, { unit });
+      const res = await exportHandsToGoogleSheet(hands, { unit, hideAmounts: Boolean(session.hideAmounts) });
       if (res.spreadsheetUrl) {
         setExportUrl(res.spreadsheetUrl);
         setSheetTitle(res.title || 'Google Sheet');
@@ -38,7 +38,7 @@ export default function HandHistory() {
   const handleExportCSV = () => {
     if (!hands.length) return;
     try {
-      exportHandsToCSV(hands, { unit });
+      exportHandsToCSV(hands, { unit, hideAmounts: Boolean(session.hideAmounts) });
     } catch (e) {
       setError(e?.message || 'Export to CSV failed.');
     }
@@ -114,7 +114,7 @@ export default function HandHistory() {
           <div className="text-slate-400 text-sm">No hands played yet in this session.</div>
         ) : (
           <div className="space-y-4">
-            {[...hands].reverse().map((h) => <HandHistoryCard key={h.handNumber} h={h} displayUnit={unit} />)}
+            {[...hands].reverse().map((h) => <HandHistoryCard key={h.handNumber} h={h} displayUnit={unit} hideAmounts={Boolean(session.hideAmounts)} />)}
           </div>
         )}
       </div>

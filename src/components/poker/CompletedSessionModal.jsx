@@ -24,7 +24,7 @@ export default function CompletedSessionModal({ session, onClose, onDelete }) {
     setExportError('');
     setExportResult(null);
     try {
-      const res = await exportHandsToGoogleSheet(hands);
+      const res = await exportHandsToGoogleSheet(hands, { hideAmounts: Boolean(session.hideAmounts) });
       setExportResult(res);
     } catch (e) {
       setExportError(e?.message || 'Failed to export to Google Sheets.');
@@ -39,7 +39,7 @@ export default function CompletedSessionModal({ session, onClose, onDelete }) {
       return;
     }
     try {
-      exportHandsToCSV(hands);
+      exportHandsToCSV(hands, { hideAmounts: Boolean(session.hideAmounts) });
     } catch (e) {
       setExportError(e?.message || 'Failed to export CSV.');
     }
@@ -147,7 +147,7 @@ export default function CompletedSessionModal({ session, onClose, onDelete }) {
             </div>
           ) : (
             hands.map((h, i) => (
-              <HandHistoryCard key={h.handNumber || i} h={h} />
+              <HandHistoryCard key={h.handNumber || i} h={h} hideAmounts={Boolean(session.hideAmounts)} />
             ))
           )}
         </div>

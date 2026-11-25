@@ -152,6 +152,8 @@ function buildHandRecord(hand, awarded, holes, levelLabel, live = false, pots = 
     id: `${awarded.handNumber}-${Date.now()}`,
     handNumber: awarded.handNumber,
     mode: 'tournament',
+    gameType: live ? 'live' : 'online',
+    isLive: live,
     level: levelLabel,
     smallBlind: awarded.smallBlind,
     bigBlind: awarded.bigBlind,
@@ -185,6 +187,7 @@ function buildHandRecord(hand, awarded, holes, levelLabel, live = false, pots = 
         initialStack: p.initialStack ?? p.stack,
         endStack: end ? end.stack : p.stack,
         totalBet: p.totalBet || 0,
+        antePaid: p.antePaid || 0,
       };
     }),
     positions,
@@ -196,6 +199,7 @@ function buildHandRecord(hand, awarded, holes, levelLabel, live = false, pots = 
       playerId: a.playerId,
       action: live && /^\d+-bet$/.test(a.action || '') ? 'Raise' : a.action,
       chips: a.chips,
+      betTo: a.betTo,
       isAggressive: a.isAggressive != null ? a.isAggressive : isAggressiveAction(a),
       raiseLevel: a.raiseLevel,
     })),
@@ -241,6 +245,7 @@ export default function BotsMode() {
   const [heroBusted, setHeroBusted] = useState(false);
   const [sessionOutcome, setSessionOutcome] = useState(null);
   const [raiseTo, setRaiseTo] = useState('');
+  const [checkFold, setCheckFold] = useState(false);
   const [showKeypad, setShowKeypad] = useState(false);
   const [flash, setFlash] = useState(null);
   const [hydrated, setHydrated] = useState(false);
@@ -577,7 +582,7 @@ export default function BotsMode() {
     setTimeout(() => {
       setHoles({});
       setHand(null);
-      dealHand(nextGame);
+      dealHand(gameRef.current || nextGame);
     }, showdown ? 2800 : 2200);
     setGame(nextGame);
   }, [holes, dealHand]);
@@ -751,6 +756,39 @@ export default function BotsMode() {
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [game?.seats?.length, game?.difficulty, game?.gameType]);
 
+  const allPots = useMemo(() => {
+    if (!hand) return [];
+    return hand.phase === 'awarded' && hand.pots?.length
+      ? hand.pots
+      : computePots(hand.players, bbaPotOpts(hand));
+  }, [hand]);
+  const contestedPots = useMemo(
+    () => allPots.filter((pt) => pt.amount > 0 && (pt.eligible?.length || 0) >= 2),
+    [allPots],
+  );
+  const hasSidePots = contestedPots.length > 1;
+  const displayMainPot = hasSidePots ? contestedPots[0].amount : pot;
+  const displaySidePots = hasSidePots ? contestedPots.slice(1) : [];
+
+  // Reset Check/Fold at the start of every street and every new hand.
+  useEffect(() => {
+    setCheckFold(false);
+  }, [hand?.handNumber, hand?.street]);
+
+  // Auto check/fold when action reaches the hero with the checkbox ticked (uses bot turn duration).
+  useEffect(() => {
+    if (!checkFold || !isHeroTurn || !hand || !hero || hero.status !== 'active') return undefined;
+    const t = setTimeout(() => {
+      const actionType = toCall > 0 ? 'fold' : 'check';
+      const res = applyAction(hand, heroIndex, actionType);
+      if (res && !res.error) {
+        setHand(res);
+        setRaiseTo('');
+      }
+    }, thinkDelay(game?.speed));
+    return () => clearTimeout(t);
+  }, [checkFold, isHeroTurn, hand, hero, heroIndex, toCall, game?.speed]);
+
   useEffect(() => {
     if (!showStats || !game || game.gameType === 'live') return undefined;
     const bots = game.seats.filter((s) => !s.isHero);
@@ -803,13 +841,25 @@ export default function BotsMode() {
     act(toCall > 0 ? 'raise' : 'bet', Math.max(capped, Math.min(maxRaiseTo, minRaiseTo)));
   };
 
-  // Shortcuts: F fold, C call/check, R bet/raise, M min bet/raise, Shift+A all in,
-  // +/- move the bet size by half a big blind inside [min raise, all in].
+  // Shortcuts: F fold (or toggle Check/Fold when waiting or queued), C call/check,
+  // R bet/raise, M min bet/raise, Shift+A all in, +/- adjust bet by 0.5 BB.
   useEffect(() => {
     const onKey = (e) => {
-      if (!hand || !isHeroTurn || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!hand || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (showSettings || showStats || showHistory || showStructure || showLevels || showEnd) return;
       const tag = e.target?.tagName;
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      if (typing && e.target?.type !== 'number') return;
+
+      const canToggleCheckFold = hand.phase === 'playing' && hand.currentPlayer >= 0 && hero?.status === 'active' && (!isHeroTurn || checkFold);
+      if (e.key.toLowerCase() === 'f' && canToggleCheckFold) {
+        if (typing) e.target.blur();
+        e.preventDefault();
+        setCheckFold((v) => !v);
+        return;
+      }
+
+      if (!isHeroTurn || checkFold) return;
       if (e.shiftKey && (e.key === 'A' || e.key === 'a')) {
         e.preventDefault();
         act(toCall > 0 ? 'raise' : 'bet', maxRaiseTo);
@@ -853,7 +903,7 @@ export default function BotsMode() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [hand, isHeroTurn, toCall, pot, minRaiseTo, maxRaiseTo, raiseTo]);
+  }, [hand, hero?.status, isHeroTurn, checkFold, toCall, pot, minRaiseTo, maxRaiseTo, raiseTo, showSettings, showStats, showHistory, showStructure, showLevels, showEnd]);
 
   const handleExportCSV = useCallback(() => {
     if (!handRecords.length) {
@@ -867,11 +917,13 @@ export default function BotsMode() {
         filenamePrefix: customName ? customName.replace(/\s+/g, '_') : 'Play_Bots_Hand_History',
         seats: game?.seats,
         heroName: 'You',
+        gameType: isLive ? 'live' : 'online',
+        live: isLive,
       });
     } catch (e) {
       setExportError(e?.message || 'Export to CSV failed.');
     }
-  }, [handRecords, game?.sessionName, setup?.sessionName, game?.seats]);
+  }, [handRecords, game?.sessionName, setup?.sessionName, game?.seats, isLive]);
 
   const handleExportSheets = useCallback(async () => {
     if (!handRecords.length || exporting) {
@@ -893,6 +945,8 @@ export default function BotsMode() {
         sessionName: customName,
         seats: game?.seats,
         heroName: 'You',
+        gameType: isLive ? 'live' : 'online',
+        live: isLive,
       });
       if (res?.spreadsheetUrl) {
         setExportUrl(res.spreadsheetUrl);
@@ -904,7 +958,7 @@ export default function BotsMode() {
     } finally {
       setExporting(false);
     }
-  }, [handRecords, exporting, setup?.seats, setup?.sessionName, game?.seats, game?.sessionName]);
+  }, [handRecords, exporting, setup?.seats, setup?.sessionName, game?.seats, game?.sessionName, isLive]);
 
   const levelLabel = formatBlindLevel(levels, game?.levelIndex || 0);
 
@@ -930,33 +984,40 @@ export default function BotsMode() {
   }, [hand, betLabel, heroSeatNo]);
 
   const styleFill = useMemo(() => {
-    const specs = Object.values(setupDraft.styleSpecs || {});
-    if (!specs.some((v) => String(v ?? '').trim() !== '')) return 'blank';
+    const entries = Object.entries(setupDraft.styleSpecs || {});
+    if (!entries.some(([, v]) => String(v ?? '').trim() !== '')) return 'blank';
     let min = 0;
     let max = 0;
-    for (const v of specs) {
-      const parsed = parseStyleSpec(v);
+    let excludedCount = 0;
+    for (const [, v] of entries) {
+      const raw = String(v ?? '').trim();
+      const parsed = parseStyleSpec(raw);
       if (!parsed) return 'invalid';
       min += parsed.min;
       max += parsed.max;
+      if (raw !== '' && parsed.max === 0) excludedCount += 1;
     }
-    return { min, max };
+    return { min, max, excludedCount };
   }, [setupDraft.styleSpecs]);
 
   if (!setup) {
     const botCount = Math.max(1, Number(setupDraft.seats) - 1);
+    const allExcluded = styleFill !== 'blank' && styleFill !== 'invalid'
+      && styleFill.excludedCount >= STYLE_CHOICES.length && styleFill.max < botCount;
     const fillText = styleFill === 'blank'
       ? `Bots to seat: ${botCount}. Leave every box blank for a random mix.`
       : styleFill === 'invalid'
         ? 'Use a number like 2, or a range like 2-3.'
-        : styleFill.min > botCount
-          ? `Needs at least ${styleFill.min} bots, but the table has ${botCount}.`
-          : `${styleFill.min}-${styleFill.max} picked · ${botCount - styleFill.max > 0 ? `${botCount - styleFill.max} random` : 'rest filled by ranges'}.`;
-    const fillOk = styleFill === 'blank' || (styleFill !== 'invalid' && styleFill.min <= botCount);
+        : allExcluded
+          ? 'All playstyles are set to 0. Leave at least one blank or enter a count above 0.'
+          : styleFill.min > botCount
+            ? `Needs at least ${styleFill.min} bots, but the table has ${botCount}.`
+            : `${styleFill.min}-${styleFill.max} picked · ${botCount - styleFill.max > 0 ? `${botCount - styleFill.max} random` : 'rest filled by ranges'}.`;
+    const fillOk = styleFill === 'blank' || (styleFill !== 'invalid' && !allExcluded && styleFill.min <= botCount);
     return (
       <div className="min-h-screen bg-[#121417] text-white p-4 sm:p-6">
         <div className="w-full max-w-xl lg:max-w-4xl xl:max-w-6xl mx-auto space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h1 className="text-2xl font-black tracking-tight text-white">Play Bots</h1>
               <p className="text-xs text-slate-400 mt-1">Solo practice against AI opponents. Blind levels use a big-blind ante.</p>
@@ -1097,7 +1158,7 @@ export default function BotsMode() {
                   <label key={st.id} title={st.desc} className="flex items-center justify-between gap-2 rounded-xl bg-[#19202b] border border-slate-700/70 px-2.5 py-1.5">
                     <span className="text-[11px] font-semibold text-slate-300 truncate">{st.label}</span>
                     <input
-                      value={setupDraft.styleSpecs?.[st.id] || ''}
+                      value={setupDraft.styleSpecs?.[st.id] ?? ''}
                       onChange={(e) => setSetupDraft((s) => ({ ...s, styleSpecs: { ...s.styleSpecs, [st.id]: e.target.value } }))}
                       inputMode="numeric"
                       placeholder="0"
@@ -1227,10 +1288,15 @@ export default function BotsMode() {
 
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 pointer-events-none px-12">
                 {!isLive && (
-                  <>
+                  <div className="text-center">
                     <div className="text-[10px] uppercase tracking-widest font-bold text-emerald-200/60">Pot</div>
-                    <div className="text-xl sm:text-2xl font-black text-white font-mono leading-tight">{formatChips(pot, unit, hand?.bigBlind)}</div>
-                  </>
+                    <div className="text-xl sm:text-2xl font-black text-white font-mono leading-tight">{formatChips(displayMainPot, unit, hand?.bigBlind)}</div>
+                    {displaySidePots.length > 0 && (
+                      <div data-testid="side-pots" className="text-xs font-mono text-amber-300/90 leading-tight mt-0.5 text-center">
+                        {displaySidePots.map((sp) => formatChips(sp.amount, unit, hand?.bigBlind)).join(' / ')}
+                      </div>
+                    )}
+                  </div>
                 )}
                 <div data-testid="board" className="flex justify-center gap-1 sm:gap-1.5 mt-1 min-h-[44px] items-center">
                   {[0, 1, 2, 3, 4].map((slot) => {
@@ -1305,7 +1371,7 @@ export default function BotsMode() {
                   <div data-testid="winner-banner" className="text-center text-sm font-bold text-amber-300">
                     {winSummary?.text || 'Hand complete'}
                   </div>
-                ) : isHeroTurn ? (
+                ) : (isHeroTurn && !checkFold) ? (
                   <>
                     <div className="flex gap-2">
                       {toCall > 0 && (
@@ -1376,11 +1442,41 @@ export default function BotsMode() {
                       />
                     )}
                   </>
-                ) : (
-                  <div className="text-center text-xs text-slate-500 py-3">
-                    {hand ? `${hand.players[hand.currentPlayer]?.name || 'Waiting'} is acting…` : 'Dealing…'}
-                  </div>
-                )}
+                ) : (() => {
+                  const activePlayer = hand && hand.currentPlayer >= 0 ? hand.players[hand.currentPlayer] : null;
+                  const nonFoldedCount = hand ? hand.players.filter((p) => p.status !== 'folded').length : 0;
+                  const statusMessage = !hand
+                    ? 'Dealing…'
+                    : activePlayer
+                      ? (activePlayer.seat === heroSeatNo ? 'You are acting…' : `${activePlayer.name} is acting…`)
+                      : nonFoldedCount <= 1
+                        ? 'Finishing hand…'
+                        : allInSpot
+                          ? (hand.street === 'river' ? 'All in — showdown…' : 'All in — dealing board…')
+                          : hand.street === 'river'
+                            ? 'Showdown…'
+                            : 'Dealing next street…';
+                  const canCheckFold = Boolean(hand && hand.phase === 'playing' && hand.currentPlayer >= 0 && hero?.status === 'active');
+                  return (
+                    <div className="flex flex-col items-center justify-center gap-2.5 py-2">
+                      <div className="text-center text-xs text-slate-400">
+                        {statusMessage}
+                      </div>
+                      {canCheckFold && (
+                        <label title="Toggle Check / Fold (F)" className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#19202b] hover:bg-[#202938] border border-slate-700/80 text-xs font-semibold text-slate-200 cursor-pointer select-none transition-colors">
+                          <input
+                            type="checkbox"
+                            data-testid="check-fold-checkbox"
+                            checked={checkFold}
+                            onChange={(e) => setCheckFold(e.target.checked)}
+                            className="w-4 h-4 rounded accent-emerald-500 cursor-pointer"
+                          />
+                          <span>Check / Fold</span>
+                        </label>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
             </div>
@@ -1525,7 +1621,7 @@ export default function BotsMode() {
             ) : handRecords.length > 0 ? (
               <div className="space-y-3">
                 {handRecords.map((h) => (
-                  <HandHistoryCard key={h.id || h.handNumber} h={h} displayUnit={unit} />
+                  <HandHistoryCard key={h.id || h.handNumber} h={h} displayUnit={unit} isLive={isLive} />
                 ))}
               </div>
             ) : (
@@ -1548,7 +1644,7 @@ export default function BotsMode() {
 
       {showSettings && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowSettings(false)}>
-          <div className="bg-[#141922] border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-[#141922] border border-slate-800 rounded-2xl w-full max-w-sm max-h-[85vh] overflow-y-auto p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-white">Settings</h3>
             <div>
               <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-2">Session name</div>

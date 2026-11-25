@@ -31,7 +31,8 @@ function getSpectatorAction(p, isTurn, hand, cur, activeUnit = 'chips') {
   if (p.status === 'folded') {
     return { text: 'FOLD', cls: 'bg-slate-900 border border-slate-700 text-slate-400' };
   }
-  if (p.status === 'allin' || p.stack <= 0) {
+  const hasEffectiveType = Boolean(p.lastAction?.isEffective && (p.lastAction.type === 'call' || p.lastAction.type === 'bet' || p.lastAction.type === 'raise'));
+  if ((p.status === 'allin' || p.stack <= 0) && !hasEffectiveType) {
     const amt = p.lastAction?.amount || p.currentBet || p.totalBet;
     return {
       text: amt ? `ALL-IN ${formatBetAmount(amt, cur, hand, activeUnit)}` : 'ALL-IN',

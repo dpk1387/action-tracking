@@ -1,5 +1,5 @@
 // Pure poker engine helpers for the action tracker.
-import { minChipInPlay, isMakeableBet } from './chipMath';
+import { minChipInPlay, isMakeableBet } from './chipMath.js';
 
 export const RANKS = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
 export const SUITS = ['s','h','d','c'];
@@ -108,7 +108,7 @@ export function rebuyBlocker(hand, player, level) {
   return null;
 }
 
-export { minChipInPlay, isMakeableBet } from './chipMath';
+export { minChipInPlay, isMakeableBet } from './chipMath.js';
 
 export function suggestAnte(bb) {
   bb = Number(bb) || 0;
@@ -232,7 +232,13 @@ export function getSmallestChip(hand) {
     const valid = hand.chipDenominations.map(Number).filter((d) => d > 0);
     if (valid.length > 0) return Math.min(...valid);
   }
-  return Number(hand.smallBlind) || 25;
+  return Number(hand.smallBlind) || Number(hand.anteAmount) || Number(hand.bombAmount) || 25;
+}
+
+export function getSmallestChipInPlay(hand) {
+  const active = minChipInPlay(hand);
+  if (active != null && active > 0) return active;
+  return getSmallestChip(hand);
 }
 
 function formatNumberTrimmed(n, maxDecimals) {
@@ -335,7 +341,8 @@ export function formatPlayerTagAmount(val, currency = '', hand = null, isSpectat
   }
 
   // Below 1K: full number
-  if (absN < 1000) {
+  const smallestChip = getSmallestChipInPlay(hand);
+  if (absN < 1000 || smallestChip < 100) {
     const hasDec = !Number.isInteger(absN);
     const numStr = absN.toLocaleString('en-US', {
       minimumFractionDigits: hasDec ? 2 : 0,
@@ -1015,18 +1022,20 @@ export function startHand(config, buttonSeat, handNumber) {
   let straddleLevel = 0;
   let straddleOpen = straddleEnabled;
 
-  let currentBet = players.reduce((m, p) => Math.max(m, p.currentBet || 0), 0) || bb;
+  let currentBet = Math.max(Number(config.bigBlind) || 0, players.reduce((m, p) => Math.max(m, p.currentBet || 0), 0)) || bb;
   let lastRaiseAmount = config.bigBlind;
   let raiseLevel = 1;
   let first = bbIndex >= 0 ? firstActiveAfter(players, bbIndex) : firstActiveAfter(players, buttonIndex);
 
   if (isFourBlinds && fbIndex >= 0) {
-    currentBet = players[fbIndex].currentBet || (Number(config.fourthBlind) || (config.bigBlind * 4));
+    const fbTarget = Number(config.fourthBlind) || (config.bigBlind * 4);
+    currentBet = Math.max(currentBet, fbTarget, players[fbIndex].currentBet || 0);
     lastRaiseAmount = currentBet;
     raiseLevel = 1;
     first = firstActiveAfter(players, fbIndex);
   } else if (isThreeBlinds && tbIndex >= 0) {
-    currentBet = players[tbIndex].currentBet || (Number(config.thirdBlind) || (config.bigBlind * 2));
+    const tbTarget = Number(config.thirdBlind) || (config.bigBlind * 2);
+    currentBet = Math.max(currentBet, tbTarget, players[tbIndex].currentBet || 0);
     lastRaiseAmount = currentBet;
     raiseLevel = 1;
     first = firstActiveAfter(players, tbIndex);
@@ -1067,8 +1076,8 @@ export function startHand(config, buttonSeat, handNumber) {
       players[sidx].currentBet = a;
       players[sidx].totalBet += a;
       straddleLevel = 1;
-      lastRaiseAmount = Math.max(a - currentBet, config.bigBlind);
-      currentBet = a;
+      lastRaiseAmount = Math.max(target - currentBet, a - currentBet, config.bigBlind);
+      currentBet = Math.max(currentBet, target, a);
       raiseLevel = 1;
       first = firstActiveAfter(players, sidx);
       if (players[sidx].stack === 0) {
@@ -1086,8 +1095,8 @@ export function startHand(config, buttonSeat, handNumber) {
           players[dsidx].currentBet = da;
           players[dsidx].totalBet += da;
           straddleLevel = 2;
-          lastRaiseAmount = Math.max(da - currentBet, config.bigBlind);
-          currentBet = da;
+          lastRaiseAmount = Math.max(doubleTarget - currentBet, da - currentBet, config.bigBlind);
+          currentBet = Math.max(currentBet, doubleTarget, da);
           raiseLevel = 1;
           first = firstActiveAfter(players, dsidx);
           if (players[dsidx].stack === 0) {
@@ -1139,63 +1148,170 @@ function maxContestableByOthers(h, excludeId) {
 function applyOversizedCap(h) {
   const nonFolded = h.players.filter((p) => p.status !== 'folded');
   if (nonFolded.length < 2) return;
+
   let maxPlayer = null;
+  let maxBetVal = 0;
   for (const p of nonFolded) {
-    const isShover = (p.lastAction && (p.lastAction.type === 'allin' || p.lastAction.type === 'raise' || p.lastAction.type === 'bet')) || p._wasCapped;
-    if (!isShover) continue;
-    if (!maxPlayer || p.currentBet > maxPlayer.currentBet) maxPlayer = p;
+    if ((p.currentBet || 0) > maxBetVal) {
+      maxBetVal = p.currentBet || 0;
+      maxPlayer = p;
+    }
   }
-  if (!maxPlayer || maxPlayer.currentBet === 0) return;
+  if (!maxPlayer || maxBetVal <= 0) return;
+
+  const isAggressor = (maxPlayer.lastAction && (
+    maxPlayer.lastAction.type === 'allin' ||
+    maxPlayer.lastAction.type === 'raise' ||
+    maxPlayer.lastAction.type === 'bet'
+  )) || maxPlayer._effectiveCapped || maxPlayer._wasCapped;
+  if (!isAggressor) return;
+
   const cap = maxContestableByOthers(h, maxPlayer.id);
   if (cap === Infinity || maxPlayer.currentBet <= cap) return;
-  const excess = maxPlayer.currentBet - cap;
-  maxPlayer.stack += excess;
-  maxPlayer.currentBet = cap;
-  maxPlayer.totalBet -= excess;
-  maxPlayer._wasCapped = true;
+
+  const excess = Math.round((maxPlayer.currentBet - cap) * 100) / 100;
+  maxPlayer._cappedExcess = (maxPlayer._cappedExcess || 0) + excess;
+  if (maxPlayer._rawCurrentBet == null) maxPlayer._rawCurrentBet = maxPlayer.currentBet;
+  if (maxPlayer._rawStack == null) maxPlayer._rawStack = maxPlayer.stack;
+  if (maxPlayer._rawTotalBet == null) maxPlayer._rawTotalBet = maxPlayer.totalBet;
+  if (maxPlayer._rawAmount == null) {
+    maxPlayer._rawAmount = maxPlayer.lastAction?.rawAmount || maxPlayer.lastAction?.amount || maxPlayer.currentBet;
+  }
+  maxPlayer.stack = Math.round((maxPlayer.stack + excess) * 100) / 100;
+  maxPlayer.currentBet = Math.round(cap * 100) / 100;
+  maxPlayer.totalBet = Math.max(0, Math.round((maxPlayer.totalBet - excess) * 100) / 100);
+  maxPlayer._effectiveCapped = true;
+  maxPlayer._effectiveStack = maxPlayer.stack;
+  maxPlayer._effectiveCurrentBet = maxPlayer.currentBet;
+  maxPlayer._effectiveAmount = maxPlayer.currentBet;
   if (maxPlayer.stack > 0) maxPlayer.status = 'active';
 
-  const otherNonFolded = nonFolded.filter((p) => p.id !== maxPlayer.id);
-  const otherMaxBet = otherNonFolded.length > 0 ? Math.max(...otherNonFolded.map((p) => p.currentBet)) : 0;
-
-  if (maxPlayer.currentBet <= otherMaxBet) {
-    // Player's bet has been capped down to matching the opponents' bet -> It's a CALL!
-    maxPlayer.lastAction = {
-      type: 'call',
-      amount: maxPlayer.currentBet,
-      raiseLevel: 1,
-    };
-  } else {
-    // Player's bet is still higher than otherMaxBet -> It's a RAISE over otherMaxBet!
-    const isRaise = otherMaxBet > 0 || h.street === 'preflop';
-    maxPlayer.lastAction = {
-      type: isRaise ? 'raise' : 'bet',
-      amount: cap,
-      raiseLevel: maxPlayer.lastAction?.raiseLevel || (isRaise ? 2 : 1),
-    };
-  }
-
-  // Update action history entry for maxPlayer if present on this street
+  let targetEntryIdx = -1;
   if (Array.isArray(h.actionHistory)) {
     for (let idx = h.actionHistory.length - 1; idx >= 0; idx--) {
       const entry = h.actionHistory[idx];
-      if (entry.player === maxPlayer.name && entry.street === h.street) {
-        entry.action = actionLabel(maxPlayer.lastAction);
-        entry.chips = maxPlayer.lastAction.amount || maxPlayer.currentBet;
-        entry.pot = potTotal(h);
+      if (entry.player === maxPlayer.name && entry.street === h.street && entry.action !== 'Fold' && entry.action !== 'Check') {
+        targetEntryIdx = idx;
         break;
       }
     }
   }
+  const targetEntry = targetEntryIdx >= 0 ? h.actionHistory[targetEntryIdx] : null;
+  const facingBefore = targetEntry?.facingBet ?? maxPlayer.lastAction?.facingBet ?? 0;
+  const prevPlayerBetBefore = targetEntry?.prevBet ?? 0;
 
-  h.currentBet = Math.max(...nonFolded.map((p) => p.currentBet));
-  const opp = otherNonFolded.find((p) => p.currentBet === otherMaxBet);
-  if (maxPlayer.currentBet <= otherMaxBet) {
-    h.raiseLevel = opp?.lastAction?.raiseLevel || (h.street === 'preflop' ? 1 : 0);
-    h.lastRaiseAmount = h.bigBlind;
+  const otherNonFolded = nonFolded.filter((p) => p.id !== maxPlayer.id);
+  const otherMaxBet = otherNonFolded.length > 0 ? Math.max(...otherNonFolded.map((p) => p.currentBet || 0)) : 0;
+  const opp = otherNonFolded.find((p) => (p.currentBet || 0) === otherMaxBet);
+
+  const prevRawMeta = maxPlayer.lastAction ? {
+    ...(maxPlayer.lastAction.rawType != null ? { rawType: maxPlayer.lastAction.rawType } : {}),
+    ...(maxPlayer.lastAction.rawAction != null ? { rawAction: maxPlayer.lastAction.rawAction } : {}),
+    ...(maxPlayer.lastAction.rawWentAllIn != null ? { rawWentAllIn: maxPlayer.lastAction.rawWentAllIn } : {}),
+    ...(maxPlayer.lastAction.rawRaiseLevel != null ? { rawRaiseLevel: maxPlayer.lastAction.rawRaiseLevel } : {}),
+    ...(maxPlayer.lastAction.rawDidIncrease != null ? { rawDidIncrease: maxPlayer.lastAction.rawDidIncrease } : {}),
+    rawAmount: maxPlayer._rawAmount,
+    rawBetTo: maxPlayer._rawCurrentBet,
+    rawStack: maxPlayer._rawStack,
+    cappedExcess: maxPlayer._cappedExcess,
+  } : {
+    rawAmount: maxPlayer._rawAmount,
+    rawBetTo: maxPlayer._rawCurrentBet,
+    rawStack: maxPlayer._rawStack,
+    cappedExcess: maxPlayer._cappedExcess,
+  };
+
+  if (maxPlayer.currentBet <= facingBefore && facingBefore > 0) {
+    const callChips = Math.max(0, Math.round((maxPlayer.currentBet - prevPlayerBetBefore) * 100) / 100);
+    const matchedLevel = opp?.lastAction?.raiseLevel ?? (h.street === 'preflop' ? 1 : 0);
+    maxPlayer.lastAction = {
+      ...prevRawMeta,
+      type: 'call',
+      amount: maxPlayer.currentBet,
+      callAmount: callChips,
+      raiseLevel: matchedLevel,
+      effectiveType: 'call',
+      effectiveAction: 'Call',
+      effectiveRaiseLevel: matchedLevel,
+      effectiveDidIncrease: false,
+      effectiveAmount: maxPlayer.currentBet,
+      effectiveBetTo: maxPlayer.currentBet,
+      effectiveStack: maxPlayer.stack,
+      isEffective: true,
+    };
+    if (targetEntry) {
+      if (targetEntry.rawBetTo == null) targetEntry.rawBetTo = targetEntry.betTo;
+      if (targetEntry.rawChips == null) targetEntry.rawChips = targetEntry.chips;
+      if (targetEntry.rawAmount == null) targetEntry.rawAmount = targetEntry.rawBetTo;
+      targetEntry.action = 'Call';
+      targetEntry.effectiveAction = 'Call';
+      targetEntry.effectiveType = 'call';
+      targetEntry.chips = callChips;
+      targetEntry.betTo = maxPlayer.currentBet;
+      targetEntry.effectiveChips = callChips;
+      targetEntry.effectiveBetTo = maxPlayer.currentBet;
+      targetEntry.effectiveAmount = maxPlayer.currentBet;
+      targetEntry.cappedExcess = maxPlayer._cappedExcess;
+      targetEntry.raiseLevel = matchedLevel;
+      targetEntry.isAggressive = false;
+    }
   } else {
-    if (otherMaxBet > 0) h.lastRaiseAmount = maxPlayer.currentBet - otherMaxBet;
-    else h.lastRaiseAmount = h.bigBlind;
+    const isRaise = facingBefore > 0 || h.street === 'preflop';
+    const nextLevel = targetEntry?.raiseLevel ?? maxPlayer.lastAction?.raiseLevel ?? (isRaise ? 2 : 1);
+    const effType = (maxPlayer.stack === 0 && !isRaise) ? 'allin' : (isRaise ? 'raise' : 'bet');
+    const effLabel = actionLabel({ type: effType, raiseLevel: nextLevel });
+    maxPlayer.lastAction = {
+      ...prevRawMeta,
+      type: effType,
+      amount: maxPlayer.currentBet,
+      raiseLevel: nextLevel,
+      didIncrease: true,
+      facingBet: facingBefore,
+      effectiveType: effType,
+      effectiveAction: effLabel,
+      effectiveRaiseLevel: nextLevel,
+      effectiveDidIncrease: true,
+      effectiveAmount: maxPlayer.currentBet,
+      effectiveBetTo: maxPlayer.currentBet,
+      effectiveStack: maxPlayer.stack,
+      isEffective: true,
+    };
+    if (targetEntry) {
+      if (targetEntry.rawBetTo == null) targetEntry.rawBetTo = targetEntry.betTo;
+      if (targetEntry.rawChips == null) targetEntry.rawChips = targetEntry.chips;
+      if (targetEntry.rawAmount == null) targetEntry.rawAmount = targetEntry.rawBetTo;
+      targetEntry.action = effLabel;
+      targetEntry.effectiveAction = effLabel;
+      targetEntry.effectiveType = effType;
+      targetEntry.chips = maxPlayer.currentBet;
+      targetEntry.betTo = maxPlayer.currentBet;
+      targetEntry.effectiveChips = maxPlayer.currentBet;
+      targetEntry.effectiveBetTo = maxPlayer.currentBet;
+      targetEntry.effectiveAmount = maxPlayer.currentBet;
+      targetEntry.cappedExcess = maxPlayer._cappedExcess;
+      targetEntry.raiseLevel = nextLevel;
+      targetEntry.isAggressive = true;
+    }
+  }
+
+  if (Array.isArray(h.actionHistory) && targetEntryIdx >= 0) {
+    for (let idx = targetEntryIdx; idx < h.actionHistory.length; idx++) {
+      const entry = h.actionHistory[idx];
+      if (entry.street === h.street && typeof entry.pot === 'number') {
+        entry.pot = Math.max(0, Math.round((entry.pot - excess) * 100) / 100);
+      }
+    }
+  }
+
+  h.currentBet = Math.max(0, ...nonFolded.map((p) => p.currentBet || 0));
+  if (maxPlayer.currentBet <= facingBefore && facingBefore > 0) {
+    h.raiseLevel = opp?.lastAction?.raiseLevel ?? (h.street === 'preflop' ? 1 : 0);
+    h.lastRaiseAmount = h.bigBlind || h.bombAmount || 10;
+  } else {
+    h.lastRaiseAmount = Math.max(
+      maxPlayer.currentBet - facingBefore,
+      h.bigBlind || h.bombAmount || 10
+    );
   }
 }
 
@@ -1240,19 +1356,40 @@ export function mandatoryCallBlocker(hand, playerIndex) {
   return { label, reason: `${label}: calling or limping is not allowed until there is ${what}${where}. Raise or fold.` };
 }
 
-export function applyAction(hand, playerId, type, amount) {
+export function applyAction(hand, playerId, type, amount, opts = {}) {
   const h = clone(hand);
   h._refundsApplied = false;
   if (h.ootActions) h.ootActions = h.ootActions.filter((o) => o.playerId !== playerId);
   const p = h.players[playerId];
+  const resolveEffective = Boolean(opts && opts.resolveEffective);
 
-  const otherNonFolded = h.players.filter((o) => o.id !== playerId && o.status !== 'folded');
+  const prevPlayerBet = p.currentBet || 0;
+  const prevPlayerStack = p.stack || 0;
+  const prevGlobalBet = h.currentBet || 0;
+  const prevGlobalRaiseLevel = h.raiseLevel || (h.street === 'preflop' ? 1 : 0);
+  const otherNonFolded = h.players.filter((o) => o.id !== p.id && o.status !== 'folded');
   const othersHaveChips = otherNonFolded.some((o) => (o.stack || 0) > 0);
   const otherMaxBet = otherNonFolded.length > 0 ? Math.max(...otherNonFolded.map((o) => o.currentBet || 0)) : 0;
-  const toCall = Math.max(0, h.currentBet - p.currentBet);
+  const maxOther = otherNonFolded.length > 0 ? Math.max(...otherNonFolded.map((o) => (o.currentBet || 0) + (o.stack || 0))) : Infinity;
+  const toCall = Math.max(0, prevGlobalBet - prevPlayerBet);
 
+  const rawInputType = type;
+  const rawDesiredTotal = rawInputType === 'allin'
+    ? (prevPlayerBet + prevPlayerStack)
+    : (rawInputType === 'bet' || rawInputType === 'raise')
+    ? Math.min(Number(amount) || 0, prevPlayerBet + prevPlayerStack)
+    : rawInputType === 'call'
+    ? Math.min(prevPlayerBet + toCall, prevPlayerBet + prevPlayerStack)
+    : 0;
+  const rawWentAllIn = (rawInputType === 'allin' && prevPlayerStack > 0)
+    || ((rawInputType === 'bet' || rawInputType === 'raise' || rawInputType === 'call') && prevPlayerStack > 0 && rawDesiredTotal >= prevPlayerBet + prevPlayerStack);
+  const rawIsRaise = prevGlobalBet > 0 || h.street === 'preflop';
+  const rawIncreased = (rawInputType === 'bet' || rawInputType === 'raise' || rawInputType === 'allin') && rawDesiredTotal > prevGlobalBet;
+  const rawLevelGuess = rawIncreased ? (rawIsRaise ? (prevGlobalRaiseLevel || 1) + 1 : 1) : prevGlobalRaiseLevel;
+
+  let convertedCapLimit = null;
   if ((type === 'bet' || type === 'raise') && toCall > 0) {
-    if (!othersHaveChips || (amount != null && (amount <= otherMaxBet || amount <= toCall + p.currentBet))) {
+    if (!othersHaveChips || (amount != null && (amount <= otherMaxBet || amount <= toCall + prevPlayerBet))) {
       type = 'call';
     }
   }
@@ -1261,6 +1398,33 @@ export function applyAction(hand, playerId, type, amount) {
     if (!isMakeableBet(h, amount)) {
       const min = minChipInPlay(h);
       return { error: `Bet must be a multiple of ${min}.` };
+    }
+  }
+
+  if (resolveEffective && (type === 'bet' || type === 'raise' || type === 'allin')) {
+    const desiredTotal = type === 'allin'
+      ? prevPlayerBet + p.stack
+      : Math.min(Number(amount) || 0, prevPlayerBet + p.stack);
+    if (maxOther < Infinity && desiredTotal > maxOther) {
+      const cappedTotal = Math.max(prevPlayerBet, maxOther);
+      p._cappedExcess = desiredTotal - cappedTotal;
+      p._rawAmount = desiredTotal;
+      p._rawStack = (rawWentAllIn ? 0 : Math.max(0, (prevPlayerBet + prevPlayerStack) - desiredTotal));
+      p._rawCurrentBet = desiredTotal;
+      p._rawTotalBet = p.totalBet + (desiredTotal - prevPlayerBet);
+      p._effectiveCapped = true;
+      if (cappedTotal <= prevGlobalBet && toCall > 0) {
+        type = 'call';
+        convertedCapLimit = maxOther;
+      } else if (cappedTotal <= prevPlayerBet && prevGlobalBet === 0) {
+        type = 'check';
+        amount = undefined;
+      } else if (cappedTotal < prevPlayerBet + p.stack) {
+        type = (prevGlobalBet > 0 || h.street === 'preflop') ? 'raise' : 'bet';
+        amount = cappedTotal;
+      }
+    } else if (type === 'allin' && toCall > 0 && prevPlayerBet + p.stack <= prevGlobalBet) {
+      type = 'call';
     }
   }
 
@@ -1274,14 +1438,24 @@ export function applyAction(hand, playerId, type, amount) {
     p.lastAction = { type: 'check' };
     p.hasActed = true;
   } else if (type === 'call') {
-    const mandatoryBlock = mandatoryCallBlocker(h, h.players.findIndex((o) => o.id === playerId));
+    const mandatoryBlock = mandatoryCallBlocker(h, h.players.findIndex((o) => o.id === p.id));
     if (mandatoryBlock) return { error: mandatoryBlock.reason };
-    const pay = Math.min(toCall, p.stack);
-    p.stack -= pay;
-    p.currentBet += pay;
-    p.totalBet += pay;
+    const targetPay = convertedCapLimit != null
+      ? Math.min(toCall, Math.max(0, convertedCapLimit - prevPlayerBet))
+      : toCall;
+    const pay = Math.min(targetPay, p.stack);
+    p.stack = Math.max(0, Math.round((p.stack - pay) * 100) / 100);
+    p.currentBet = Math.round((p.currentBet + pay) * 100) / 100;
+    p.totalBet = Math.round((p.totalBet + pay) * 100) / 100;
     const isShortAllinCall = p.stack === 0 && p.currentBet < h.currentBet;
-    p.lastAction = { type: isShortAllinCall ? 'allin' : 'call', amount: p.currentBet, callAmount: pay, raiseLevel: h.raiseLevel || 1 };
+    const actionType = (isShortAllinCall && !resolveEffective) ? 'allin' : 'call';
+    p.lastAction = {
+      type: actionType,
+      amount: p.currentBet,
+      callAmount: pay,
+      raiseLevel: h.raiseLevel || 1,
+      ...(resolveEffective ? { isEffective: true } : {}),
+    };
     p.hasActed = true;
     if (p.stack === 0) p.status = 'allin';
     if (h.ootActions) h.ootActions = h.ootActions.filter((o) => o.playerId !== p.id);
@@ -1289,21 +1463,20 @@ export function applyAction(hand, playerId, type, amount) {
     const raiseTo = amount;
     const pay = Math.max(0, raiseTo - p.currentBet);
     const actual = Math.min(pay, p.stack);
-    p.stack -= actual;
-    p.currentBet += actual;
-    p.totalBet += actual;
-    const isRaise = h.currentBet > 0 || h.street === 'preflop';
-    const increased = p.currentBet > h.currentBet;
+    p.stack = Math.max(0, Math.round((p.stack - actual) * 100) / 100);
+    p.currentBet = Math.round((p.currentBet + actual) * 100) / 100;
+    p.totalBet = Math.round((p.totalBet + actual) * 100) / 100;
+    const isRaise = prevGlobalBet > 0 || h.street === 'preflop';
+    const increased = p.currentBet > prevGlobalBet;
     const wentAllin = p.stack === 0;
-    const prevBet = h.currentBet;
     const prevLastRaise = h.lastRaiseAmount || h.bigBlind || h.bombAmount || 10;
-    const isShortRaise = wentAllin && increased && (p.currentBet - prevBet) < prevLastRaise;
+    const isShortRaise = wentAllin && increased && (p.currentBet - prevGlobalBet) < prevLastRaise;
     let level = h.raiseLevel;
     if (increased) {
       h.raiseLevel = isRaise ? (h.raiseLevel || 1) + 1 : 1;
       if (h.raiseLevel >= 3) h.threeBetOccurred = true;
       level = h.raiseLevel;
-      h.lastRaiseAmount = p.currentBet - prevBet;
+      h.lastRaiseAmount = p.currentBet - prevGlobalBet;
       h.currentBet = p.currentBet;
       if (!isShortRaise) {
         h.shortAllinOpen = false;
@@ -1320,31 +1493,68 @@ export function applyAction(hand, playerId, type, amount) {
         });
       }
     }
-    if (wentAllin) {
+    if (wentAllin && !resolveEffective) {
       p.lastAction = { type: 'allin', amount: p.currentBet, raiseLevel: level, didIncrease: increased };
       p.status = 'allin';
+    } else if (wentAllin && resolveEffective) {
+      if (!increased) {
+        p.lastAction = {
+          type: 'call',
+          amount: p.currentBet,
+          callAmount: actual,
+          raiseLevel: prevGlobalRaiseLevel || 1,
+          isEffective: true,
+        };
+      } else if (isRaise) {
+        p.lastAction = {
+          type: 'raise',
+          amount: p.currentBet,
+          raiseLevel: level,
+          didIncrease: true,
+          facingBet: prevGlobalBet,
+          isEffective: true,
+        };
+      } else {
+        p.lastAction = {
+          type: 'allin',
+          amount: p.currentBet,
+          raiseLevel: level,
+          didIncrease: true,
+          facingBet: 0,
+          isEffective: true,
+        };
+      }
+      p.status = 'allin';
     } else {
-      const actionType = isRaise ? 'raise' : 'bet';
-      p.lastAction = { type: actionType, amount: p.currentBet, raiseLevel: level, didIncrease: increased };
+      const actionType = !increased && resolveEffective ? 'call' : (isRaise ? 'raise' : 'bet');
+      p.lastAction = {
+        type: actionType,
+        amount: p.currentBet,
+        ...(actionType === 'call' ? { callAmount: actual } : {}),
+        raiseLevel: level,
+        didIncrease: increased,
+        facingBet: prevGlobalBet,
+        ...(resolveEffective ? { isEffective: true } : {}),
+      };
     }
     p.hasActed = true;
   } else if (type === 'allin') {
     const pay = p.stack;
-    const prevBet = h.currentBet;
     const prevLastRaise = h.lastRaiseAmount || h.bigBlind || h.bombAmount || 10;
     p.stack = 0;
-    p.currentBet += pay;
-    p.totalBet += pay;
+    p.currentBet = Math.round((p.currentBet + pay) * 100) / 100;
+    p.totalBet = Math.round((p.totalBet + pay) * 100) / 100;
     const newBet = p.currentBet;
-    const increased = newBet > prevBet;
-    const isShortRaise = increased && (newBet - prevBet) < prevLastRaise;
-    const isCoveredCall = newBet <= prevBet;
+    const increased = newBet > prevGlobalBet;
+    const isShortRaise = increased && (newBet - prevGlobalBet) < prevLastRaise;
+    const isCoveredCall = newBet <= prevGlobalBet;
+    const isRaise = prevGlobalBet > 0 || h.street === 'preflop';
     let level = h.raiseLevel;
     if (increased && !isCoveredCall) {
-      h.raiseLevel = (prevBet > 0 || h.street === 'preflop') ? (h.raiseLevel || 1) + 1 : 1;
+      h.raiseLevel = isRaise ? (h.raiseLevel || 1) + 1 : 1;
       if (h.raiseLevel >= 3) h.threeBetOccurred = true;
       level = h.raiseLevel;
-      h.lastRaiseAmount = newBet - prevBet;
+      h.lastRaiseAmount = newBet - prevGlobalBet;
       h.currentBet = newBet;
       if (!isShortRaise) {
         h.shortAllinOpen = false;
@@ -1361,7 +1571,37 @@ export function applyAction(hand, playerId, type, amount) {
         });
       }
     }
-    p.lastAction = { type: 'allin', amount: newBet, raiseLevel: level, didIncrease: increased && !isCoveredCall };
+    if (resolveEffective) {
+      if (isCoveredCall) {
+        p.lastAction = {
+          type: 'call',
+          amount: newBet,
+          callAmount: pay,
+          raiseLevel: prevGlobalRaiseLevel || 1,
+          isEffective: true,
+        };
+      } else if (isRaise) {
+        p.lastAction = {
+          type: 'raise',
+          amount: newBet,
+          raiseLevel: level,
+          didIncrease: true,
+          facingBet: prevGlobalBet,
+          isEffective: true,
+        };
+      } else {
+        p.lastAction = {
+          type: 'allin',
+          amount: newBet,
+          raiseLevel: level,
+          didIncrease: true,
+          facingBet: 0,
+          isEffective: true,
+        };
+      }
+    } else {
+      p.lastAction = { type: 'allin', amount: newBet, raiseLevel: level, didIncrease: increased && !isCoveredCall };
+    }
     p.hasActed = true;
     p.status = 'allin';
   } else if (type === 'straddle') {
@@ -1406,25 +1646,106 @@ export function applyAction(hand, playerId, type, amount) {
     )
   );
 
+  // Compute both raw (amounts hidden) and effective (amounts shown) labels/types so
+  // toggling hideAmounts mid-hand cleanly updates previous actions in either direction.
+  let rawActionStr = actionLabel(p.lastAction);
+  let rawLastType = p.lastAction?.type || rawInputType;
+  if (rawInputType !== 'fold' && rawInputType !== 'check') {
+    if (rawWentAllIn) {
+      rawActionStr = 'All-in';
+      rawLastType = 'allin';
+    } else if (rawInputType === 'call' || type === 'call') {
+      rawActionStr = 'Call';
+      rawLastType = 'call';
+    } else if (rawInputType === 'bet' || rawInputType === 'raise') {
+      const rType = rawIsRaise ? 'raise' : 'bet';
+      rawActionStr = actionLabel({ type: rType, raiseLevel: rawLevelGuess });
+      rawLastType = rType;
+    } else if (rawInputType === 'straddle') {
+      rawActionStr = 'Straddle';
+      rawLastType = 'straddle';
+    }
+  }
+
+  let effActionStr = actionLabel(p.lastAction);
+  let effLastType = p.lastAction?.type || rawInputType;
+  let effRaiseLevel = p.lastAction?.raiseLevel ?? h.raiseLevel ?? 0;
+  let effDidIncrease = Boolean(p.lastAction?.didIncrease);
+  if (rawInputType !== 'fold' && rawInputType !== 'check' && rawInputType !== 'straddle') {
+    if (!resolveEffective && rawWentAllIn) {
+      const coveredCall = (p.currentBet || 0) <= prevGlobalBet && prevGlobalBet > 0;
+      if (coveredCall) {
+        effLastType = 'call';
+        effActionStr = 'Call';
+        effRaiseLevel = prevGlobalRaiseLevel || 1;
+        effDidIncrease = false;
+      } else if (rawIsRaise) {
+        effLastType = 'raise';
+        effRaiseLevel = p.lastAction?.raiseLevel ?? rawLevelGuess;
+        effActionStr = actionLabel({ type: 'raise', raiseLevel: effRaiseLevel });
+        effDidIncrease = true;
+      } else {
+        effLastType = 'allin';
+        effActionStr = 'All-in';
+        effDidIncrease = true;
+      }
+    }
+  }
+
+  if (p.lastAction) {
+    p.lastAction.rawType = rawLastType;
+    p.lastAction.rawAction = rawActionStr;
+    p.lastAction.rawWentAllIn = rawWentAllIn;
+    p.lastAction.rawRaiseLevel = rawLevelGuess;
+    p.lastAction.rawDidIncrease = rawIncreased;
+    p.lastAction.rawAmount = p._rawAmount != null ? p._rawAmount : (rawWentAllIn ? rawDesiredTotal : (p.lastAction.amount ?? p.currentBet));
+    p.lastAction.rawBetTo = p._rawCurrentBet != null ? p._rawCurrentBet : (p.lastAction.rawAmount ?? p.currentBet);
+    p.lastAction.rawStack = p._rawStack != null ? p._rawStack : (rawWentAllIn ? 0 : p.stack);
+    p.lastAction.cappedExcess = p._cappedExcess || 0;
+    p.lastAction.effectiveType = effLastType;
+    p.lastAction.effectiveAction = effActionStr;
+    p.lastAction.effectiveRaiseLevel = effRaiseLevel;
+    p.lastAction.effectiveDidIncrease = effDidIncrease;
+    p.lastAction.effectiveAmount = p.currentBet;
+    p.lastAction.effectiveBetTo = p.currentBet;
+    p.lastAction.effectiveStack = p.stack;
+    if (p.lastAction.facingBet == null && rawInputType !== 'fold' && rawInputType !== 'check') {
+      p.lastAction.facingBet = prevGlobalBet;
+    }
+  }
+
+  const displayedActionStr = actionLabel(p.lastAction);
+  const rawActionBetTo = p.lastAction?.rawBetTo ?? rawDesiredTotal;
+  const rawActionChips = rawActionBetTo - prevPlayerBet;
+
   h.actionHistory.push({
     street: h.street,
     player: p.name,
-    action: actionLabel(p.lastAction),
+    playerId: p.id,
+    action: displayedActionStr,
+    rawAction: rawActionStr,
+    rawType: rawLastType,
+    rawWentAllIn,
+    rawAmount: p.lastAction?.rawAmount ?? rawDesiredTotal,
+    rawBetTo: rawActionBetTo,
+    rawChips: rawActionChips,
+    effectiveAction: effActionStr,
+    effectiveType: effLastType,
+    effectiveAmount: p.currentBet || 0,
+    effectiveBetTo: p.currentBet || 0,
+    effectiveChips: chips,
+    cappedExcess: p._cappedExcess || 0,
     chips,
     betTo: p.currentBet || 0,
+    prevBet: prevPlayerBet,
+    facingBet: prevGlobalBet,
     raiseLevel: p.lastAction?.raiseLevel ?? h.raiseLevel ?? 0,
     isAggressive,
     pot: potAfter,
   });
 
-  if (h._pendingCappedAction) {
-    h._pendingCappedAction = false;
-    const entry = h.actionHistory[h.actionHistory.length - 1];
-    if (entry && entry.player === p.name && entry.street === h.street) {
-      entry.action = actionLabel(p.lastAction);
-      entry.chips = p.currentBet;
-      entry.pot = potTotal(h);
-    }
+  if (resolveEffective) {
+    applyOversizedCap(h);
   }
 
   if (h.variant === 'crazy_pineapple' && h.street === 'preflop' && p.status === 'allin') {
@@ -1478,6 +1799,7 @@ export function applyAction(hand, playerId, type, amount) {
         h.players.forEach((pl) => {
           pl.currentBet = 0;
           pl._oversizedCap = undefined;
+          pl._effectiveCapped = false;
           const isCapped = pl._wasCapped || pl._allInCapped;
           if (pl.status === 'active' && !isCapped) {
             pl.hasActed = false;
@@ -1510,6 +1832,139 @@ export function applyAction(hand, playerId, type, amount) {
   return h;
 }
 
+export function reconcileHandHideAmounts(hand, nextHideAmounts) {
+  if (!hand) return hand;
+  const h = clone(hand);
+  const hide = Boolean(nextHideAmounts);
+
+  if (Array.isArray(h.actionHistory)) {
+    h.actionHistory = h.actionHistory.map((entry) => {
+      if (!entry) return entry;
+      const nextEntry = { ...entry };
+      if (hide) {
+        if (nextEntry.effectiveAction == null) nextEntry.effectiveAction = nextEntry.action;
+        if (nextEntry.effectiveBetTo == null) nextEntry.effectiveBetTo = nextEntry.betTo;
+        if (nextEntry.effectiveChips == null) nextEntry.effectiveChips = nextEntry.chips;
+        if (nextEntry.rawAction != null) {
+          nextEntry.action = nextEntry.rawAction;
+        } else if (nextEntry.rawWentAllIn || nextEntry.rawType === 'allin') {
+          nextEntry.action = 'All-in';
+        }
+        if (nextEntry.rawBetTo != null) nextEntry.betTo = nextEntry.rawBetTo;
+        else if (nextEntry.cappedExcess) nextEntry.betTo += nextEntry.cappedExcess;
+        if (nextEntry.rawChips != null) nextEntry.chips = nextEntry.rawChips;
+        else if (nextEntry.cappedExcess) nextEntry.chips += nextEntry.cappedExcess;
+      } else {
+        if (nextEntry.rawAction == null) nextEntry.rawAction = nextEntry.action;
+        if (nextEntry.rawBetTo == null) nextEntry.rawBetTo = nextEntry.betTo;
+        if (nextEntry.rawChips == null) nextEntry.rawChips = nextEntry.chips;
+        if (nextEntry.effectiveAction != null) {
+          nextEntry.action = nextEntry.effectiveAction;
+        }
+        if (nextEntry.effectiveBetTo != null) nextEntry.betTo = nextEntry.effectiveBetTo;
+        if (nextEntry.effectiveChips != null) nextEntry.chips = nextEntry.effectiveChips;
+      }
+      return nextEntry;
+    });
+  }
+
+  if (Array.isArray(h.players)) {
+    h.players = h.players.map((p) => {
+      if (!p) return p;
+      const nextP = { ...p };
+      const la = nextP.lastAction ? { ...nextP.lastAction } : null;
+
+      if (hide) {
+        const hasCappedExcess = (nextP._cappedExcess && nextP._cappedExcess > 0) || (la && la.cappedExcess > 0);
+        if (nextP._effectiveCapped || hasCappedExcess || (la && la.rawAmount > la.amount)) {
+          const excess = nextP._cappedExcess || la?.cappedExcess || 0;
+          const rawAmt = nextP._rawAmount || la?.rawAmount || (nextP.currentBet + excess);
+          const rawStk = nextP._rawStack != null ? nextP._rawStack : Math.max(0, nextP.stack - excess);
+          const rawCurBet = nextP._rawCurrentBet != null ? nextP._rawCurrentBet : (nextP.currentBet + excess);
+          const rawTotBet = nextP._rawTotalBet != null ? nextP._rawTotalBet : (nextP.totalBet + excess);
+
+          nextP.stack = rawStk;
+          nextP.currentBet = rawCurBet;
+          nextP.totalBet = rawTotBet;
+          if (rawStk === 0 || la?.rawWentAllIn || la?.rawType === 'allin') {
+            nextP.status = 'allin';
+          }
+          if (la) {
+            la.amount = rawAmt;
+            la.type = 'allin';
+            la.isEffective = false;
+          }
+        }
+
+        if (la) {
+          if (la.effectiveType == null && la.isEffective) la.effectiveType = la.type;
+          if (la.effectiveAction == null && la.isEffective) la.effectiveAction = actionLabel(la);
+          if (la.effectiveRaiseLevel == null && la.isEffective) la.effectiveRaiseLevel = la.raiseLevel;
+          if (la.effectiveDidIncrease == null && la.isEffective) la.effectiveDidIncrease = la.didIncrease;
+
+          if (la.type !== 'fold' && la.type !== 'check') {
+            if (la.rawWentAllIn || la.rawType === 'allin' || nextP.status === 'allin' || (nextP.stack || 0) <= 0) {
+              la.type = 'allin';
+              if (la.rawAmount != null) la.amount = la.rawAmount;
+            } else if (la.rawType) {
+              la.type = la.rawType;
+              if (la.rawAmount != null) la.amount = la.rawAmount;
+              if (la.rawRaiseLevel != null) la.raiseLevel = la.rawRaiseLevel;
+              if (la.rawDidIncrease != null) la.didIncrease = la.rawDidIncrease;
+            }
+          }
+          la.isEffective = false;
+        }
+      } else {
+        if (la) {
+          if (la.effectiveType) {
+            la.type = la.effectiveType;
+            if (la.effectiveAmount != null) la.amount = la.effectiveAmount;
+            if (la.effectiveRaiseLevel != null) la.raiseLevel = la.effectiveRaiseLevel;
+            if (la.effectiveDidIncrease != null) la.didIncrease = la.effectiveDidIncrease;
+            la.isEffective = true;
+          } else if (
+            (nextP.status === 'allin' || (nextP.stack || 0) <= 0 || la.type === 'allin') &&
+            la.type !== 'fold' &&
+            la.type !== 'check' &&
+            la.facingBet != null
+          ) {
+            if ((la.amount || 0) <= (la.facingBet || 0) && la.facingBet > 0) {
+              la.type = 'call';
+              la.isEffective = true;
+            } else if ((la.facingBet || 0) > 0 || h.street === 'preflop') {
+              la.type = 'raise';
+              la.isEffective = true;
+            }
+          }
+        }
+      }
+      return { ...nextP, lastAction: la };
+    });
+  }
+
+  h.currentBet = Math.max(0, ...h.players.filter((p) => p.status !== 'folded').map((p) => p.currentBet || 0));
+
+  if (!hide && h.phase !== 'awarded') {
+    applyOversizedCap(h);
+  }
+
+  return h;
+}
+
+export function getOotAggressiveLevel(hand, targetBet) {
+  if (!hand) return 2;
+  const street = hand.street || 'preflop';
+  if (street === 'preflop') {
+    const curLevel = Number(hand.raiseLevel) || 1;
+    return Math.max(2, curLevel + 1);
+  }
+  const curBet = Number(hand.currentBet) || 0;
+  if (curBet === 0) return 1;
+  const curLevel = Number(hand.raiseLevel) || 1;
+  return Math.max(2, curLevel + 1);
+}
+
 export function recordOutOfTurn(hand, playerId, kind, amount) {
   const h = clone(hand);
   if (!h.ootActions) h.ootActions = [];
@@ -1523,18 +1978,7 @@ export function recordOutOfTurn(hand, playerId, kind, amount) {
     raiseLevel: null,
   };
   if (kind === 'aggressive' && parsedAmount != null && parsedAmount > 0) {
-    const p = h.players.find((pl) => pl.id === playerId);
-    const targetBet = parsedAmount;
-    if (p) {
-      const tiers = new Set(
-        h.players
-          .filter((pl) => pl.status !== 'folded' && pl.currentBet > 0)
-          .map((pl) => (pl.id === playerId ? targetBet : pl.currentBet))
-      );
-      tiers.add(targetBet);
-      const sorted = [...tiers].sort((a, b) => a - b);
-      entry.raiseLevel = sorted.length;
-    }
+    entry.raiseLevel = getOotAggressiveLevel(h, parsedAmount);
   }
   h.ootActions.push(entry);
   if (kind === 'passive') {
@@ -1583,6 +2027,7 @@ export function dealNextStreet(hand, cards = [], hidden = false) {
   h.players.forEach((p) => {
     p.currentBet = 0;
     p._oversizedCap = undefined;
+    p._effectiveCapped = false;
     if (p.stack === 0 && p.status !== 'folded') {
       p.status = 'allin';
     }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { money, parseAmount } from '@/lib/poker';
+import { money, parseAmount, getOotAggressiveLevel } from '@/lib/poker';
 
 export default function OutOfTurnRecorder({ hand, onFoldOutOfTurn, onRecordOutOfTurn }) {
   const [open, setOpen] = useState(false);
@@ -10,6 +10,22 @@ export default function OutOfTurnRecorder({ hand, onFoldOutOfTurn, onRecordOutOf
 
   useEffect(() => { setOpen(false); setSelId(''); setKind(''); setAmount(''); setLogged(null); }, [hand?.handNumber, hand?.street]);
   useEffect(() => { if (!open) { setKind(''); setAmount(''); setLogged(null); } }, [open, selId]);
+
+  // Desktop 'O' shortcut to toggle the Out of Turn action menu
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'o' || e.key === 'O') {
+        const tag = document.activeElement?.tagName?.toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || document.activeElement?.isContentEditable) {
+          return;
+        }
+        e.preventDefault();
+        setOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   if (!hand || hand.phase !== 'playing' || hand.currentPlayer < 0) return null;
 
@@ -33,17 +49,10 @@ export default function OutOfTurnRecorder({ hand, onFoldOutOfTurn, onRecordOutOf
       const parsed = parseAmount(amount);
       if (parsed == null || parsed <= 0) return;
       if (onRecordOutOfTurn) onRecordOutOfTurn(p.id, 'aggressive', parsed);
-      let tier = 'bet/raise';
-      const targetBet = parsed;
-      const tiers = new Set(
-        hand.players
-          .filter((pl) => pl.status !== 'folded' && pl.currentBet > 0)
-          .map((pl) => (pl.id === p.id ? targetBet : pl.currentBet))
-      );
-      tiers.add(targetBet);
-      const lvl = [...tiers].sort((a, b) => a - b).length;
-      tier = lvl <= 1 ? 'bet' : lvl === 2 ? 'raise' : `${lvl}-bet`;
-      setLogged(`${p.name} OOT: ${tier} ${money(parsed, cur)} (binding if action unchanged)`);
+      const lvl = getOotAggressiveLevel(hand, parsed);
+      const tier = lvl <= 1 ? 'bet' : lvl === 2 ? 'raise' : `${lvl}-bet`;
+      const sep = lvl >= 2 ? 'to ' : '';
+      setLogged(`${p.name} OOT: ${tier} ${sep}${money(parsed, cur)} (binding if action unchanged)`);
     }
     setKind('');
     setAmount('');
@@ -55,7 +64,10 @@ export default function OutOfTurnRecorder({ hand, onFoldOutOfTurn, onRecordOutOf
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between text-left cursor-pointer"
       >
-        <span className="text-xs text-slate-400 uppercase tracking-wider">Out of turn action</span>
+        <span className="text-xs text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+          <span>Out of turn action</span>
+          <span className="hidden sm:inline-block px-1.5 py-0.2 bg-[#2a2f37] border border-[#3b434e] text-slate-300 rounded text-[10px] font-mono">O</span>
+        </span>
         <span className="text-xs text-slate-500">{open ? '– hide' : '+ record'}</span>
       </button>
       {open && (
