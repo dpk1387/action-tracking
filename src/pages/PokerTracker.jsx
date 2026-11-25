@@ -1239,14 +1239,19 @@ export default function PokerTracker() {
   };
 
   // Restarts play after a bust when the structure still allows a re-entry or rebuy.
-  const handleBustRecovery = (elim, kind) => {
+  const handleBustRecovery = (elim, kind, force = false) => {
     const rec = bustRecovery;
     if (!rec?.appliedHand) return;
     const base = rec.baseHand || {};
     const isRebuy = kind === 'rebuy';
     const offer = rec.plan?.offers?.find((o) => o.elim?.seat === elim.seat && o.elim?.name === elim.name);
-    if (offer && !offer.allowed) return;
-    const stack = recoveryChips(base, offer || { kind, chips: isRebuy ? base.rebuyChips : base.startingStack });
+    // force = the host chose to keep the game going even though the format/rules blocked it
+    if (offer && !offer.allowed && !force) return;
+    const offerChips = Number(offer?.chips) > 0 ? Number(offer.chips) : 0;
+    const stack = recoveryChips(base, {
+      kind,
+      chips: offerChips || (isRebuy ? (base.rebuyChips || base.startingStack) : base.startingStack),
+    });
     const pending = {
       name: elim.name,
       seat: elim.seat,
@@ -1363,9 +1368,9 @@ export default function PokerTracker() {
         currentHand?.mode === 'cash' ? { ...e, chips: Number(frozenStacks?.[e.seat]) || 0 } : e
       ));
       const plan = buildBustRecovery(currentHand, busted);
-      if (plan.anyAllowed) {
-        // Busted players may still buy back in (cash games, re-entry or allowed rebuys);
-        // keep the session alive behind the prompt so heads-up play can continue.
+      // Always prompt: when the format forbids a re-entry the host can still override it
+      // (or end the tournament) instead of the session ending silently.
+      if (busted.length > 0) {
         setBustRecovery({ winner, busted, baseHand: currentHand, appliedHand: res.appliedHand, plan });
       } else {
         endTournament(winner, currentHand);
@@ -3120,6 +3125,7 @@ export default function PokerTracker() {
           recovery={bustRecovery}
           onReenter={(elim) => handleBustRecovery(elim, 'reentry')}
           onRebuy={(elim) => handleBustRecovery(elim, 'rebuy')}
+          onForce={(elim, kind) => handleBustRecovery(elim, kind, true)}
           onEnd={handleBustEnd}
         />
       )}
