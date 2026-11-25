@@ -3,6 +3,7 @@ import { X, FileSpreadsheet, Download, Loader2, ExternalLink } from 'lucide-reac
 import { useSession } from '@/lib/sessionStore';
 import HandHistoryCard from '@/components/poker/HandHistoryCard';
 import { exportHandsToGoogleSheet, exportHandsToCSV } from '@/lib/googleSheetsExport';
+import { downloadPokerStarsTxt } from '@/lib/pokerStarsExport';
 
 export default function HandHistoryModal({ onClose }) {
   const session = useSession();
@@ -40,6 +41,18 @@ export default function HandHistoryModal({ onClose }) {
     }
   };
 
+  const handleExportTxt = () => {
+    if (!hands.length) return;
+    try {
+      downloadPokerStarsTxt(hands, {
+        sessionKey: session.config?.sessionName || 'Session',
+        heroName: 'You',
+      });
+    } catch (e) {
+      setError(e?.message || 'Export to .txt failed.');
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-fade-in">
       <div className="bg-[#121417] border border-slate-700 w-full max-w-5xl max-h-[92vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden text-white">
@@ -71,6 +84,15 @@ export default function HandHistoryModal({ onClose }) {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportTxt}
+              disabled={!hands.length}
+              title="Download a PokerStars-format .txt hand history"
+              className="rounded-xl bg-slate-700 hover:bg-slate-600 text-xs px-3 py-2 font-bold flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow transition-colors"
+            >
+              <Download size={14} />
+              Export .txt
+            </button>
             <button
               onClick={handleExportCSV}
               disabled={!hands.length}

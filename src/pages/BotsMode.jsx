@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BarChart3, Download, ExternalLink, FileSpreadsheet, History, Layers, ListTree, Loader2, LogOut, Settings, SkipForward, Trophy } from 'lucide-react';
 import { applyAction, awardPots, bbaPotOpts, calcEquity, computePots, dealNextStreet, fillBoard, POS, positionForSeat, raiseLabel, refundUncontestedPots, startHand, tryAutoWinners } from '@/lib/poker';
 import { exportHandsToCSV, exportHandsToGoogleSheet } from '@/lib/googleSheetsExport';
+import { downloadPokerStarsTxt } from '@/lib/pokerStarsExport';
 import { generateGoDeck } from '@/lib/goMode';
 import {
   GAME_TYPES,
@@ -154,6 +155,8 @@ function buildHandRecord(hand, awarded, holes, levelLabel, live = false, pots = 
     mode: 'tournament',
     gameType: live ? 'live' : 'online',
     isLive: live,
+    variant: awarded.variant || 'nlh',
+    refunds: Array.isArray(awarded.refunds) ? awarded.refunds : undefined,
     level: levelLabel,
     smallBlind: awarded.smallBlind,
     bigBlind: awarded.bigBlind,
@@ -925,6 +928,24 @@ export default function BotsMode() {
     }
   }, [handRecords, game?.sessionName, setup?.sessionName, game?.seats, isLive]);
 
+  const handleExportTxt = useCallback(() => {
+    if (!handRecords.length) {
+      setExportError('No hand history available to export.');
+      return;
+    }
+    setExportError('');
+    try {
+      const customName = (game?.sessionName || setup?.sessionName || '').trim();
+      downloadPokerStarsTxt(handRecords, {
+        sessionKey: customName || 'Play_Bots',
+        heroName: 'You',
+        filenamePrefix: customName ? customName.replace(/\s+/g, '_') : 'Play_Bots_Hand_History',
+      });
+    } catch (e) {
+      setExportError(e?.message || 'Export to .txt failed.');
+    }
+  }, [handRecords, game?.sessionName, setup?.sessionName]);
+
   const handleExportSheets = useCallback(async () => {
     if (!handRecords.length || exporting) {
       if (!handRecords.length) setExportError('No hand history available to export.');
@@ -1235,6 +1256,14 @@ export default function BotsMode() {
                 <button type="button" onClick={() => setShowStats(true)} className="px-4 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Bot stats</button>
               )}
               <button type="button" onClick={() => setShowHistory(true)} className="px-4 py-2 rounded-xl bg-[#222834] hover:bg-[#2d3545] text-xs font-semibold cursor-pointer">Hand history</button>
+              <button
+                type="button"
+                onClick={handleExportTxt}
+                disabled={handRecords.length === 0}
+                className="px-4 py-2 rounded-xl bg-slate-600 hover:bg-slate-500 disabled:opacity-40 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download size={14} /> Export .txt
+              </button>
               <button
                 type="button"
                 onClick={handleExportCSV}
@@ -1578,6 +1607,14 @@ export default function BotsMode() {
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleExportTxt}
+                  disabled={handRecords.length === 0}
+                  className="px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download size={13} /> Export .txt
+                </button>
                 <button
                   type="button"
                   onClick={handleExportCSV}

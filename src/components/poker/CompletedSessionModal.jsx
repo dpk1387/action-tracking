@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Trash2, FileSpreadsheet, Calendar, Spade, Trophy } from 'lucide-react';
 import HandHistoryCard from '@/components/poker/HandHistoryCard';
 import { exportHandsToGoogleSheet, exportHandsToCSV } from '@/lib/googleSheetsExport';
+import { downloadPokerStarsTxt } from '@/lib/pokerStarsExport';
 import { Download } from 'lucide-react';
 
 export default function CompletedSessionModal({ session, onClose, onDelete }) {
@@ -30,6 +31,22 @@ export default function CompletedSessionModal({ session, onClose, onDelete }) {
       setExportError(e?.message || 'Failed to export to Google Sheets.');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleExportTxt = () => {
+    if (!hands.length) {
+      setExportError('No hand history available to export.');
+      return;
+    }
+    setExportError('');
+    try {
+      downloadPokerStarsTxt(hands, {
+        sessionKey: session.sessionName || session.title || 'Session',
+        heroName: 'You',
+      });
+    } catch (e) {
+      setExportError(e?.message || 'Export to .txt failed.');
     }
   };
 
@@ -84,6 +101,15 @@ export default function CompletedSessionModal({ session, onClose, onDelete }) {
         {/* Toolbar */}
         <div className="px-5 py-3 border-b border-slate-800/80 bg-[#12151c] flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportTxt}
+              disabled={hands.length === 0}
+              title="Download a PokerStars-format .txt hand history"
+              className="px-3.5 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow"
+            >
+              <Download size={14} />
+              Export .txt
+            </button>
             <button
               onClick={handleExportCSV}
               disabled={hands.length === 0}

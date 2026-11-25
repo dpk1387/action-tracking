@@ -4,6 +4,7 @@ import { ArrowLeft, FileSpreadsheet, Loader2, ExternalLink } from 'lucide-react'
 import { useSession } from '@/lib/sessionStore';
 import HandHistoryCard from '@/components/poker/HandHistoryCard';
 import { exportHandsToGoogleSheet, exportHandsToCSV } from '@/lib/googleSheetsExport';
+import { downloadPokerStarsTxt } from '@/lib/pokerStarsExport';
 import { Download } from 'lucide-react';
 
 export default function HandHistory() {
@@ -44,6 +45,18 @@ export default function HandHistory() {
     }
   };
 
+  const handleExportTxt = () => {
+    if (!hands.length) return;
+    try {
+      downloadPokerStarsTxt(hands, {
+        sessionKey: session.config?.sessionName || 'Session',
+        heroName: 'You',
+      });
+    } catch (e) {
+      setError(e?.message || 'Export to .txt failed.');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#121417] text-white">
       <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
@@ -73,6 +86,15 @@ export default function HandHistory() {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={handleExportTxt}
+              disabled={!hands.length}
+              title="Download a PokerStars-format .txt hand history"
+              className="rounded-lg bg-slate-700 hover:bg-slate-600 text-sm px-3.5 py-2 font-bold flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow transition-colors"
+            >
+              <Download size={16} />
+              Export .txt
+            </button>
             <button
               onClick={handleExportCSV}
               disabled={!hands.length}
