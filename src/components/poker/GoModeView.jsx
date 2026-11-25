@@ -1165,10 +1165,18 @@ export default function GoModeView({
               </div>
             </div>
 
-            {/* CENTER-RIGHT: Last Raise Info + Pot Size & Community Board */}
+            {/* CENTER-RIGHT: Pot Size + Last Raise Info & Community Board */}
             <div className="space-y-3 text-center md:text-right md:pl-2">
               <div className="flex flex-wrap items-start justify-center md:justify-end gap-4">
-                {/* Last Raise / Bet Info (left of Current Pot) */}
+                <div>
+                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Current Pot
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
+                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
+                  </div>
+                </div>
+                {/* Last Raise / Bet Info (right of the Current Pot) */}
                 <div className="bg-[#19202b] border border-slate-700/80 rounded-2xl px-3 py-2 text-left min-w-[130px]">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
                     Last Raise
@@ -1192,15 +1200,6 @@ export default function GoModeView({
                   ) : (
                     <div className="text-xs font-semibold text-slate-500">None</div>
                   )}
-                </div>
-
-                <div>
-                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Current Pot
-                  </div>
-                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
-                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
-                  </div>
                 </div>
               </div>
 
