@@ -185,7 +185,7 @@ function buildPotInfo(hand, players, contributed) {
   let refund = refunds.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
   let refundPlayerId = refunds[0]?.playerId ?? null;
   // The engine already took a recorded refund out of totalBet, so it must not
-  // be subtracted a second time.
+  // be subtracted a second time. The walked postings still include it.
   const refundAlreadyExcluded = refund > EPS;
 
   if (!refund && nonFolded.length === 1) {
@@ -391,9 +391,12 @@ function formatSingleHand(hand, ctx) {
       lines.push(`${p.name}: posts the ante ${num(paid)}${allIn ? ' and is all-in' : ''}`);
     });
   } else if (anteTotal > 0) {
-    const paidCount = players.filter((p) => p.antePaid > EPS).length;
-    const shares = paidCount === players.length
-      ? players.map((p) => p.antePaid)
+    // Post the ante on the seats the engine actually charged. A big blind ante
+    // is paid by the big blind, which is also how PokerStars writes it, and any
+    // even split here would make the exported pot disagree with the app's own
+    // ledger the moment a non-blind seat folds.
+    const shares = players.some((p) => p.antePaid > EPS)
+      ? players.map((p) => Math.max(0, p.antePaid || 0))
       : splitEven(anteTotal, players.length);
     players.forEach((p, i) => anteByPlayer.set(p.id, shares[i]));
     players.forEach((p) => {
@@ -444,11 +447,11 @@ function formatSingleHand(hand, ctx) {
   });
 
   const contributed = new Map();
-  const hasLedger = players.some((p) => p.totalBet > 0);
+  const walkedByPlayer = new Map(players.map((p) => [p.id, state.byPlayer.get(p.id)?.invested || 0]));
+  const hasLedger = players.some((p) => Number(p.totalBet) > 0);
   players.forEach((p) => {
-    const walked = state.byPlayer.get(p.id)?.invested || 0;
     // totalBet is the engine's ledger and already has any returned excess removed.
-    const chips = hasLedger ? p.totalBet : walked;
+    const chips = hasLedger ? p.totalBet : walkedByPlayer.get(p.id);
     contributed.set(p.id, Math.round(chips * 100) / 100);
   });
 
