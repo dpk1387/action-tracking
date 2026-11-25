@@ -1258,7 +1258,7 @@ function applyOversizedCap(h) {
   } else {
     const isRaise = facingBefore > 0 || h.street === 'preflop';
     const nextLevel = targetEntry?.raiseLevel ?? maxPlayer.lastAction?.raiseLevel ?? (isRaise ? 2 : 1);
-    const effType = (maxPlayer.stack === 0 && !isRaise) ? 'allin' : (isRaise ? 'raise' : 'bet');
+    const effType = (maxPlayer.stack === 0) ? 'allin' : (isRaise ? 'raise' : 'bet');
     const effLabel = actionLabel({ type: effType, raiseLevel: nextLevel });
     maxPlayer.lastAction = {
       ...prevRawMeta,
@@ -1505,6 +1505,15 @@ export function applyAction(hand, playerId, type, amount, opts = {}) {
           raiseLevel: prevGlobalRaiseLevel || 1,
           isEffective: true,
         };
+      } else if (p.stack === 0) {
+        p.lastAction = {
+          type: 'allin',
+          amount: p.currentBet,
+          raiseLevel: level,
+          didIncrease: true,
+          facingBet: prevGlobalBet,
+          isEffective: true,
+        };
       } else if (isRaise) {
         p.lastAction = {
           type: 'raise',
@@ -1578,6 +1587,15 @@ export function applyAction(hand, playerId, type, amount, opts = {}) {
           amount: newBet,
           callAmount: pay,
           raiseLevel: prevGlobalRaiseLevel || 1,
+          isEffective: true,
+        };
+      } else if (p.stack === 0) {
+        p.lastAction = {
+          type: 'allin',
+          amount: newBet,
+          raiseLevel: level,
+          didIncrease: true,
+          facingBet: prevGlobalBet,
           isEffective: true,
         };
       } else if (isRaise) {
@@ -1679,6 +1697,11 @@ export function applyAction(hand, playerId, type, amount, opts = {}) {
         effActionStr = 'Call';
         effRaiseLevel = prevGlobalRaiseLevel || 1;
         effDidIncrease = false;
+      } else if (p.stack === 0) {
+        effLastType = 'allin';
+        effActionStr = 'All-in';
+        effRaiseLevel = p.lastAction?.raiseLevel ?? rawLevelGuess;
+        effDidIncrease = true;
       } else if (rawIsRaise) {
         effLastType = 'raise';
         effRaiseLevel = p.lastAction?.raiseLevel ?? rawLevelGuess;
@@ -1933,7 +1956,7 @@ export function reconcileHandHideAmounts(hand, nextHideAmounts) {
               la.type = 'call';
               la.isEffective = true;
             } else if ((la.facingBet || 0) > 0 || h.street === 'preflop') {
-              la.type = 'raise';
+              la.type = (nextP.stack === 0) ? 'allin' : 'raise';
               la.isEffective = true;
             }
           }
