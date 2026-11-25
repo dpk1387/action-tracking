@@ -1,11 +1,11 @@
 import React from 'react';
-import { RotateCcw, Ban, UserPlus } from 'lucide-react';
+import { RotateCcw, Ban, UserPlus, RefreshCw } from 'lucide-react';
 import { money } from '@/lib/poker';
 import { buildBustRecovery } from '@/lib/bustRecovery';
 
 // Shown when a hand leaves a single player with chips but the game can continue:
 // cash games always allow a buy-back, tournaments follow their re-entry / rebuy setup.
-export default function BustRecoveryDialog({ recovery, onReenter, onRebuy, onEnd }) {
+export default function BustRecoveryDialog({ recovery, onReenter, onRebuy, onForce, onEnd }) {
   if (!recovery) return null;
   const { winner, busted = [], baseHand } = recovery;
   const plan = recovery.plan || buildBustRecovery(baseHand, busted);
@@ -21,7 +21,7 @@ export default function BustRecoveryDialog({ recovery, onReenter, onRebuy, onEnd
       ? `${winner?.name || 'One player'} holds every chip in play. This is a re-entry tournament, so a busted player can buy back in and keep the game going.`
       : plan.format === 'rebuy'
         ? `${winner?.name || 'One player'} holds every chip in play. Rebuys are allowed, so a busted player can top up and keep the game going.`
-        : `${winner?.name || 'One player'} holds every chip in play.`;
+        : `${winner?.name || 'One player'} holds every chip in play. Re-entry is not part of this structure, but you can keep the game going anyway.`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" data-testid="bust-recovery">
@@ -36,6 +36,9 @@ export default function BustRecoveryDialog({ recovery, onReenter, onRebuy, onEnd
             const { elim } = offer;
             const used = Number(elim.reentries) || 0;
             const Icon = offer.kind === 'reentry' ? UserPlus : RotateCcw;
+            const forceChips = Number(offer.chips) > 0
+              ? Number(offer.chips)
+              : (offer.kind === 'rebuy' ? (Number(baseHand?.rebuyChips) || Number(baseHand?.startingStack) || 0) : (Number(baseHand?.startingStack) || 0));
             return (
               <div key={`${elim.name}-${elim.seat}`} className="rounded-xl border border-[#2a2f37] bg-[#11141b] p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
@@ -62,9 +65,22 @@ export default function BustRecoveryDialog({ recovery, onReenter, onRebuy, onEnd
                 )}
 
                 {!offer.allowed && (
-                  <p className="text-[11px] text-rose-300 flex items-center gap-1.5" data-testid={`recovery-blocked-${elim.seat}`}>
-                    <Ban size={12} /> {offer.label === 'No re-entry' ? offer.blocker : `${offer.label} not available${offer.blocker ? ` — ${offer.blocker}` : ''}`}
-                  </p>
+                  <>
+                    <p className="text-[11px] text-rose-300 flex items-center gap-1.5" data-testid={`recovery-blocked-${elim.seat}`}>
+                      <Ban size={12} /> {offer.label === 'No re-entry' ? offer.blocker : `${offer.label} not available${offer.blocker ? ` — ${offer.blocker}` : ''}`}
+                    </p>
+                    <button
+                      type="button"
+                      data-testid={`recovery-force-${elim.seat}`}
+                      onClick={() => onForce(elim, offer.kind)}
+                      className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#242a33] hover:bg-[#2f3742] text-slate-200 text-xs font-bold cursor-pointer transition-colors"
+                    >
+                      <span className="flex items-center gap-2"><RefreshCw size={13} /> Keep playing anyway</span>
+                      <span className="font-mono text-[11px] font-semibold text-slate-400">
+                        {forceChips.toLocaleString('en-US')} chips
+                      </span>
+                    </button>
+                  </>
                 )}
 
                 {offer.allowed && offer.kind === 'reentry' && (
