@@ -1,8 +1,10 @@
 import { db } from '@/api/base44Client';
+import { mergeHandHistories } from '@/lib/handHistoryMerge';
 
 const CHANNEL = 'poker-live';
 const storageKey = 'poker-live-state';
 const codeKey = 'poker-live-share-code';
+const tokenKey = 'poker-live-session-token';
 
 let bc = null;
 try {
@@ -23,6 +25,28 @@ export function setShareCode(code) {
   try {
     if (code) localStorage.setItem(codeKey, code);
     else localStorage.removeItem(codeKey);
+  } catch (e) {}
+}
+
+// Identifies one table session so saved histories are only merged with the
+// hands of the same session, never with a previous one that shared a code.
+export function getSessionToken() {
+  try {
+    const existing = localStorage.getItem(tokenKey);
+    if (existing) return existing;
+  } catch (e) {}
+  const fresh =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : 'token_' + Math.random().toString(36).substring(2, 12);
+  try { localStorage.setItem(tokenKey, fresh); } catch (e) {}
+  return fresh;
+}
+
+export function setSessionToken(token) {
+  try {
+    if (token) localStorage.setItem(tokenKey, token);
+    else localStorage.removeItem(tokenKey);
   } catch (e) {}
 }
 
@@ -56,6 +80,7 @@ function setSaveStatus(patch) {
 
 function buildPayload(state) {
   return {
+    sessionToken: getSessionToken(),
     config: state.config || null,
     hand: state.hand || null,
     gameOver: state.gameOver || null,
@@ -66,6 +91,17 @@ function buildPayload(state) {
     history: state.history || [],
     isGoMode: state.isGoMode !== undefined ? state.isGoMode : Boolean(state.config?.isGoMode || state.hand?.isGoMode),
   };
+}
+
+// The save that follows a resume only knows the hands played since the load
+// unless the caller passes the whole list. Fold in whatever was already saved
+// for this same session so an earlier block of hands cannot be dropped.
+function mergeWithStoredHistory(payload) {
+  const prev = readLive();
+  if (!prev || prev.sessionToken !== payload.sessionToken) return payload;
+  const merged = mergeHandHistories(prev.history, payload.history);
+  if (merged.length === (payload.history || []).length) return payload;
+  return { ...payload, history: merged };
 }
 
 async function invokeSave(payload) {
@@ -84,7 +120,7 @@ async function invokeSave(payload) {
 let publishTimer = null;
 
 export function publishLive(state) {
-  const payload = buildPayload(state);
+  const payload = mergeWithStoredHistory(buildPayload(state));
   try {
     localStorage.setItem(storageKey, JSON.stringify(payload));
   } catch (e) {}
@@ -105,7 +141,7 @@ export function publishLive(state) {
 }
 
 export function saveNow(state) {
-  const payload = buildPayload(state);
+  const payload = mergeWithStoredHistory(buildPayload(state));
   if (!payload.hand && !payload.gameOver && !payload.director) return;
   try {
     localStorage.setItem(storageKey, JSON.stringify(payload));
@@ -140,6 +176,7 @@ export async function discardSavedSession(code) {
   try {
     localStorage.removeItem(codeKey);
     localStorage.removeItem(storageKey);
+    localStorage.removeItem(tokenKey);
   } catch (e) {}
   return { ok: true };
 }
@@ -151,6 +188,7 @@ export async function discardAllSavedSessions() {
   try {
     localStorage.removeItem(codeKey);
     localStorage.removeItem(storageKey);
+    localStorage.removeItem(tokenKey);
   } catch (e) {}
   return { ok: true };
 }

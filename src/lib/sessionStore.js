@@ -11,6 +11,8 @@ export const sessionStore = {
     emit();
   },
   addHand: (entry) => {
+    const handNumber = entry?.handNumber;
+    if (handNumber != null && state.history.some((h) => h?.handNumber === handNumber)) return;
     state = { ...state, history: [...state.history, entry] };
     emit();
   },
