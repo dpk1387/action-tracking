@@ -1,6 +1,16 @@
 import { auth, firestore } from './firebaseClient';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, doc, setDoc, deleteDoc, getDocs, query, where } from 'firebase/firestore';
+import { mergeHandHistories } from '@/lib/handHistoryMerge';
+
+// Hand numbers identify a hand inside one session; ids can be regenerated on a
+// later save of the same hand, so prefer the number when there is one.
+function handKey(h) {
+  if (!h) return null;
+  if (h.handNumber != null) return `n:${h.handNumber}`;
+  if (h.id != null) return `i:${h.id}`;
+  return JSON.stringify(h);
+}
 
 const STORAGE_KEY = 'poker_hand_histories_store_v1';
 const listeners = new Set();
@@ -59,7 +69,7 @@ export async function syncRemoteHandHistories() {
           const seen = new Set();
           const mergedHands = [];
           (existing.hands || []).concat(r.hands || []).forEach((h) => {
-            const key = h.id || h.handNumber || JSON.stringify(h);
+            const key = handKey(h);
             if (!seen.has(key)) {
               seen.add(key);
               mergedHands.push(h);
@@ -128,27 +138,10 @@ export function saveHandHistory(sessionOrHandsData) {
     let targetRecord;
 
     if (existingIndex >= 0) {
-      // Append to existing record while deduplicating hands
+      // Append to the existing record, deduplicating by hand number so a
+      // session saved in several sittings keeps every hand exactly once.
       const existingRecord = existingList[existingIndex];
-      const seen = new Set();
-      const combinedHands = [];
-
-      (existingRecord.hands || []).forEach((h) => {
-        const key = h.id || h.handNumber;
-        if (key !== undefined) seen.add(key);
-        combinedHands.push(h);
-      });
-
-      incomingHands.forEach((h) => {
-        const key = h.id || h.handNumber;
-        if (key === undefined || !seen.has(key)) {
-          if (key !== undefined) seen.add(key);
-          combinedHands.push(h);
-        }
-      });
-
-      // Sort hands by handNumber if available
-      combinedHands.sort((a, b) => (a.handNumber || 0) - (b.handNumber || 0));
+      const combinedHands = mergeHandHistories(existingRecord.hands, incomingHands);
 
       targetRecord = {
         ...existingRecord,

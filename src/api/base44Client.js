@@ -1,5 +1,6 @@
 import { auth, googleProvider } from '@/lib/firebaseClient';
 import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut as firebaseSignOut } from 'firebase/auth';
+import { mergeHandHistories } from '@/lib/handHistoryMerge';
 
 function getStoredSessions() {
   try {
@@ -221,15 +222,31 @@ export const db = {
       }
 
       if (name === 'publishLiveSession') {
-        const { shareCode, hand, config, gameOver, equity, hideAmounts, holeCards, director } = args;
+        const { shareCode, hand, config, gameOver, equity, hideAmounts, holeCards, director, history, sessionToken } = args;
         if (!shareCode) return { data: { error: 'No share code' } };
         const updatedAt = new Date().toISOString();
+        // Keep every hand already saved for this session: a resume only sends
+        // the hands played since it loaded, so merge by hand number instead of
+        // replacing the list.
+        const previous = store[shareCode];
+        const prevToken = previous?.resumeState?.sessionToken;
+        const prevHistory = Array.isArray(previous?.resumeState?.history) ? previous.resumeState.history : [];
+        // Records saved before session tokens existed: an incoming hand number
+        // past the last stored one means this is that same session resuming.
+        const legacyContinuation = !prevToken && prevHistory.length > 0
+          && (Number(hand?.handNumber) || 0) > (Number(prevHistory[prevHistory.length - 1]?.handNumber) || 0);
+        const sameSession = (prevToken && prevToken === sessionToken) || legacyContinuation;
+        const mergedHistory = sameSession
+          ? mergeHandHistories(prevHistory, history)
+          : (Array.isArray(history) ? history : []);
         const resumeState = {
+          sessionToken: sessionToken || null,
           config: config || null,
           hand: hand || null,
           gameOver: gameOver || null,
           holeCards: holeCards || null,
           director: director || null,
+          history: mergedHistory,
         };
         const state = {
           hand,
@@ -240,6 +257,7 @@ export const db = {
           holeCards,
           director,
           _holeCards: holeCards,
+          history: mergedHistory,
         };
         store[shareCode] = {
           shareCode,

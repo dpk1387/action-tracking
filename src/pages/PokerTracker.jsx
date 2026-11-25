@@ -38,8 +38,9 @@ import { useAuth } from '@/lib/AuthContext';
 import { mttStore } from '@/lib/mttStore';
 import {
   publishLive, getShareCode, setShareCode, ensureSaveCode, saveNow, loadSavedSession,
-  discardSavedSession, getSaveStatus, subscribeSaveStatus,
+  discardSavedSession, getSaveStatus, subscribeSaveStatus, setSessionToken,
 } from '@/lib/liveSync';
+import { mergeHandHistories } from '@/lib/handHistoryMerge';
 import { saveCompletedSession } from '@/lib/completedSessionsStore';
 import { saveHandHistory, findHandHistoryByCode, deleteHandHistory } from '@/lib/handHistoriesStore';
 import {
@@ -73,6 +74,7 @@ export default function PokerTracker() {
   const [config, setConfig] = useState(() => sessionStore.get().config);
   const [hand, setHand] = useState(() => sessionStore.get().hand);
   const [history, setHistory] = useState([]);
+  const [sessionHandCount, setSessionHandCount] = useState(() => sessionStore.get().history.length);
   const [showSetup, setShowSetup] = useState(false);
   const [showEnd, setShowEnd] = useState(false);
   const [showBlinds, setShowBlinds] = useState(false);
@@ -487,7 +489,7 @@ export default function PokerTracker() {
   }, [hand]);
 
   useEffect(() => { if (hand) ensureSaveCode(); }, [hand]);
-  useEffect(() => { publishLive({ config, hand, gameOver, equity, hideAmounts, showPosition, suitColors, actionDisplayMode, displayUnit, holeCards, isGoMode, history: sessionStore.get().history }); }, [config, hand, gameOver, equity, hideAmounts, showPosition, suitColors, actionDisplayMode, displayUnit, holeCards, isGoMode, shareVersion]);
+  useEffect(() => { publishLive({ config, hand, gameOver, equity, hideAmounts, showPosition, suitColors, actionDisplayMode, displayUnit, holeCards, isGoMode, history: sessionStore.get().history }); }, [config, hand, gameOver, equity, hideAmounts, showPosition, suitColors, actionDisplayMode, displayUnit, holeCards, isGoMode, shareVersion, sessionHandCount]);
 
   useEffect(() => {
     if (!hand || !hand.players) return;
@@ -572,6 +574,7 @@ export default function PokerTracker() {
         position: positionForSeat(h.players.length, bi, i, h.variant),
       })),
     });
+    setSessionHandCount(sessionStore.get().history.length);
   };
 
   const setupInitial = useMemo(() => {
@@ -2075,6 +2078,20 @@ export default function PokerTracker() {
     setShowReentry(false);
   };
 
+  // Restore the session's completed hands: the saved copy plus the archived
+  // hand-history record, deduplicated by hand number. The `history` state is
+  // the in-memory undo stack, so it must not be filled with session hands.
+  const restoreSessionHistory = (savedHistory, code) => {
+    const archived = findHandHistoryByCode(code)?.hands || [];
+    const merged = mergeHandHistories(archived, savedHistory);
+    merged.forEach((h) => {
+      if (h.handNumber) recordedHandNumbers.current.add(h.handNumber);
+    });
+    setHistory([]);
+    setSessionHandCount(merged.length);
+    return merged;
+  };
+
   const handleResume = () => {
     const saved = savedSession;
     if (!saved) return;
@@ -2092,17 +2109,8 @@ export default function PokerTracker() {
     setHand(restoredHand);
     setGameOver(saved.gameOver || null);
     setHoleCards(saved.holeCards || {});
-    let savedHistory = saved.history || [];
-    if (savedHistory.length === 0) {
-      const existingHH = findHandHistoryByCode(saved.shareCode || saved.id || getShareCode());
-      if (existingHH?.hands?.length > 0) {
-        savedHistory = existingHH.hands;
-      }
-    }
-    savedHistory.forEach((h) => {
-      if (h.handNumber) recordedHandNumbers.current.add(h.handNumber);
-    });
-    setHistory(savedHistory);
+    if (saved.sessionToken) setSessionToken(saved.sessionToken);
+    const savedHistory = restoreSessionHistory(saved.history || [], saved.shareCode || saved.id || getShareCode());
     const resumeFrozen = {};
     (restoredHand.players || []).forEach((p) => { resumeFrozen[p.seat] = p.stack; });
     setFrozenStacks(resumeFrozen);
@@ -2130,17 +2138,8 @@ export default function PokerTracker() {
       setHand(restoredHand);
       setGameOver(res.saved.gameOver || null);
       setHoleCards(res.saved.holeCards || {});
-      let savedHistory = res.saved?.history || [];
-      if (savedHistory.length === 0) {
-        const existingHH = findHandHistoryByCode(target);
-        if (existingHH?.hands?.length > 0) {
-          savedHistory = existingHH.hands;
-        }
-      }
-      savedHistory.forEach((h) => {
-        if (h.handNumber) recordedHandNumbers.current.add(h.handNumber);
-      });
-      setHistory(savedHistory);
+      if (res.saved?.sessionToken) setSessionToken(res.saved.sessionToken);
+      const savedHistory = restoreSessionHistory(res.saved?.history || [], target);
       const resumeFrozen = {};
       (restoredHand.players || []).forEach((p) => { resumeFrozen[p.seat] = p.stack; });
       setFrozenStacks(resumeFrozen);
@@ -2199,6 +2198,8 @@ export default function PokerTracker() {
     setResumeChecked(true);
     recordedHandNumbers.current.clear();
     sessionStore.reset();
+    setSessionToken(null);
+    setSessionHandCount(0);
     setConfig(overrides ? { ...overrides } : null);
     setHand(null);
     setHistory([]);
@@ -2281,6 +2282,8 @@ export default function PokerTracker() {
   const resetToStart = () => {
     sessionStore.reset();
     recordedHandNumbers.current.clear();
+    setSessionToken(null);
+    setSessionHandCount(0);
     setConfig(null);
     setHand(null);
     setHistory([]);
