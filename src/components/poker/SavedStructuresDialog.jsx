@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Save, Upload, Download, Trash2, FolderOpen } from 'lucide-react';
-import { listStructures, saveStructure, deleteStructure, exportStructure, importStructure, resetDefaultStructures } from '@/lib/structureStore';
+import { listStructures, saveStructure, deleteStructure, exportStructure, importStructure } from '@/lib/structureStore';
 
 export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose }) {
   const [structures, setStructures] = useState([]);
@@ -24,11 +24,6 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
 
   const handleDelete = (id) => {
     deleteStructure(id);
-    refresh();
-  };
-
-  const handleResetDefaults = () => {
-    resetDefaultStructures();
     refresh();
   };
 
@@ -80,7 +75,7 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
         <div className="space-y-2 mb-4">
           {structures.length === 0 && (
             <div className="text-center text-slate-500 text-sm py-8">
-              No saved structures found. Save your current setup above, or restore default presets.
+              No saved structures found. Save your current setup above or import a preset.
             </div>
           )}
           {structures.map((s) => (
@@ -88,11 +83,6 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-white truncate">{s.name}</span>
-                  {s.isDefault && (
-                    <span className="rounded bg-emerald-950/80 border border-emerald-500/50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
-                      Default
-                    </span>
-                  )}
                 </div>
                 <div className="text-[11px] text-slate-500">
                   {(s.structureData.schedule || []).length} levels
@@ -113,19 +103,10 @@ export default function SavedStructuresDialog({ getCurrentData, onLoad, onClose 
             </div>
           ))}
         </div>
-        <div className="flex items-center justify-between border-t border-[#2a2f37] pt-4">
-          <button
-            type="button"
-            onClick={handleResetDefaults}
-            className="text-xs text-slate-400 hover:text-white underline cursor-pointer"
-          >
-            Reset Default Presets
+        <div className="flex items-center justify-end border-t border-[#2a2f37] pt-4">
+          <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1.5 rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 text-sm px-3 py-2 cursor-pointer">
+            <Upload size={15} /> Import preset
           </button>
-          <div className="flex items-center gap-2">
-            <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1.5 rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 text-sm px-3 py-2 cursor-pointer">
-              <Upload size={15} /> Import preset
-            </button>
-          </div>
           <input ref={fileRef} type="file" accept=".json,application/json" onChange={handleImport} className="hidden" />
         </div>
       </div>

@@ -9,7 +9,7 @@ function KeyBadge({ label }) {
   );
 }
 
-export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false, onSelectRedRiverColor }) {
+export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false, onSelectRedRiverColor, compact = false }) {
   const [amount, setAmount] = useState('');
   const [muckArmed, setMuckArmed] = useState(false);
   const [isDesktop, setIsDesktop] = useState(() => {
@@ -246,7 +246,7 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
             e.preventDefault();
             onAction(isBet ? 'bet' : 'raise', flRaiseTo);
           }
-        } else if (canRaise && !mustAllinToCall && !ootPassiveBound) {
+        } else if (canMinRaise && !mustAllinToCall && !ootPassiveBound) {
           e.preventDefault();
           raiseInputRef.current?.focus();
           raiseInputRef.current?.select();
@@ -323,24 +323,24 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
   }
 
   return (
-    <div className="rounded-xl border border-[#2a2f37] bg-[#1e2227] p-4">
-      <div className="text-xs text-slate-400 mb-1">Player to act</div>
-      <div className="text-base font-semibold text-white mb-2">
+    <div className={`rounded-xl border border-[#2a2f37] bg-[#1e2227] ${compact ? 'p-3' : 'p-4'}`}>
+      <div className="text-xs text-slate-400 mb-0.5">Player to act</div>
+      <div className={`text-base font-semibold text-white ${compact ? 'mb-1' : 'mb-2'}`}>
         {cp.name} {hand.players.findIndex((p) => p.id === cp.id) === hand.players.findIndex((p) => p.seat === hand.buttonSeat) ? ' – BTN' : ''}
       </div>
-      <div className="text-xs text-slate-400 mb-3">
+      <div className={`text-xs text-slate-400 ${compact ? 'mb-2' : 'mb-3'}`}>
         {canCheck ? 'No bet to call. Check is available.' : mustAllinToCall
           ? `Call is ${money(callAmt, cur)} – that's your whole stack. All-in or fold.`
           : `Call ${money(callAmt, cur)} to stay in.`}
       </div>
       {ootPassiveBound && (
-        <div className="text-[11px] text-amber-300/90 mb-3">
+        <div className="text-[11px] text-amber-300/90 mb-2">
           {passiveBoundThisStreet && !(ootForCurrent && ootForCurrent.kind === 'passive')
             ? `${cp.name} acted out of turn (check/call) earlier this street – only passive moves are allowed${mustAllinToCall ? ' (all-in to call permitted)' : ''}.`
             : `${cp.name} acted out of turn (check/call) – action is binding, so only a passive move is allowed${mustAllinToCall ? ' (all-in to call permitted)' : ''}.`}
         </div>
       )}
-      <div className="flex flex-wrap gap-2 mb-3">
+      <div className={`flex flex-wrap gap-2 ${compact ? 'mb-0' : 'mb-3'}`}>
         <button
           onClick={handleFold}
           className={`rounded-lg text-white text-sm px-3 py-2 transition-colors flex items-center ${
@@ -357,7 +357,7 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
         {canCheck ? (
           <button
             onClick={() => onAction('check')}
-            className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3.5 py-2 font-medium flex items-center shadow cursor-pointer"
+            className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3.5 py-2 font-normal flex items-center shadow cursor-pointer"
           >
             <span>Check</span>
             <KeyBadge label="C" />
@@ -385,7 +385,7 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
           )
         ) : (
           <>
-            {!mustAllinToCall && canRaise && !ootPassiveBound && (
+            {!mustAllinToCall && canMinRaise && !ootPassiveBound && (
               <div className="flex flex-col gap-1 w-full sm:w-auto">
                 <div className="flex items-center gap-2">
                   <input

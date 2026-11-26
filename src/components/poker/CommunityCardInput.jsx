@@ -363,6 +363,17 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
     );
   };
 
+  const showHiddenFill = hiddenCount > 0 && showdown;
+  const showMultiRunDeal = !showHiddenFill && isMultiRun && activeMultiBoard;
+  const showAllInStreet = !showHiddenFill && !showMultiRunDeal && isAllInShowdown && complete && next;
+  const showNormalStreet = !showHiddenFill && !showMultiRunDeal && !isAllInShowdown && complete && next;
+  const showRedRiverStatus = !showHiddenFill && !showMultiRunDeal && !showAllInStreet && !showNormalStreet && hand.variant === 'red_river' && (isRiver || cardsALen >= 5);
+  const showAwardAction = !showHiddenFill && !showMultiRunDeal && !showAllInStreet && !showNormalStreet && !showRedRiverStatus && (isFinalStreet || hand.phase === 'ended');
+
+  if (!showHiddenFill && !showMultiRunDeal && !showAllInStreet && !showNormalStreet && !showRedRiverStatus && !showAwardAction) {
+    return null;
+  }
+
   return (
     <div className="rounded-xl border border-[#2a2f37] bg-[#1e2227] p-4">
       {/* 1. Common Hidden Cards (e.g. flop or turn dealt hidden before all-in or run-it) */}
@@ -659,10 +670,8 @@ export default function CommunityCardInput({ hand, onDeal, onDealHidden, onFillB
                 if (last) return `Red River card is BLACK (${last.rank}${last.suit === 's' ? '♠' : '♣'}) — showdown reached.`;
                 return 'Select / deal the river card.';
               })()
-            ) : isFinalStreet || hand.phase === 'ended' ? (
-              'Showdown reached – hole cards & board entry are optional.'
             ) : (
-              `Complete the ${hand.street} round before dealing the ${next}.`
+              'Showdown reached – hole cards & board entry are optional.'
             )}
           </div>
           {hand.variant === 'red_river' && (isRiver || cardsALen >= 5) ? (

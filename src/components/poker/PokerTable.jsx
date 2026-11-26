@@ -210,6 +210,7 @@ export default function PokerTable({
         clockType={clockType}
         onUseTimeBank={onUseTimeBank}
         displayUnit={activeUnit}
+        matchTableHeight={true}
       />
     );
   }

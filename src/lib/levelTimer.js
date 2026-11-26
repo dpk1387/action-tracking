@@ -154,11 +154,24 @@ export function appliedLevelNumber(hand) {
 export function nudgeLevelTimer(hand, deltaMs) {
   if (!hand) return hand;
   const cfg = hand.levelConfig || defaultLevelConfig();
-  if (cfg.method !== 'minutes') return hand;
-  if (hand.pauseStart != null) {
-    return { ...hand, pauseStart: hand.pauseStart - deltaMs };
+  const st = levelTimerState(hand);
+  const usesMinutes = cfg.method === 'minutes' || st.phase === 'break' || st.phase === 'color_up';
+  if (usesMinutes) {
+    if (hand.pauseStart != null) {
+      return { ...hand, pauseStart: hand.pauseStart - deltaMs };
+    }
+    return { ...hand, levelStartEpoch: (hand.levelStartEpoch || Date.now()) + deltaMs };
   }
-  return { ...hand, levelStartEpoch: (hand.levelStartEpoch || Date.now()) + deltaMs };
+  const done = Number(hand.levelHandsCompleted) || 0;
+  const target = Number(st.progress?.total) || 0;
+  if (deltaMs > 0) {
+    return { ...hand, levelHandsCompleted: Math.max(0, done - 1) };
+  }
+  if (deltaMs < 0) {
+    const nextDone = target > 0 ? Math.min(target, done + 1) : done + 1;
+    return advanceTimerSegment({ ...hand, levelHandsCompleted: nextDone });
+  }
+  return hand;
 }
 
 export function pauseLevelTimer(hand) {
@@ -289,9 +302,15 @@ export function applyNextLevel(hand) {
     };
   }
   const activeCount = (hand.players || []).filter((p) => p.status !== 'eliminated' && p.status !== 'out' && (p.stack > 0 || p.initialStack > 0)).length;
+  const targetLvlNum = appliedLevelNumber({ ...hand, blindLevel: target });
+  const isEarlyNoAnte = hand.anteType === 'bba' && hand.bbaEarlyHalfAnte && targetLvlNum <= (Number(hand.bbaEarlyHalfAnteLevel) || 2);
   const isShortHandedSB = hand.sbHalfAnteShortHanded && activeCount < (Number(hand.shortHandedThreshold) || 5);
-  const effectiveAnte = hand.anteType === 'bba' && isShortHandedSB ? 'sb_half_ante' : hand.anteType;
-  const ante = (effectiveAnte === 'bba' || effectiveAnte === 'btn_ante')
+  const effectiveAnte = (hand.anteType === 'bba' && isEarlyNoAnte)
+    ? 'none'
+    : (hand.anteType === 'bba' && isShortHandedSB ? 'sb_half_ante' : hand.anteType);
+  const ante = isEarlyNoAnte
+    ? 0
+    : (effectiveAnte === 'bba' || effectiveAnte === 'btn_ante')
     ? bbNum
     : effectiveAnte === 'sb_half_ante'
     ? Math.round(bbNum * 0.5 * 100) / 100

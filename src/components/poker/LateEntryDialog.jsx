@@ -27,6 +27,7 @@ export default function LateEntryDialog({
     [tableSize, players.length, occupiedSeats]
   );
   const canLateReg = !lateRegLevel || (currentLevel || 0) + 1 <= Number(lateRegLevel);
+  const isCashFull = isCash && players.length >= 10;
 
   const randomSeat = () => {
     if (!emptySeats.length) return;
@@ -35,6 +36,7 @@ export default function LateEntryDialog({
   };
 
   const add = () => {
+    if (isCashFull) return;
     let s = Number(stack);
     if (!s || s <= 0) s = startingStack || 100;
 
@@ -65,7 +67,11 @@ export default function LateEntryDialog({
           <button onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer"><X size={18} /></button>
         </div>
 
-        {!isCash && !canLateReg ? (
+        {isCashFull ? (
+          <div className="text-sm text-rose-400 mb-4">
+            Maximum of 10 players reached for cash game.
+          </div>
+        ) : !isCash && !canLateReg ? (
           <div className="text-sm text-rose-400 mb-4">
             Late registration has closed (level {lateRegLevel} has passed).
           </div>

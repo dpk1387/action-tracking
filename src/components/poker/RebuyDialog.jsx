@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { money } from '@/lib/poker';
+import { appliedLevelNumber } from '@/lib/levelTimer';
 
 export default function RebuyDialog({
   players = [],
@@ -17,8 +18,15 @@ export default function RebuyDialog({
   onAddOn,
   onClose,
 }) {
+  const activeLevelNum = hand ? appliedLevelNumber(hand) : ((currentLevel ?? 0) + 1);
+  const rules = rebuyRules || hand?.rebuyRules || {};
+
+  const timeLimitEnabled = rules.timeLimitEnabled ?? true;
+  const cutoffLevel = Number(rules.timeCutoffLevel) || 4;
+  const isTimeExpired = timeLimitEnabled && activeLevelNum > cutoffLevel;
+
   const [selectedId, setSelectedId] = useState('');
-  const [mode, setMode] = useState('rebuy');
+  const [mode, setMode] = useState(() => (isTimeExpired && allowAddOn ? 'addon' : 'rebuy'));
   const sym = currency || '';
 
   useEffect(() => {
@@ -26,13 +34,6 @@ export default function RebuyDialog({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-
-  const activeLevelNum = (currentLevel ?? hand?.blindLevel ?? 0) + 1;
-  const rules = rebuyRules || hand?.rebuyRules || {};
-
-  const timeLimitEnabled = rules.timeLimitEnabled ?? true;
-  const cutoffLevel = Number(rules.timeCutoffLevel) || 4;
-  const isTimeExpired = timeLimitEnabled && activeLevelNum > cutoffLevel;
 
   const stackCapEnabled = rules.stackCapEnabled ?? true;
   const stackCap = stackCapEnabled ? (Number(rules.stackCapAmount) || Number(rebuyChips) || 10000) : Infinity;

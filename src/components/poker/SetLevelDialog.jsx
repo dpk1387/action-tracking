@@ -44,7 +44,13 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
   const [segIdx, setSegIdx] = useState(currentSeg ? String(currentSeg.idx) : '0');
   const cfg = hand?.levelConfig || { method: 'minutes', value: 15 };
   const isMinutes = cfg.method === 'minutes';
+  const isHandsOrOrbits = cfg.method === 'hands' || cfg.method === 'orbits';
+  const orbitHands = Math.max(1, Number(hand?.levelCount) || (hand?.players?.length || 1));
+  const levelHandsLength = cfg.method === 'orbits'
+    ? Math.max(1, (Number(cfg.value) || 1) * orbitHands)
+    : Math.max(1, Number(cfg.value) || 1);
   const [minutesRemaining, setMinutesRemaining] = useState('');
+  const [skippedHands, setSkippedHands] = useState('');
   const selected = segments.find((s) => String(s.idx) === segIdx);
   const fullMinutes = selected
     ? (selected.kind === 'break' || selected.kind === 'color_up')
@@ -95,7 +101,7 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
             );
           })}
         </select>
-        {isMinutes && (
+        {(isMinutes || selected?.kind === 'break' || selected?.kind === 'color_up') && (
           <div className="mb-4">
             <label className="text-xs text-slate-400 block mb-1">
               Time remaining (minutes) – blank starts from full
@@ -111,6 +117,35 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
             />
             <div className="text-[11px] text-slate-500 mt-1">
               The timer jumps to this level immediately. Blinds update now if no action has happened this hand, otherwise at the next hand.
+            </div>
+          </div>
+        )}
+        {isHandsOrOrbits && selected?.kind === 'level' && (
+          <div className="mb-4">
+            <label className="text-xs text-slate-400 block mb-1">
+              Skipped hands (0 – {levelHandsLength}) – blank = 0
+            </label>
+            <input
+              type="number"
+              min="0"
+              max={levelHandsLength}
+              value={skippedHands}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === '') {
+                  setSkippedHands('');
+                  return;
+                }
+                const num = parseInt(val, 10);
+                if (isNaN(num)) return;
+                const clamped = Math.min(levelHandsLength, Math.max(0, num));
+                setSkippedHands(String(clamped));
+              }}
+              placeholder="0"
+              className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+            />
+            <div className="text-[11px] text-slate-500 mt-1">
+              Set how many hands in this level have already been played (min 0, max {levelHandsLength}).
             </div>
           </div>
         )}
@@ -134,7 +169,11 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
                     ? `Ante: ${formatKM(selected.ante)}`
                     : `Blinds: ${formatKM(selected.smallBlind)} / ${formatKM(selected.bigBlind)}`}
                 </div>
-                {!isMinutes && <div className="text-xs text-slate-500 mt-1">Timer method is {cfg.method} – level counter resets.</div>}
+                {isHandsOrOrbits && (
+                  <div className="text-xs text-slate-500 mt-1">
+                    Level length: {levelHandsLength} hands ({cfg.method === 'orbits' ? `${cfg.value} orbit${Number(cfg.value) === 1 ? '' : 's'}` : `${cfg.value} hands`}).
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -155,7 +194,8 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
             if (!selected) return;
             const tLevel = selected.idx;
             let levelStartEpoch;
-            if (isMinutes) {
+            let levelHandsCompleted = 0;
+            if (isMinutes || selected.kind === 'break' || selected.kind === 'color_up') {
               const mr = Number(minutesRemaining);
               if (minutesRemaining && mr >= 0) {
                 const dur = fullMinutes * 60000;
@@ -165,6 +205,10 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
               }
             } else {
               levelStartEpoch = Date.now();
+              if (selected.kind === 'level' && skippedHands !== '') {
+                const parsed = parseInt(skippedHands, 10);
+                levelHandsCompleted = isNaN(parsed) ? 0 : Math.min(levelHandsLength, Math.max(0, parsed));
+              }
             }
             let nextPlayable = selected.kind === 'level' ? tLevel : tLevel + 1;
             while (nextPlayable < schedule.length && (schedule[nextPlayable]?.type === 'break' || schedule[nextPlayable]?.type === 'color_up')) {
@@ -175,7 +219,7 @@ export default function SetLevelDialog({ hand, onApply, onClose }) {
               inBreak: selected.kind === 'break' || selected.kind === 'color_up',
               isColorUp: selected.kind === 'color_up',
               levelStartEpoch,
-              levelHandsCompleted: 0,
+              levelHandsCompleted,
               pendingLevelIdx: nextPlayable,
               missedRaces,
               pendingRace: selected.kind === 'color_up' && selected.race ? { ...selected.race, tLevel } : undefined,

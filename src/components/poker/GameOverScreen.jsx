@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { FileSpreadsheet, Loader2, ExternalLink, Trophy, Spade } from 'lucide-react';
 import { useSession } from '@/lib/sessionStore';
 import { exportHandsToGoogleSheet, exportHandsToCSV } from '@/lib/googleSheetsExport';
@@ -41,8 +42,18 @@ export default function GameOverScreen({ gameOver, isCash, onNewSession }) {
     : `${gameOver?.name || 'Player'} wins it all!`;
 
   return (
-    <div className="min-h-screen bg-[#121417] flex items-center justify-center p-6">
-      <div className="text-center max-w-md w-full bg-[#1b1f26] border border-[#2a2f37] p-8 rounded-2xl shadow-2xl">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.6, ease: 'easeOut' }}
+      className="min-h-screen bg-[#121417] flex items-center justify-center p-6"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.88, y: 24 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="text-center max-w-md w-full bg-[#1b1f26] border border-[#2a2f37] p-8 rounded-2xl shadow-2xl"
+      >
         <div className="w-14 h-14 rounded-2xl bg-emerald-950 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto mb-4 shadow-lg">
           {isCash ? <Spade size={28} /> : <Trophy size={28} />}
         </div>
@@ -87,7 +98,7 @@ export default function GameOverScreen({ gameOver, isCash, onNewSession }) {
         >
           Back to Home
         </button>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

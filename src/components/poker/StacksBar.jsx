@@ -3,6 +3,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import AnimatedAmount from '@/components/poker/AnimatedAmount';
 import { money } from '@/lib/poker';
 
+function getOrdinal(n) {
+  const num = Math.round(Number(n) || 0);
+  if (num <= 0) return '';
+  const s = ['TH', 'ST', 'ND', 'RD'];
+  const v = num % 100;
+  return `${num}${s[(v - 20) % 10] || s[v] || s[0] || 'TH'}`;
+}
+
 export default function StacksBar({
   hand,
   players = [],
@@ -14,6 +22,7 @@ export default function StacksBar({
   freezeStacks,
   frozenStacks,
   displayUnit = 'chips',
+  triggerElimination,
 }) {
   // Map of seat -> { player, position }
   const [eliminating, setEliminating] = useState({});
@@ -22,7 +31,13 @@ export default function StacksBar({
   const dismissedSeatsRef = useRef(new Set());
   const eliminatingSeatsRef = useRef(new Set());
 
+  const prevHandNumberRef = useRef(hand?.handNumber);
+
   useEffect(() => {
+    const currentHandNum = hand?.handNumber;
+    const handChanged = currentHandNum !== prevHandNumberRef.current;
+    prevHandNumberRef.current = currentHandNum;
+
     // If a seat currently has a live player with positive stack, ensure it is not dismissed
     (players || []).forEach((p) => {
       if (p && p.seat != null && p.stack > 0) {
@@ -38,55 +53,85 @@ export default function StacksBar({
       if (p && p.seat != null) currentSeats.set(p.seat, { p, idx });
     });
 
-    prev.forEach((oldP, oldIdx) => {
-      if (!oldP || oldP.seat == null) return;
-      if (dismissedSeatsRef.current.has(oldP.seat) || eliminatingSeatsRef.current.has(oldP.seat)) {
-        return;
-      }
-      const curr = currentSeats.get(oldP.seat);
-      // Only considered gone if seat no longer exists in players, or was replaced by a different player
-      const isGone = !curr || (curr.p.name && oldP.name && curr.p.name !== oldP.name);
-      const isBustedNow = curr && curr.p.stack <= 0 && oldP.stack > 0 && hand?.phase !== 'awarded';
+    // When next hand button is pressed (hand number changes), check for players who busted or left during the previous hand
+    if (handChanged) {
+      prev.forEach((oldP, oldIdx) => {
+        if (!oldP || oldP.seat == null) return;
+        if (dismissedSeatsRef.current.has(oldP.seat) || eliminatingSeatsRef.current.has(oldP.seat)) {
+          return;
+        }
+        const curr = currentSeats.get(oldP.seat);
+        const isGone = !curr || (curr.p.name && oldP.name && curr.p.name !== oldP.name);
+        const isBusted = oldP.stack <= 0 || (curr && curr.p.stack <= 0);
 
-      if (isGone || isBustedNow) {
-        eliminatingSeatsRef.current.add(oldP.seat);
-        // Hold on screen for 1 second showing OUT/busted state before collapsing
-        setEliminating((prevElim) => ({
-          ...prevElim,
-          [oldP.seat]: {
-            player: oldP,
-            position: prevPos[oldIdx] || '',
-          },
-        }));
+        if (isGone || isBusted) {
+          eliminatingSeatsRef.current.add(oldP.seat);
+          const liveCount = (players || []).filter((p) => p && p.stack > 0).length;
+          const rankLabel = getOrdinal(liveCount + 1);
+          // Hold on screen for 2.0 seconds showing OUT/busted rank before collapsing
+          setEliminating((prevElim) => ({
+            ...prevElim,
+            [oldP.seat]: {
+              player: oldP,
+              position: prevPos[oldIdx] || '',
+              rankLabel,
+            },
+          }));
 
-        // After 1 second, remove and mark dismissed so AnimatePresence triggers the smooth collapse
-        setTimeout(() => {
-          dismissedSeatsRef.current.add(oldP.seat);
-          eliminatingSeatsRef.current.delete(oldP.seat);
-          setEliminating((prevElim) => {
-            const next = { ...prevElim };
-            delete next[oldP.seat];
-            return next;
-          });
-        }, 1100);
-      }
-    });
+          // After 2.0 seconds, remove and mark dismissed so AnimatePresence triggers the smooth collapse
+          setTimeout(() => {
+            dismissedSeatsRef.current.add(oldP.seat);
+            eliminatingSeatsRef.current.delete(oldP.seat);
+            setEliminating((prevElim) => {
+              const next = { ...prevElim };
+              delete next[oldP.seat];
+              return next;
+            });
+          }, 2000);
+        }
+      });
+    }
 
     prevPlayersRef.current = players;
     prevPositionsRef.current = positions;
-  }, [players, positions, hand?.phase]);
+  }, [players, positions, hand?.handNumber]);
+
+  // When End Tournament is pressed, show the elimination for 2nd (and any other busted player) immediately
+  useEffect(() => {
+    if (!triggerElimination) return;
+    (players || []).forEach((p, idx) => {
+      if (!p || p.seat == null) return;
+      if (p.stack <= 0 && !eliminatingSeatsRef.current.has(p.seat)) {
+        eliminatingSeatsRef.current.add(p.seat);
+        const liveCount = (players || []).filter((pl) => pl && pl.stack > 0).length;
+        const rankLabel = getOrdinal(liveCount + 1);
+        setEliminating((prevElim) => ({
+          ...prevElim,
+          [p.seat]: {
+            player: p,
+            position: positions[idx] || '',
+            rankLabel,
+          },
+        }));
+      }
+    });
+  }, [triggerElimination, players, positions]);
 
   const stackFor = (p) => {
     if (freezeStacks && frozenStacks && frozenStacks[p.seat] != null) return frozenStacks[p.seat];
     return p.stack;
   };
 
-  const activeList = (players || []).map((p, idx) => ({
-    seat: p.seat,
-    player: p,
-    position: positions[idx] || '',
-    isEliminating: false,
-  }));
+  const activeList = (players || []).map((p, idx) => {
+    const elim = eliminating[p.seat];
+    return {
+      seat: p.seat,
+      player: elim ? elim.player : p,
+      position: elim ? elim.position : (positions[idx] || ''),
+      rankLabel: elim ? elim.rankLabel : undefined,
+      isEliminating: Boolean(elim),
+    };
+  });
 
   const activeSeats = new Set(activeList.map((a) => a.seat));
   const items = [...activeList];
@@ -98,6 +143,7 @@ export default function StacksBar({
         seat: s,
         player: elim.player,
         position: elim.position,
+        rankLabel: elim.rankLabel,
         isEliminating: true,
       });
     }
@@ -172,8 +218,8 @@ export default function StacksBar({
               OUT
             </span>
           </div>
-          <div className="text-lg font-bold text-rose-400 line-through">
-            0
+          <div className="text-lg font-bold text-rose-400">
+            {item.rankLabel || 'OUT'}
           </div>
         </motion.div>
       );
@@ -181,6 +227,8 @@ export default function StacksBar({
 
     const isZero = p.stack <= 0;
     const isBustedAwarded = isZero && hand?.phase === 'awarded';
+    const liveCount = (players || []).filter((pl) => pl && pl.stack > 0).length;
+    const bustedRankLabel = getOrdinal(liveCount + 1);
     const frozen = freezeStacks && frozenStacks && frozenStacks[p.seat] != null;
 
     return (
@@ -223,7 +271,7 @@ export default function StacksBar({
           <span className="truncate">{p.name}{showPosition ? ` · ${(item.position || '').replace('UTG+', '+')}` : ''}</span>
           {isBustedAwarded && (
             <span className="ml-1 text-[8px] bg-rose-500 text-white px-1 py-0.5 rounded font-bold uppercase shrink-0">
-              OUT
+              {bustedRankLabel}
             </span>
           )}
         </div>

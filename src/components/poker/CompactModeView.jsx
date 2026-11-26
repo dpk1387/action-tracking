@@ -312,7 +312,7 @@ export default function CompactModeView({
             e.preventDefault();
             onAction(isBet ? 'bet' : 'raise', flRaiseTo);
           }
-        } else if (canRaise && !mustAllinToCall && !ootPassiveBound) {
+        } else if (canMinRaise && !mustAllinToCall && !ootPassiveBound) {
           e.preventDefault();
           raiseInputRef.current?.focus();
           raiseInputRef.current?.select();
@@ -1294,7 +1294,7 @@ export default function CompactModeView({
               type="button"
               onClick={() => onAction('check')}
               disabled={!canCheck}
-              className="py-3 px-2 rounded-xl bg-[#252c37] hover:bg-[#303847] disabled:opacity-25 disabled:cursor-not-allowed text-white font-bold text-sm transition-all shadow-md flex items-center justify-center border border-slate-700 cursor-pointer"
+              className="py-3 px-2 rounded-xl bg-[#252c37] hover:bg-[#303847] disabled:opacity-25 disabled:cursor-not-allowed text-white font-normal text-sm transition-all shadow-md flex items-center justify-center border border-slate-700 cursor-pointer"
             >
               <span>Check</span>
               <KeyBadge label="X" />
@@ -1314,7 +1314,7 @@ export default function CompactModeView({
 
           {/* Row 2: Bet / Raise input & submit + Min Raise */}
           {!isFL ? (
-            !mustAllinToCall && canRaise && !ootPassiveBound && (
+            !mustAllinToCall && canMinRaise && !ootPassiveBound && (
               <>
                 {/* Desktop Bet/Raise input + buttons */}
                 <div className="hidden sm:grid sm:grid-cols-12 gap-2 items-center">

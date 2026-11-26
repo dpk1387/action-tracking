@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Plus, Minus, FolderOpen, Clock, Trash2, Award, Sparkles } from 'lucide-react';
+import { X, Plus, Minus, FolderOpen, Clock, Trash2, Sparkles, ChevronDown, ChevronRight } from 'lucide-react';
 import BlindScheduleEditor from '@/components/poker/BlindScheduleEditor';
 import ChipDenominationPicker from '@/components/poker/ChipDenominationPicker';
 import HelpHover from '@/components/HelpHover';
 import SavedStructuresDialog from '@/components/poker/SavedStructuresDialog';
-import { defaultScheduleFor, defaultDenomsFor, firstBreakLevelNum, generateBlindSchedule, bombPotScheduleFor } from '@/lib/tournamentStructures';
+import { defaultScheduleFor, defaultDenomsFor, generateBlindSchedule, bombPotScheduleFor } from '@/lib/tournamentStructures';
 import { suggestAnte, parseAmount, isBombPotVariant } from '@/lib/poker';
 import { ROUNDING_OPTIONS, isRoundingOptionDisabled, getDefaultStackRounding } from '@/lib/goMode';
 
@@ -40,17 +40,47 @@ function ToggleRow({ label, checked, onChange, disabled }) {
   );
 }
 
+function CollapsibleSection({ title, subtitle, isOpen, onToggle, children, rightBadge }) {
+  return (
+    <div className="rounded-xl border border-[#2a2f37] bg-[#16191f] mb-3 overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#1b1f27] transition-colors cursor-pointer"
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          {isOpen ? (
+            <ChevronDown size={17} className="text-emerald-400 shrink-0" />
+          ) : (
+            <ChevronRight size={17} className="text-slate-400 shrink-0" />
+          )}
+          <span className="text-sm font-semibold text-white">{title}</span>
+          {subtitle && (
+            <span className="text-xs text-slate-400 truncate hidden sm:inline">{subtitle}</span>
+          )}
+        </div>
+        {rightBadge && <div className="shrink-0 ml-2">{rightBadge}</div>}
+      </button>
+      {isOpen && (
+        <div className="px-4 pb-4 pt-3 border-t border-[#2a2f37]/70 space-y-4">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SetupDialog({ initial, onSave, onClose }) {
   const [sessionName, setSessionName] = useState(initial?.sessionName || '');
   const [mode, setMode] = useState(initial?.mode || 'tournament');
   const [variant, setVariant] = useState(!initial?.variant || initial.variant === 'holdem' ? 'nlh' : initial.variant);
   const [currency, setCurrency] = useState(initial?.currency || '$');
-  const [seatCount, setSeatCount] = useState(initial?.tableSize || initial?.players?.length || 6);
+  const [seatCount, setSeatCount] = useState(Math.min(10, Math.max(2, initial?.tableSize || initial?.players?.length || 6)));
   const [players, setPlayers] = useState(() => {
-    const size = initial?.tableSize || initial?.players?.length || 6;
+    const size = Math.min(10, Math.max(2, initial?.tableSize || initial?.players?.length || 6));
     const arr = Array.from({ length: size }, (_, i) => ({ name: '', seat: i + 1, stack: '', occupied: false }));
     if (initial?.players?.length) {
-      initial.players.forEach((p) => {
+      initial.players.slice(0, 10).forEach((p) => {
         const idx = arr.findIndex((a) => a.seat === p.seat);
         if (idx >= 0) arr[idx] = { ...p, occupied: p.occupied !== false };
       });
@@ -113,11 +143,12 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [bombAmount, setBombAmount] = useState(initial?.bombAmount ?? (initIsBomb ? (initial?.anteAmount || (initial?.mode === 'cash' ? 5 : 25)) : (initial?.bigBlind ? initial.bigBlind * 5 : 10)));
   const [doubleBoard, setDoubleBoard] = useState(initVariant === 'double_board_bomb_pot' ? true : false);
   const [firstButton, setFirstButton] = useState(initial?.firstButton ?? initial?.buttonSeat ?? 'random');
+  const [defaultStructureType, setDefaultStructureType] = useState(initial?.defaultStructureType || 'balanced');
   const [schedule, setSchedule] = useState(() => {
     if (initial?.blindSchedule?.length) return initial.blindSchedule;
     const denoms = initial?.chipDenominations || chipDenoms;
     const lowest = [...denoms].sort((a, b) => a - b)[0];
-    return initIsBomb ? bombPotScheduleFor(lowest) : defaultScheduleFor(lowest);
+    return initIsBomb ? bombPotScheduleFor(lowest) : defaultScheduleFor(lowest, initial?.defaultStructureType || 'balanced');
   });
   const omahaVariants = ['plo', 'plo5', 'plo6', 'plo8'];
   const degenVariantLabels = {
@@ -173,8 +204,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
         setAnteAmount(CASH_DEFAULT.anteAmount);
       } else {
         setAnteType('bba');
-        setSchedule(defaultScheduleFor(lowest));
-        const defSched = defaultScheduleFor(lowest);
+        const defSched = defaultScheduleFor(lowest, defaultStructureType);
+        setSchedule(defSched);
         setAnteAmount(Number(defSched[0]?.bigBlind) || 50);
       }
     }
@@ -220,7 +251,13 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const [breakDurationMinutes, setBreakDurationMinutes] = useState(initial?.breakDurationMinutes ?? 10);
   const [breakEveryLevels, setBreakEveryLevels] = useState(initial?.breakEveryLevels ?? 4);
   const [desiredDurationMinutes, setDesiredDurationMinutes] = useState(
-    initial?.desiredDurationMinutes != null ? initial.desiredDurationMinutes : 180
+    initial?.desiredDurationMinutes != null ? Math.max(30, Number(initial.desiredDurationMinutes) || 180) : 180
+  );
+  const [desiredTotalHands, setDesiredTotalHands] = useState(
+    initial?.desiredTotalHands != null ? Math.max(10, Number(initial.desiredTotalHands) || 150) : 150
+  );
+  const [desiredTotalOrbits, setDesiredTotalOrbits] = useState(
+    initial?.desiredTotalOrbits != null ? Math.max(3, Number(initial.desiredTotalOrbits) || 20) : 20
   );
   const [colorUpBreaksOnly, setColorUpBreaksOnly] = useState(Boolean(initial?.colorUpBreaksOnly));
   const [generatorSpeed, setGeneratorSpeed] = useState(initial?.generatorSpeed || 'balanced');
@@ -228,6 +265,16 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   const handleLevelMethodChange = (m) => {
     setLevelMethod(m);
     setLevelValue(LEVEL_PRESETS[m]);
+  };
+
+  const [openSections, setOpenSections] = useState({
+    players: true,
+    structure: false,
+    blinds: false,
+    advanced: false,
+  });
+  const toggleSection = (key) => {
+    setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const buildStructureData = () => {
@@ -242,6 +289,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       smallBlind: isBombVar ? 0 : smallBlind, bigBlind: isBombVar ? 0 : bigBlind, thirdBlind, fourthBlind,
       anteType: isBombVar ? 'traditional' : anteType, anteAmount,
       sbHalfAnteShortHanded, shortHandedThreshold,
+      bbaEarlyHalfAnte, bbaEarlyHalfAnteLevel,
       smallBet, bigBet, flMaxRaises,
       doubleBoard: variant === 'double_board_bomb_pot', allowStraddle: isBombVar ? false : allowStraddle,
       allowMultiStraddle: isBombVar ? false : allowMultiStraddle, mandatoryStraddle,
@@ -251,9 +299,12 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       levelDurationMinutes: levelMethod === 'minutes' ? (Number(levelValue) || 15) : undefined,
       breakDurationMinutes: Number(breakDurationMinutes) || 10,
       breakEveryLevels: Number(breakEveryLevels) || 4,
-      desiredDurationMinutes: Number(desiredDurationMinutes) || 0,
+      desiredDurationMinutes: Math.max(30, Number(desiredDurationMinutes) || 180),
+      desiredTotalHands: Math.max(10, Number(desiredTotalHands) || 150),
+      desiredTotalOrbits: Math.max(3, Number(desiredTotalOrbits) || 20),
       colorUpBreaksOnly: Boolean(colorUpBreaksOnly),
       generatorSpeed,
+      defaultStructureType,
       chipDenoms,
       startingStack: effStartingStack,
       tournamentFormat, maxReEntries, lateRegEnabled, lateRegLevel,
@@ -329,6 +380,8 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     if (d.anteAmount != null) setAnteAmount(d.anteAmount);
     if (d.sbHalfAnteShortHanded != null) setSbHalfAnteShortHanded(d.sbHalfAnteShortHanded);
     if (d.shortHandedThreshold != null) setShortHandedThreshold(d.shortHandedThreshold);
+    if (d.bbaEarlyHalfAnte != null) setBbaEarlyHalfAnte(Boolean(d.bbaEarlyHalfAnte));
+    if (d.bbaEarlyHalfAnteLevel != null) setBbaEarlyHalfAnteLevel(Math.max(1, Number(d.bbaEarlyHalfAnteLevel) || 2));
     if (d.smallBet != null) setSmallBet(d.smallBet);
     if (d.bigBet != null) setBigBet(d.bigBet);
     if (d.flMaxRaises != null) setFlMaxRaises(d.flMaxRaises);
@@ -350,9 +403,12 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     }
     if (d.breakDurationMinutes != null) setBreakDurationMinutes(d.breakDurationMinutes);
     if (d.breakEveryLevels != null) setBreakEveryLevels(d.breakEveryLevels);
-    if (d.desiredDurationMinutes != null) setDesiredDurationMinutes(d.desiredDurationMinutes);
+    if (d.desiredDurationMinutes != null) setDesiredDurationMinutes(Math.max(30, Number(d.desiredDurationMinutes) || 180));
+    if (d.desiredTotalHands != null) setDesiredTotalHands(Math.max(10, Number(d.desiredTotalHands) || 150));
+    if (d.desiredTotalOrbits != null) setDesiredTotalOrbits(Math.max(3, Number(d.desiredTotalOrbits) || 20));
     if (d.colorUpBreaksOnly != null) setColorUpBreaksOnly(Boolean(d.colorUpBreaksOnly));
     if (d.generatorSpeed) setGeneratorSpeed(d.generatorSpeed);
+    if (d.defaultStructureType) setDefaultStructureType(d.defaultStructureType);
     if (Array.isArray(d.chipDenominations)) setChipDenoms(d.chipDenominations);
     else if (Array.isArray(d.chipDenoms)) setChipDenoms(d.chipDenoms);
     if (d.tournamentFormat != null) setTournamentFormat(d.tournamentFormat);
@@ -469,7 +525,7 @@ export default function SetupDialog({ initial, onSave, onClose }) {
   };
 
   const adjustSeats = (delta) => {
-    const maxSeats = isCash ? 12 : 10;
+    const maxSeats = 10;
     const next = Math.min(maxSeats, Math.max(2, seatCount + delta));
     setSeatCount(next);
     setPlayers((prev) => {
@@ -499,49 +555,57 @@ export default function SetupDialog({ initial, onSave, onClose }) {
     const isFL = !isBombVariant && gameType === 'fl';
     const useScheduleBlinds = !isCash && !isFL;
     const schedFirst = schedule[0] || { smallBlind: isBombVariant ? 0 : 25, bigBlind: isBombVariant ? 0 : 50, ante: isBombVariant ? 25 : 0 };
+    const failBlinds = (msg) => {
+      if (!isCash) setOpenSections((prev) => ({ ...prev, blinds: true }));
+      return setError(msg);
+    };
+    const failPlayers = (msg) => {
+      if (!isCash) setOpenSections((prev) => ({ ...prev, players: true }));
+      return setError(msg);
+    };
     if (isBombVariant) {
       if (isCash) {
         const cashBombAnte = parseAmount(anteAmount) ?? Number(anteAmount);
-        if (!cashBombAnte || cashBombAnte <= 0) return setError('Ante must be positive.');
+        if (!cashBombAnte || cashBombAnte <= 0) return failBlinds('Ante must be positive.');
       } else {
         for (const l of schedule) {
           if (l.type !== 'break' && l.type !== 'color_up') {
             const lvlAnte = parseAmount(l.ante) ?? Number(l.ante);
-            if (!lvlAnte || lvlAnte <= 0) return setError('Every ante level must be positive.');
+            if (!lvlAnte || lvlAnte <= 0) return failBlinds('Every ante level must be positive.');
           }
         }
       }
     } else if (isFL) {
-      if ((parseAmount(smallBet) ?? Number(smallBet)) <= 0) return setError('Small bet must be positive.');
-      if ((parseAmount(bigBet) ?? Number(bigBet)) <= 0) return setError('Big bet must be positive.');
-      if (Number(flMaxRaises) < 1) return setError('Max raises must be at least 1.');
+      if ((parseAmount(smallBet) ?? Number(smallBet)) <= 0) return failBlinds('Small bet must be positive.');
+      if ((parseAmount(bigBet) ?? Number(bigBet)) <= 0) return failBlinds('Big bet must be positive.');
+      if (Number(flMaxRaises) < 1) return failBlinds('Max raises must be at least 1.');
     } else {
       if (useScheduleBlinds) {
-        if ((parseAmount(schedFirst.bigBlind) ?? Number(schedFirst.bigBlind)) <= 0 || (parseAmount(schedFirst.smallBlind) ?? Number(schedFirst.smallBlind)) <= 0) return setError('Level 1 blinds must be positive.');
+        if ((parseAmount(schedFirst.bigBlind) ?? Number(schedFirst.bigBlind)) <= 0 || (parseAmount(schedFirst.smallBlind) ?? Number(schedFirst.smallBlind)) <= 0) return failBlinds('Level 1 blinds must be positive.');
       } else {
-        if ((parseAmount(bigBlind) ?? Number(bigBlind)) <= 0 || (parseAmount(smallBlind) ?? Number(smallBlind)) <= 0) return setError('Blinds must be positive.');
+        if ((parseAmount(bigBlind) ?? Number(bigBlind)) <= 0 || (parseAmount(smallBlind) ?? Number(smallBlind)) <= 0) return failBlinds('Blinds must be positive.');
       }
     }
     if (!isBombVariant && (anteType === 'three_blinds' || anteType === 'four_blinds')) {
       const tbVal = parseAmount(thirdBlind) ?? Number(thirdBlind);
-      if (tbVal <= 0) return setError('Third blind must be positive.');
+      if (tbVal <= 0) return failBlinds('Third blind must be positive.');
     }
     if (!isBombVariant && anteType === 'four_blinds') {
       const fbVal = parseAmount(fourthBlind) ?? Number(fourthBlind);
-      if (fbVal <= 0) return setError('Fourth blind must be positive.');
+      if (fbVal <= 0) return failBlinds('Fourth blind must be positive.');
     }
-    if (!isBombVariant && isCash && anteType === 'traditional' && anteAmount !== '' && (parseAmount(anteAmount) ?? Number(anteAmount)) < 0) return setError('Ante cannot be negative.');
+    if (!isBombVariant && isCash && anteType === 'traditional' && anteAmount !== '' && (parseAmount(anteAmount) ?? Number(anteAmount)) < 0) return failBlinds('Ante cannot be negative.');
     if (!isBombVariant && !isCash) {
       for (const l of schedule) {
-        if (l.type !== 'break' && ((parseAmount(l.smallBlind) ?? Number(l.smallBlind)) <= 0 || (parseAmount(l.bigBlind) ?? Number(l.bigBlind)) <= 0)) return setError('Every blind level must be positive.');
+        if (l.type !== 'break' && ((parseAmount(l.smallBlind) ?? Number(l.smallBlind)) <= 0 || (parseAmount(l.bigBlind) ?? Number(l.bigBlind)) <= 0)) return failBlinds('Every blind level must be positive.');
       }
     }
     const occupiedPlayers = isCash
       ? players.map((p, idx) => ({ ...p, seat: idx + 1, occupied: true }))
       : players.filter((p) => p.occupied);
-    if (occupiedPlayers.length < 2) return setError('At least 2 active players are required.');
+    if (occupiedPlayers.length < 2) return failPlayers('At least 2 active players are required.');
     const effAnte = parseAmount(anteAmount) ?? Number(anteAmount) ?? (isCash ? (isBombVariant ? 5 : 1) : 25);
-    if (isShortDeck && effAnte <= 0) return setError('Ante must be positive.');
+    if (isShortDeck && effAnte <= 0) return failBlinds('Ante must be positive.');
 
     const bombLvl1Ante = isBombVariant
       ? (isCash ? effAnte : (parseAmount(schedFirst.ante) ?? Number(schedFirst.ante) ?? 25))
@@ -643,9 +707,12 @@ export default function SetupDialog({ initial, onSave, onClose }) {
       },
       breakDurationMinutes: isCash ? undefined : (Number(breakDurationMinutes) || 10),
       breakEveryLevels: isCash ? undefined : (Number(breakEveryLevels) || 4),
-      desiredDurationMinutes: isCash ? undefined : (Number(desiredDurationMinutes) || 0),
+      desiredDurationMinutes: isCash ? undefined : Math.max(30, Number(desiredDurationMinutes) || 180),
+      desiredTotalHands: isCash ? undefined : Math.max(10, Number(desiredTotalHands) || 150),
+      desiredTotalOrbits: isCash ? undefined : Math.max(3, Number(desiredTotalOrbits) || 20),
       colorUpBreaksOnly: isCash ? undefined : Boolean(colorUpBreaksOnly),
       generatorSpeed: isCash ? undefined : generatorSpeed,
+      defaultStructureType: isCash ? undefined : defaultStructureType,
       blindSchedule: isCash ? [] : strippedSchedule.map((l) => {
         if (l.type === 'break') {
           const hasRace = l.race && (parseAmount(l.race.retired) ?? Number(l.race.retired)) > 0 && (parseAmount(l.race.replacement) ?? Number(l.race.replacement)) > 0;
@@ -776,8 +843,6 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                 <option value="plo5">PLO5</option>
                 <option value="plo6">PLO6</option>
                 <option value="plo8">PLO8</option>
-                <option value="bomb_pot">Bomb Pot</option>
-                <option value="double_board_bomb_pot">Double Board Bomb Pot</option>
                 {degenVariantLabels[variant] && !['nlh', 'plo', 'short_deck', 'pineapple', 'crazy_pineapple', 'lazy_pineapple', 'super_holdem', 'plo5', 'plo6', 'plo8', 'bomb_pot', 'double_board_bomb_pot'].includes(variant) && (
                   <option value={variant}>{degenVariantLabels[variant]}</option>
                 )}
@@ -785,101 +850,93 @@ export default function SetupDialog({ initial, onSave, onClose }) {
             )}
           </select>
           {isCash && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Currency</span>
-              <input value={currency} onChange={(e) => setCurrency(e.target.value)} placeholder="$" className="w-16 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">Button</span>
-            <select
-              value={firstButton}
-              onChange={(e) => setFirstButton(e.target.value)}
-              className="rounded-lg border border-[#2a2f37] bg-[#15181d] px-3 py-2 text-sm text-white"
-            >
-              <option value="random">Random (Default)</option>
-              {players.map((p, i) => (
-                <option key={p.seat} value={p.seat}>
-                  {isCash ? `Player ${i + 1}` : `Seat ${p.seat}`}{p.name ? ` (${p.name})` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        {/* GO Mode Opponent Stack Rounding & Security Section */}
-        {isGoMode && (
-          <div className="space-y-3 p-3 mb-4 rounded-xl border border-amber-500/30 bg-amber-950/20">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <span className="text-xs font-bold text-amber-200">
-                Stack Approximation
-              </span>
+            <>
               <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">Currency</span>
+                <input value={currency} onChange={(e) => setCurrency(e.target.value)} placeholder="$" className="w-16 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">Button</span>
                 <select
-                  value={stackRounding || getDefaultStackRounding(smallBlind)}
-                  onChange={(e) => setStackRounding(e.target.value === 'exact' ? 'exact' : Number(e.target.value))}
-                  className="rounded-lg border border-amber-500/40 bg-[#15181d] px-3 py-1.5 text-xs font-bold text-white"
+                  value={firstButton}
+                  onChange={(e) => setFirstButton(e.target.value)}
+                  className="rounded-lg border border-[#2a2f37] bg-[#15181d] px-3 py-2 text-sm text-white"
                 >
-                  {ROUNDING_OPTIONS.map((opt) => {
-                    const disabled = isRoundingOptionDisabled(opt.value, smallBlind);
-                    return (
-                      <option key={opt.value} value={opt.value} disabled={disabled}>
-                        {opt.label} {disabled ? '(Disabled)' : ''}
-                      </option>
-                    );
-                  })}
+                  <option value="random">Random</option>
+                  {players.map((p, i) => (
+                    <option key={p.seat} value={p.seat}>
+                      Player {i + 1}{p.name ? ` (${p.name})` : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
-            </div>
-            <div className="border-t border-amber-500/20 pt-2.5 text-[11px] text-slate-400 leading-relaxed">
-              Every turn opens behind a hold-to-open handoff screen. Each player can add a 3-digit hole-card PIN from
-              <span className="text-amber-200 font-bold"> Settings</span> during the game (off by default).
-            </div>
-          </div>
-        )}
-        <div className="flex flex-wrap items-center gap-4 mb-4">
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-400">{isCash ? 'Players' : 'Seats'}</span>
-            <button onClick={() => adjustSeats(-1)} className="rounded-md bg-[#2a2f37] p-1.5 text-white hover:bg-[#363c45] cursor-pointer"><Minus size={16} /></button>
-            <span className="w-8 text-center text-white font-medium">{seatCount}</span>
-            <button onClick={() => adjustSeats(1)} className="rounded-md bg-[#2a2f37] p-1.5 text-white hover:bg-[#363c45] cursor-pointer"><Plus size={16} /></button>
-            <span className="text-[11px] text-slate-500">{isCash ? 'active players at table' : 'table size – empty seats stay open'}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">Set all stacks</span>
-            {stackUnit && <span className="text-xs text-slate-400">{stackUnit}</span>}
-            <input type="text" inputMode="decimal" value={bulkStack} onChange={(e) => setBulkStack(e.target.value)} placeholder={!isCash && !isBombVariant && stackInBB ? '100' : String(isBombVariant ? (isCash ? 100 * effAnteBomb : 200 * smallestChip) : (isCash ? 200 : 200 * smallestChip))} className="w-28 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm text-left" />
-            <button onClick={applyBulk} className="rounded-md bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3 py-2 cursor-pointer">Apply to all</button>
-          </div>
-          {!isCash && !isBombVariant && (
-            <div className="ml-auto">
-              <ToggleRow label="Enter stacks in BB" checked={stackInBB} onChange={setStackInBB} />
-            </div>
+            </>
           )}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
-          {players.map((p, i) => (
-            <div key={i} className={`rounded-lg border p-3 ${isCash || p.occupied ? 'border-[#2a2f37] bg-[#15181d]' : 'border-dashed border-[#2a2f37] bg-[#121417] opacity-50'}`}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs text-slate-400 font-medium">{isCash ? `Player ${i + 1}` : `Seat ${p.seat}`}</div>
-                {!isCash ? (
-                  <button type="button" onClick={() => toggleSeatOccupied(i)} className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${p.occupied ? 'bg-[#4a5a4a] text-white' : 'bg-[#2a2f37] text-slate-400'}`}>
-                    {p.occupied ? 'Occupied' : 'Empty'}
-                  </button>
-                ) : (
-                  players.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => removePlayer(i)}
-                      className="text-slate-500 hover:text-rose-400 p-1 rounded cursor-pointer transition-colors"
-                      title="Remove player"
+
+        {/* CASH MODE: Keep existing non-collapsible layout unchanged */}
+        {isCash && (
+          <>
+            {isGoMode && (
+              <div className="space-y-3 p-3 mb-4 rounded-xl border border-amber-500/30 bg-amber-950/20">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <span className="text-xs font-bold text-amber-200">
+                    Stack Approximation
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={stackRounding || getDefaultStackRounding(smallBlind)}
+                      onChange={(e) => setStackRounding(e.target.value === 'exact' ? 'exact' : Number(e.target.value))}
+                      className="rounded-lg border border-amber-500/40 bg-[#15181d] px-3 py-1.5 text-xs font-bold text-white"
                     >
-                      <Trash2 size={13} />
-                    </button>
-                  )
-                )}
+                      {ROUNDING_OPTIONS.map((opt) => {
+                        const disabled = isRoundingOptionDisabled(opt.value, smallBlind);
+                        return (
+                          <option key={opt.value} value={opt.value} disabled={disabled}>
+                            {opt.label} {disabled ? '(Disabled)' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                </div>
+                <div className="border-t border-amber-500/20 pt-2.5 text-[11px] text-slate-400 leading-relaxed">
+                  Every turn opens behind a hold-to-open handoff screen. Each player can add a 3-digit hole-card PIN from
+                  <span className="text-amber-200 font-bold"> Settings</span> during the game (off by default).
+                </div>
               </div>
-              {(isCash || p.occupied) && (
-                <>
+            )}
+            <div className="flex flex-wrap items-center gap-4 mb-4">
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-slate-400">Players</span>
+                <button onClick={() => adjustSeats(-1)} className="rounded-md bg-[#2a2f37] p-1.5 text-white hover:bg-[#363c45] cursor-pointer"><Minus size={16} /></button>
+                <span className="w-8 text-center text-white font-medium">{seatCount}</span>
+                <button onClick={() => adjustSeats(1)} className="rounded-md bg-[#2a2f37] p-1.5 text-white hover:bg-[#363c45] cursor-pointer"><Plus size={16} /></button>
+                <span className="text-[11px] text-slate-500">active players at table</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">Set all stacks</span>
+                {stackUnit && <span className="text-xs text-slate-400">{stackUnit}</span>}
+                <input type="text" inputMode="decimal" value={bulkStack} onChange={(e) => setBulkStack(e.target.value)} placeholder={String(isBombVariant ? 100 * effAnteBomb : 200)} className="w-28 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm text-left" />
+                <button onClick={applyBulk} className="rounded-md bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3 py-2 cursor-pointer">Apply to all</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+              {players.map((p, i) => (
+                <div key={i} className="rounded-lg border p-3 border-[#2a2f37] bg-[#15181d]">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs text-slate-400 font-medium">Player {i + 1}</div>
+                    {players.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => removePlayer(i)}
+                        className="text-slate-500 hover:text-rose-400 p-1 rounded cursor-pointer transition-colors"
+                        title="Remove player"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
                   <input
                     value={p.name}
                     onChange={(e) => updatePlayer(i, 'name', e.target.value)}
@@ -894,76 +951,65 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                       inputMode="decimal"
                       value={p.stack}
                       onChange={(e) => updatePlayer(i, 'stack', e.target.value)}
-                      placeholder={String(!isCash && stackInBB ? 100 : (isCash ? 100 * effBB : 200 * smallestChip))}
+                      placeholder={String(100 * effBB)}
                       className="flex-1 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a] placeholder:text-slate-500"
                     />
                   </div>
-                </>
-              )}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        {isCash && players.length < 12 && (
-          <div className="mb-5">
-            <button
-              type="button"
-              onClick={() => adjustSeats(1)}
-              className="px-3.5 py-2 rounded-lg border border-dashed border-[#2a2f37] hover:border-emerald-500/50 bg-[#15181d] hover:bg-[#1a2027] text-xs font-semibold text-emerald-400 flex items-center gap-1.5 cursor-pointer transition-colors"
-            >
-              <Plus size={14} /> Add Player ({players.length + 1} of 12)
-            </button>
-          </div>
-        )}
-        {!isCash && gameType !== 'fl' && (
-          <div className="text-xs text-slate-500 mb-3">
-            {isBombVariant ? 'Antes come from level 1 of the schedule below.' : 'Blinds come from level 1 of the schedule below.'}
-          </div>
-        )}
-        {isBombVariant ? (
-          isCash ? (
-            <div className="flex flex-wrap items-end gap-3 mb-4">
-              <div className="flex-1 min-w-[160px]">
-                <label className="text-xs text-amber-300 font-semibold block mb-1">
-                  Ante (per player) {sym && `(${sym})`}
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={anteAmount !== '' ? anteAmount : '5'}
-                  onChange={(e) => setAnteAmount(e.target.value)}
-                  placeholder="5"
-                  className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
-                />
-                <span className="text-[11px] text-slate-400 block mt-1">
-                  Every player pays {sym}{anteAmount || '5'} to enter each bomb pot. No small/big blinds; action starts on the flop{isDoubleBombVariant ? ' with 2 boards' : ''}.
-                </span>
+            {players.length < 10 && (
+              <div className="mb-5">
+                <button
+                  type="button"
+                  onClick={() => adjustSeats(1)}
+                  className="px-3.5 py-2 rounded-lg border border-dashed border-[#2a2f37] hover:border-emerald-500/50 bg-[#15181d] hover:bg-[#1a2027] text-xs font-semibold text-emerald-400 flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Plus size={14} /> Add Player ({players.length + 1} of 10)
+                </button>
               </div>
-            </div>
-          ) : null
-        ) : isShortDeck ? (
-          <div className="flex flex-wrap items-end gap-3 mb-4">
-            <div className="flex-1 min-w-[140px]">
-              <label className="text-xs text-amber-300 font-semibold block mb-1">
-                Ante {sym && `(${sym})`}
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={anteAmount !== '' ? anteAmount : (isCash ? '1' : '25')}
-                onChange={(e) => setAnteAmount(e.target.value)}
-                placeholder={isCash ? '1' : '25'}
-                className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
-              />
-              <span className="text-[11px] text-slate-400 block mt-1">
-                Everyone pays {sym}{anteAmount || (isCash ? '1' : '25')} ante; BTN pays double ({sym}{(Number(anteAmount) || (isCash ? 1 : 25)) * 2}). Action starts left of button (UTG).
-              </span>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-end gap-3 mb-4">
-              {(isCash || gameType === 'fl') && (
-                <>
+            )}
+            {isBombVariant ? (
+              <div className="flex flex-wrap items-end gap-3 mb-4">
+                <div className="flex-1 min-w-[160px]">
+                  <label className="text-xs text-amber-300 font-semibold block mb-1">
+                    Ante (per player) {sym && `(${sym})`}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={anteAmount !== '' ? anteAmount : '5'}
+                    onChange={(e) => setAnteAmount(e.target.value)}
+                    placeholder="5"
+                    className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
+                  />
+                  <span className="text-[11px] text-slate-400 block mt-1">
+                    Every player pays {sym}{anteAmount || '5'} to enter each bomb pot. No small/big blinds; action starts on the flop{isDoubleBombVariant ? ' with 2 boards' : ''}.
+                  </span>
+                </div>
+              </div>
+            ) : isShortDeck ? (
+              <div className="flex flex-wrap items-end gap-3 mb-4">
+                <div className="flex-1 min-w-[140px]">
+                  <label className="text-xs text-amber-300 font-semibold block mb-1">
+                    Ante {sym && `(${sym})`}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={anteAmount !== '' ? anteAmount : '1'}
+                    onChange={(e) => setAnteAmount(e.target.value)}
+                    placeholder="1"
+                    className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
+                  />
+                  <span className="text-[11px] text-slate-400 block mt-1">
+                    Everyone pays {sym}{anteAmount || '1'} ante; BTN pays double ({sym}{(Number(anteAmount) || 1) * 2}). Action starts left of button (UTG).
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-end gap-3 mb-4">
                   <div className="flex-1 min-w-[120px]">
                     <label className="text-xs text-slate-400 block mb-1">{gameType === 'fl' ? 'Small bet' : 'Small blind'}</label>
                     <input type="text" inputMode="decimal" value={gameType === 'fl' ? smallBet : smallBlind} onChange={(e) => { if (gameType === 'fl') setSmallBet(e.target.value); else { setSmallBlind(e.target.value); setCashBlindsTouched(true); } }} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
@@ -1018,132 +1064,137 @@ export default function SetupDialog({ initial, onSave, onClose }) {
                       />
                     </div>
                   )}
-                </>
-              )}
-              <div className="min-w-[160px] flex-1">
-                <label className="text-xs text-slate-400 block mb-1">Ante / Blind Structure</label>
-                <select
-                  value={anteType}
-                  onChange={(e) => {
-                    const t = e.target.value;
-                    setAnteType(t);
-                    const bbVal = parseAmount(bigBlind) ?? Number(bigBlind) ?? 2;
-                    if (t === 'three_blinds') {
-                      if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
-                        setThirdBlind(bbVal * 2);
-                      }
-                    } else if (t === 'four_blinds') {
-                      if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
-                        setThirdBlind(bbVal * 2);
-                      }
-                      if (!fourthBlindCustomized || Number(fourthBlind) === 10 || Number(fourthBlind) === 0) {
-                        setFourthBlind(bbVal * 4);
-                      }
-                    }
-                    if (t === 'traditional') setAnteAmount(suggestAnte(bigBlind));
-                    else if (t === 'bba' || t === 'btn_ante') setAnteAmount(Number(bigBlind));
-                    else if (t === 'sb_half_ante') setAnteAmount(Math.max(1, Math.round(Number(bigBlind) * 0.5)));
-                    else setAnteAmount(0);
-                  }}
-                  className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                >
-                  <option value="none">No ante</option>
-                  {isCash && <option value="traditional">Traditional ante</option>}
-                  <option value="bba">Big blind ante (BBA)</option>
-                  <option value="sb_half_ante">Big blind half ante (0.5 BB)</option>
-                  <option value="btn_ante">Button ante (BTN 1 BB)</option>
-                  {isCash && <option value="three_blinds">3 blinds</option>}
-                  {isCash && <option value="four_blinds">4 blinds</option>}
-                </select>
-              </div>
-              {isCash && anteType !== 'three_blinds' && anteType !== 'four_blinds' && (
-                <div className="flex-1 min-w-[120px]">
-                  <label className="text-xs text-slate-400 block mb-1">Ante amount</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={anteAmount}
-                    disabled={anteType === 'none' || isBBA || isBtnAnte || isSBHalfAnte}
-                    onChange={(e) => setAnteAmount(e.target.value)}
-                    className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40"
-                  />
-                  {isBBA && <div className="text-[10px] text-slate-500 mt-1">= 1 BB ({effBB}) for table</div>}
-                  {isBtnAnte && <div className="text-[10px] text-emerald-400/80 mt-1">= 1 BB ({effBB}) paid by BTN</div>}
-                  {isSBHalfAnte && <div className="text-[10px] text-amber-400/80 mt-1">= 0.5 BB ({Math.max(1, Math.round(effBB * 0.5))}) paid by BB</div>}
+                  <div className="min-w-[160px] flex-1">
+                    <label className="text-xs text-slate-400 block mb-1">Ante / Blind Structure</label>
+                    <select
+                      value={anteType}
+                      onChange={(e) => {
+                        const t = e.target.value;
+                        setAnteType(t);
+                        const bbVal = parseAmount(bigBlind) ?? Number(bigBlind) ?? 2;
+                        if (t === 'three_blinds') {
+                          if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
+                            setThirdBlind(bbVal * 2);
+                          }
+                        } else if (t === 'four_blinds') {
+                          if (!thirdBlindCustomized || Number(thirdBlind) === 5 || Number(thirdBlind) === 0) {
+                            setThirdBlind(bbVal * 2);
+                          }
+                          if (!fourthBlindCustomized || Number(fourthBlind) === 10 || Number(fourthBlind) === 0) {
+                            setFourthBlind(bbVal * 4);
+                          }
+                        }
+                        if (t === 'traditional') setAnteAmount(suggestAnte(bigBlind));
+                        else if (t === 'bba' || t === 'btn_ante') setAnteAmount(Number(bigBlind));
+                        else if (t === 'sb_half_ante') setAnteAmount(Math.max(1, Math.round(Number(bigBlind) * 0.5)));
+                        else setAnteAmount(0);
+                      }}
+                      className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                    >
+                      <option value="none">No ante</option>
+                      <option value="traditional">Traditional ante</option>
+                      <option value="bba">Big blind ante (BBA)</option>
+                      <option value="sb_half_ante">Big blind half ante (0.5 BB)</option>
+                      <option value="btn_ante">Button ante (BTN 1 BB)</option>
+                      <option value="three_blinds">3 blinds</option>
+                      <option value="four_blinds">4 blinds</option>
+                    </select>
+                  </div>
+                  {anteType !== 'three_blinds' && anteType !== 'four_blinds' && (
+                    <div className="flex-1 min-w-[120px]">
+                      <label className="text-xs text-slate-400 block mb-1">Ante amount</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={anteAmount}
+                        disabled={anteType === 'none' || isBBA || isBtnAnte || isSBHalfAnte}
+                        onChange={(e) => setAnteAmount(e.target.value)}
+                        className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm disabled:opacity-40"
+                      />
+                      {isBBA && <div className="text-[10px] text-slate-500 mt-1">= 1 BB ({effBB}) for table</div>}
+                      {isBtnAnte && <div className="text-[10px] text-emerald-400/80 mt-1">= 1 BB ({effBB}) paid by BTN</div>}
+                      {isSBHalfAnte && <div className="text-[10px] text-amber-400/80 mt-1">= 0.5 BB ({Math.max(1, Math.round(effBB * 0.5))}) paid by BB</div>}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            {anteType === 'bba' && (
-              <div className="rounded-lg border border-[#2a2f37] bg-[#12161c] p-3 mb-4 space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={sbHalfAnteShortHanded}
-                    onChange={(e) => setSbHalfAnteShortHanded(e.target.checked)}
-                    className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
-                  />
-                  <span>Short-handed BBA reduction (BB pays 0.5 BB ante for table when fewer than X players remain)</span>
-                </label>
-                {sbHalfAnteShortHanded && (
-                  <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
-                    <span>When remaining players are fewer than:</span>
-                    <input
-                      type="number"
-                      min="2"
-                      max="10"
-                      value={shortHandedThreshold}
-                      onChange={(e) => setShortHandedThreshold(Math.max(2, Math.min(10, Number(e.target.value) || 5)))}
-                      className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
-                    />
-                    <span className="text-[11px] text-slate-500">
-                      (Default: 5 — if less than {shortHandedThreshold} players remain, BB pays 1/2 ante instead of full BBA)
-                    </span>
+                {anteType === 'bba' && (
+                  <div className="rounded-lg border border-[#2a2f37] bg-[#12161c] p-3 mb-4 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={sbHalfAnteShortHanded}
+                        onChange={(e) => setSbHalfAnteShortHanded(e.target.checked)}
+                        className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                      />
+                      <span>Short-handed BBA reduction (BB pays 0.5 BB ante for table when fewer than X players remain)</span>
+                    </label>
+                    {sbHalfAnteShortHanded && (
+                      <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
+                        <span>When remaining players are fewer than:</span>
+                        <input
+                          type="number"
+                          min="2"
+                          max="10"
+                          value={shortHandedThreshold}
+                          onChange={(e) => setShortHandedThreshold(Math.max(2, Math.min(10, Number(e.target.value) || 5)))}
+                          className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
+                        />
+                        <span className="text-[11px] text-slate-500">
+                          (Default: 5 — if less than {shortHandedThreshold} players remain, BB pays 1/2 ante instead of full BBA)
+                        </span>
+                      </div>
+                    )}
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200 pt-1 border-t border-[#2a2f37]/60">
+                      <input
+                        type="checkbox"
+                        checked={bbaEarlyHalfAnte}
+                        onChange={(e) => setBbaEarlyHalfAnte(e.target.checked)}
+                        className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                      />
+                      <span>Early level no BBA (no ante through level X)</span>
+                    </label>
+                    {bbaEarlyHalfAnte && (
+                      <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
+                        <span>No ante through level:</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="20"
+                          value={bbaEarlyHalfAnteLevel}
+                          onChange={(e) => setBbaEarlyHalfAnteLevel(Math.max(1, Number(e.target.value) || 2))}
+                          className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
+                        />
+                        <span className="text-[11px] text-slate-500">
+                          (No ante for levels 1 to {bbaEarlyHalfAnteLevel}; full 1 BB ante starts on level {Number(bbaEarlyHalfAnteLevel) + 1})
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200 pt-1 border-t border-[#2a2f37]/60">
-                  <input
-                    type="checkbox"
-                    checked={bbaEarlyHalfAnte}
-                    onChange={(e) => setBbaEarlyHalfAnte(e.target.checked)}
-                    className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
-                  />
-                  <span>Early level BBA reduction (pays 0.5 BB ante through level X)</span>
-                </label>
-                {bbaEarlyHalfAnte && (
-                  <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
-                    <span>Pay 1/2 BB ante through level:</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="20"
-                      value={bbaEarlyHalfAnteLevel}
-                      onChange={(e) => setBbaEarlyHalfAnteLevel(Math.max(1, Number(e.target.value) || 2))}
-                      className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
-                    />
-                    <span className="text-[11px] text-slate-500">
-                      (Ante is 0.5 BB for levels 1 to {bbaEarlyHalfAnteLevel}; full 1 BB ante starts on level {Number(bbaEarlyHalfAnteLevel) + 1})
-                    </span>
-                  </div>
-                )}
+              </>
+            )}
+            {!isBombVariant && gameType === 'fl' && (
+              <div className="flex items-center gap-3 mb-4">
+                <label className="text-xs text-slate-400 whitespace-nowrap">Max raises / street</label>
+                <input type="number" min="1" value={flMaxRaises} onChange={(e) => setFlMaxRaises(e.target.value)} className="w-20 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                <span className="text-[11px] text-slate-500">e.g. 3 – 4-bet is the cap</span>
+              </div>
+            )}
+            {!isBombVariant && !isShortDeck && (
+              <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4 space-y-2.5">
+                <div className="text-xs font-semibold text-slate-300">Straddle Settings</div>
+                <ToggleRow label="Allow straddle (UTG)" checked={allowStraddle} onChange={setAllowStraddle} />
+                <ToggleRow label="Allow re-straddle" checked={allowMultiStraddle} onChange={setAllowMultiStraddle} disabled={!allowStraddle} />
               </div>
             )}
           </>
         )}
-        {!isBombVariant && gameType === 'fl' && (
-          <div className="flex items-center gap-3 mb-4">
-            <label className="text-xs text-slate-400 whitespace-nowrap">Max raises / street</label>
-            <input type="number" min="1" value={flMaxRaises} onChange={(e) => setFlMaxRaises(e.target.value)} className="w-20 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-            <span className="text-[11px] text-slate-500">e.g. 3 – 4-bet is the cap</span>
-          </div>
-        )}
-        {!isBombVariant && isCash && !isShortDeck && (
-          <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4 space-y-2.5">
-            <div className="text-xs font-semibold text-slate-300">Straddle Settings</div>
-            <ToggleRow label="Allow straddle (UTG)" checked={allowStraddle} onChange={setAllowStraddle} />
-            <ToggleRow label="Allow re-straddle" checked={allowMultiStraddle} onChange={setAllowMultiStraddle} disabled={!allowStraddle} />
-          </div>
-        )}
+
+        {/* TOURNAMENT MODE: 4 independent collapsible sections */}
         {!isCash && (() => {
+          const occupiedPlayersList = players.filter((p) => p.occupied);
+          const activePlayerCount = occupiedPlayersList.length;
+
           const effBuyIn = Number(buyIn) || 50;
           const currentStartingChips = Math.round(Number(players[0]?.stack) || (stackInBB ? 100 * bb : (parseAmount(bulkStack) || 100 * bb)) || 10000);
           const dynamicRebuyPrice = rebuyPrice !== '' ? rebuyPrice : effBuyIn;
@@ -1152,464 +1203,140 @@ export default function SetupDialog({ initial, onSave, onClose }) {
           const dynamicAddOnChips = addOnChips !== '' ? addOnChips : Math.round(currentStartingChips * 1.5);
           const dynamicStackCapAmount = rebuyStackCapAmount !== '' ? rebuyStackCapAmount : currentStartingChips;
 
-          return (
-            <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
-              <div className="text-xs text-slate-400 mb-2">Tournament format</div>
-              <div className="flex flex-wrap items-center gap-3 mb-3">
-                <select value={tournamentFormat} onChange={(e) => setTournamentFormat(e.target.value)} className="rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm">
-                  <option value="freezeout">Freezeout</option>
-                  <option value="reentry">Re-entry</option>
-                  <option value="rebuy">Re-buy</option>
-                  <option value="bounty">Bounty</option>
-                  <option value="mystery bounty">Mystery Bounty</option>
-                </select>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-slate-400">Buy-in</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={buyIn}
-                    onChange={(e) => setBuyIn(e.target.value)}
-                    className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                  />
-                </div>
-                {tournamentFormat === 'reentry' && (
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-slate-400">Max re-entries</label>
-                    <input type="number" min="0" value={maxReEntries} onChange={(e) => setMaxReEntries(e.target.value)} className="w-20 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-                    <span className="text-[11px] text-slate-500">0 = unlimited</span>
-                  </div>
-                )}
-                {tournamentFormat === 'bounty' && (
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-amber-300 font-semibold">Bounty amount</label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={bountyAmount}
-                      onChange={(e) => setBountyAmount(e.target.value)}
-                      placeholder="50"
-                      className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                    />
-                  </div>
-                )}
-              </div>
-              {tournamentFormat === 'mystery bounty' && (
-                <div className="text-[11px] text-amber-300/90 mb-3 bg-amber-950/30 border border-amber-500/30 rounded-lg p-2.5">
-                  Mystery Bounty: Eliminating a player prompts host to enter the drawn envelope amount after the hand.
-                </div>
-              )}
-              <div className="flex flex-wrap items-center gap-3 mb-3">
-                <ToggleRow label="Late registration" checked={lateRegEnabled} onChange={setLateRegEnabled} />
-                {lateRegEnabled && (
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-slate-400">Until level</label>
-                    <input type="number" min="1" value={lateRegLevel} onChange={(e) => setLateRegLevel(e.target.value)} className="w-20 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-                  </div>
-                )}
-              </div>
-
-              {tournamentFormat === 'rebuy' && (
-                <div className="border-t border-[#2a2f37] pt-3 mt-2 space-y-3">
-                  <div className="text-xs font-semibold text-slate-300">Re-buy Configuration</div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-slate-400">Rebuy price</label>
-                      <input
-                        type="number"
-                        value={rebuyPrice}
-                        onChange={(e) => setRebuyPrice(e.target.value)}
-                        placeholder={String(dynamicRebuyPrice)}
-                        className="w-28 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-slate-400">Rebuy chips</label>
-                      <input
-                        type="number"
-                        value={rebuyChips}
-                        onChange={(e) => setRebuyChips(e.target.value)}
-                        placeholder={String(dynamicRebuyChips)}
-                        className="w-32 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Rebuy Modifiers */}
-                  <div className="rounded-lg bg-[#12161c] border border-[#2a2f37] p-2.5 space-y-2">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rebuy Modifiers</div>
-
-                    {/* Modifier 1: Time Cutoff */}
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
-                        <input
-                          type="checkbox"
-                          checked={rebuyTimeEnabled}
-                          onChange={(e) => setRebuyTimeEnabled(e.target.checked)}
-                          className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
-                        />
-                        <span>Cutoff level (time limit)</span>
-                      </label>
-                      {rebuyTimeEnabled && (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-slate-400">Level:</span>
-                          <input
-                            type="number"
-                            min="1"
-                            value={rebuyCutoffLevel}
-                            onChange={(e) => setRebuyCutoffLevel(e.target.value)}
-                            placeholder="4"
-                            className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-xs text-center font-bold"
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Modifier 2: Stack Size Requirement */}
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
-                        <input
-                          type="checkbox"
-                          checked={rebuyStackCapEnabled}
-                          onChange={(e) => setRebuyStackCapEnabled(e.target.checked)}
-                          className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
-                        />
-                        <span>Stack requirement (must be ≤ amount)</span>
-                      </label>
-                      {rebuyStackCapEnabled && (
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="number"
-                            min="0"
-                            value={rebuyStackCapAmount}
-                            onChange={(e) => setRebuyStackCapAmount(e.target.value)}
-                            placeholder={String(dynamicStackCapAmount)}
-                            className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-xs text-center font-bold"
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Modifier 3: Capped Rebuys per Player */}
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
-                        <input
-                          type="checkbox"
-                          checked={rebuyCappedEnabled}
-                          onChange={(e) => setRebuyCappedEnabled(e.target.checked)}
-                          className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
-                        />
-                        <span>Capped rebuys per player</span>
-                      </label>
-                      {rebuyCappedEnabled && (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-slate-400">Max:</span>
-                          <input
-                            type="number"
-                            min="1"
-                            value={rebuyMaxRebuys}
-                            onChange={(e) => setRebuyMaxRebuys(e.target.value)}
-                            placeholder="1"
-                            className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-xs text-center font-bold"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Add-on configuration */}
-                  <div className="pt-1">
-                    <ToggleRow label="Allow add-on (at break)" checked={allowAddOn} onChange={setAllowAddOn} />
-                    {allowAddOn && (
-                      <div className="flex flex-wrap items-center gap-3 mt-2">
-                        <div className="flex items-center gap-2">
-                          <label className="text-xs text-slate-400">Add-on price</label>
-                          <input
-                            type="number"
-                            value={addOnPrice}
-                            onChange={(e) => setAddOnPrice(e.target.value)}
-                            placeholder={String(dynamicAddOnPrice)}
-                            className="w-28 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <label className="text-xs text-slate-400">Add-on chips</label>
-                          <input
-                            type="number"
-                            value={addOnChips}
-                            onChange={(e) => setAddOnChips(e.target.value)}
-                            placeholder={String(dynamicAddOnChips)}
-                            className="w-32 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })()}
-        {!isCash && (() => {
           const validDenoms = chipDenoms.map(Number).filter((d) => d > 0);
           const lowestChip = validDenoms.length ? Math.min(...validDenoms) : 25;
-          const rawStackInput = parseAmount(players.find((p) => p.occupied && p.stack !== '')?.stack)
-            ?? parseAmount(bulkStack);
-          const firstSchedBB = schedule?.[0]?.bigBlind ? (parseAmount(schedule[0].bigBlind) ?? Number(schedule[0].bigBlind)) : (lowestChip * 2);
-          const estStartingStack = rawStackInput && rawStackInput > 0
-            ? (stackInBB ? rawStackInput * (firstSchedBB || lowestChip * 2) : rawStackInput)
-            : (200 * lowestChip);
-          const genLevelDuration = levelMethod === 'minutes' ? (Number(levelValue) || 15) : 15;
+          const firstSchedBB = schedule?.[0]?.bigBlind
+            ? (parseAmount(schedule[0].bigBlind) ?? Number(schedule[0].bigBlind))
+            : (lowestChip * 2);
+          const bulkParsed = parseAmount(bulkStack);
+          const resolveSeatStack = (p) => {
+            let s = parseAmount(p.stack);
+            if (s == null && p.stack !== '') s = Number(p.stack);
+            const blank = s == null || Number.isNaN(s) || s <= 0;
+            if (!blank) {
+              return (!isBombVariant && stackInBB) ? s * (firstSchedBB || lowestChip * 2) : s;
+            }
+            if (bulkParsed && bulkParsed > 0) {
+              return (!isBombVariant && stackInBB) ? bulkParsed * (firstSchedBB || lowestChip * 2) : bulkParsed;
+            }
+            return 100 * (firstSchedBB || lowestChip * 2);
+          };
+          const seatStacks = occupiedPlayersList.map(resolveSeatStack);
+          const totalChipsInPlay = seatStacks.reduce((acc, v) => acc + v, 0);
+          const estStartingStack = activePlayerCount > 0 ? (totalChipsInPlay / activePlayerCount) : (200 * lowestChip);
+          const minLevelUnit = levelMethod === 'minutes' ? 3 : levelMethod === 'hands' ? 2 : 1;
+          const genLevelDurationUnits = Math.max(minLevelUnit, Number(levelValue) || LEVEL_PRESETS[levelMethod]);
+          const safeDesiredMinutes = Math.max(30, Number(desiredDurationMinutes) || 180);
+          const safeDesiredHands = Math.max(10, Number(desiredTotalHands) || 150);
+          const safeDesiredOrbits = Math.max(3, Number(desiredTotalOrbits) || 20);
+          const genDesiredUnits = levelMethod === 'minutes'
+            ? safeDesiredMinutes
+            : levelMethod === 'hands'
+            ? safeDesiredHands
+            : safeDesiredOrbits;
+
+          const rawPlanSchedule = generateBlindSchedule({
+            lowestChip,
+            startingStack: estStartingStack,
+            levelDurationMinutes: genLevelDurationUnits,
+            breakDurationMinutes: levelMethod === 'minutes' ? (Number(breakDurationMinutes) || 10) : 0,
+            breakEveryLevels: Number(breakEveryLevels) || 4,
+            desiredMinutes: genDesiredUnits,
+            colorUpBreaksOnly,
+            chipDenominations: chipDenoms,
+            speed: generatorSpeed === 'turbo' ? 'turbo' : 'balanced',
+            anteType,
+            bombPot: isBombVariant,
+          });
+          const planSchedule = rawPlanSchedule
+            .filter((item) => !isGoMode || (item.type !== 'break' && item.type !== 'color_up'))
+            .map((item) => {
+              if (item.type === 'break' || item.type === 'color_up') {
+                return { ...item, minutes: Number(breakDurationMinutes) || 10 };
+              }
+              return { ...item, minutes: levelMethod === 'minutes' ? genLevelDurationUnits : '' };
+            });
+          const planPlayLevels = planSchedule.filter((item) => item && item.type !== 'break' && item.type !== 'color_up');
+          const planBreaks = planSchedule.filter((item) => item && (item.type === 'break' || item.type === 'color_up'));
+          const planLastLevel = planPlayLevels[planPlayLevels.length - 1];
+          const planFinishBB = planLastLevel
+            ? ((parseAmount(planLastLevel.bigBlind) ?? Number(planLastLevel.bigBlind)) || 0)
+            : 0;
+          const planTotalMinutes = planSchedule.reduce(
+            (sum, item) => sum + ((item.type === 'break' || item.type === 'color_up') ? (Number(item.minutes) || 10) : (Number(item.minutes) || genLevelDurationUnits)),
+            0,
+          );
+          const planHours = Math.floor(planTotalMinutes / 60);
+          const planMins = planTotalMinutes % 60;
+          const planFinishFormatted = levelMethod === 'minutes'
+            ? (planHours > 0 ? `${planHours}h ${planMins}m` : `${planMins}m`)
+            : levelMethod === 'hands'
+            ? `${planPlayLevels.length * genLevelDurationUnits} hands`
+            : `${planPlayLevels.length * genLevelDurationUnits} orbits`;
+          const schedulePlan = {
+            schedule: planSchedule,
+            levelCount: planPlayLevels.length,
+            breakCount: planBreaks.length,
+            targetFinishLevel: Math.max(1, planPlayLevels.length),
+            estFinishFormatted: planFinishFormatted,
+            targetFinishBB: planFinishBB,
+            targetFinishBBPercent: totalChipsInPlay > 0 ? Math.round((planFinishBB / totalChipsInPlay) * 1000) / 10 : 0,
+            tooFewLevels: planPlayLevels.length < 3,
+          };
+
+          const buildPresetSchedule = (lowest, presetType) => {
+            if (isBombVariant) return bombPotScheduleFor(lowest);
+            if (presetType === 'balanced') return defaultScheduleFor(lowest);
+            if (presetType === 'turbo') {
+              return generateBlindSchedule({
+                lowestChip: lowest,
+                startingStack: estStartingStack,
+                levelDurationMinutes: 15,
+                breakDurationMinutes: Number(breakDurationMinutes) || 10,
+                breakEveryLevels: 4,
+                desiredMinutes: 180,
+                chipDenominations: defaultDenomsFor(lowest),
+                speed: 'turbo',
+                anteType,
+                bombPot: false,
+              });
+            }
+            return generateBlindSchedule({
+              lowestChip: lowest,
+              startingStack: estStartingStack,
+              levelDurationMinutes: 20,
+              breakDurationMinutes: Number(breakDurationMinutes) || 10,
+              breakEveryLevels: 4,
+              desiredMinutes: 0,
+              chipDenominations: defaultDenomsFor(lowest),
+              speed: 'balanced',
+              anteType,
+              bombPot: false,
+            });
+          };
 
           const handleDenomsChange = (newDenoms) => {
             setChipDenoms(newDenoms);
             if (newDenoms.length > 0) {
               const lowest = Math.min(...newDenoms);
-              setSchedule(isBombVariant ? bombPotScheduleFor(lowest) : defaultScheduleFor(lowest));
+              setSchedule(buildPresetSchedule(lowest, defaultStructureType));
             }
+          };
+
+          const handleDefaultStructureChange = (nextType) => {
+            setDefaultStructureType(nextType);
+            setSchedule(buildPresetSchedule(lowestChip, nextType));
           };
 
           const handleGenerateBlindStructure = () => {
-            if (levelMethod !== 'minutes') {
-              setLevelMethod('minutes');
-              setLevelValue(genLevelDuration);
-            }
-            const newSched = generateBlindSchedule({
-              lowestChip,
-              startingStack: estStartingStack,
-              levelDurationMinutes: genLevelDuration,
-              breakDurationMinutes: Number(breakDurationMinutes) || 10,
-              breakEveryLevels: Number(breakEveryLevels) || 4,
-              desiredMinutes: Number(desiredDurationMinutes) || 0,
-              colorUpBreaksOnly,
-              chipDenominations: chipDenoms,
-              speed: generatorSpeed,
-              anteType,
-              bombPot: isBombVariant,
-            });
-            setSchedule(newSched);
+            setLevelValue(genLevelDurationUnits);
+            setSchedule(schedulePlan.schedule);
           };
 
-          return (
-            <div className="space-y-4 mb-4">
-              <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3">
-                <ChipDenominationPicker selected={chipDenoms} onChange={handleDenomsChange} />
-              </div>
+          const curDurMins = Number(desiredDurationMinutes) || 0;
+          const curDurH = Math.floor(curDurMins / 60);
+          const curDurM = curDurMins % 60;
 
-              <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3.5 space-y-3.5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#2a2f37] pb-2.5">
-                  <div>
-                    <div className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                      <Clock size={14} className="text-emerald-400" />
-                      <span>{isBombVariant ? 'Level Pacing & Ante Structure Generator' : 'Level Pacing & Blind Structure Generator'}</span>
-                    </div>
-                    <div className="text-[11px] text-slate-400">
-                      {isBombVariant
-                        ? 'Generate an ante progression sized to your desired tournament length and starting stack.'
-                        : 'Generate a blind progression sized to your desired tournament length and starting stack.'}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleGenerateBlindStructure}
-                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white flex items-center gap-1.5 cursor-pointer transition-colors shadow self-start sm:self-center shrink-0"
-                  >
-                    <Sparkles size={14} /> {isBombVariant ? 'Generate Ante Schedule' : 'Generate Blind Schedule'}
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                      Desired Length
-                    </label>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <div className="relative">
-                        <input
-                          type="number"
-                          min="0"
-                          max="24"
-                          value={Math.floor((Number(desiredDurationMinutes) || 0) / 60)}
-                          onChange={(e) => {
-                            const h = Math.max(0, Math.min(24, parseInt(e.target.value, 10) || 0));
-                            const m = (Number(desiredDurationMinutes) || 0) % 60;
-                            setDesiredDurationMinutes(h * 60 + m);
-                          }}
-                          className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 pr-6 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
-                        />
-                        <span className="absolute right-2 top-1.5 text-slate-400 text-[11px] pointer-events-none">hr</span>
-                      </div>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          min="0"
-                          max="59"
-                          step="5"
-                          value={(Number(desiredDurationMinutes) || 0) % 60}
-                          onChange={(e) => {
-                            const h = Math.floor((Number(desiredDurationMinutes) || 0) / 60);
-                            const m = Math.max(0, Math.min(59, parseInt(e.target.value, 10) || 0));
-                            setDesiredDurationMinutes(h * 60 + m);
-                          }}
-                          className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 pr-6 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
-                        />
-                        <span className="absolute right-2 top-1.5 text-slate-400 text-[11px] pointer-events-none">m</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                      Level Duration
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        min="1"
-                        max="120"
-                        value={levelMethod === 'minutes' ? levelValue : genLevelDuration}
-                        onChange={(e) => {
-                          setLevelMethod('minutes');
-                          setLevelValue(e.target.value);
-                        }}
-                        className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
-                      />
-                      <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">min</span>
-                    </div>
-                  </div>
-
-                  {!isGoMode && (
-                    <>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                      Break Duration
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        min="1"
-                        max="60"
-                        value={breakDurationMinutes}
-                        onChange={(e) => setBreakDurationMinutes(e.target.value)}
-                        className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
-                      />
-                      <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">min</span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                      Break Schedule
-                    </label>
-                    <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#1e2227] p-0.5 border border-[#2a2f37]">
-                      <button
-                        type="button"
-                        onClick={() => setColorUpBreaksOnly(false)}
-                        className={`py-1 text-center rounded text-[11px] font-medium cursor-pointer transition-colors ${
-                          !colorUpBreaksOnly
-                            ? 'bg-[#4a5a4a] text-white'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        Interval
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setColorUpBreaksOnly(true)}
-                        className={`py-1 text-center rounded text-[11px] font-medium cursor-pointer transition-colors ${
-                          colorUpBreaksOnly
-                            ? 'bg-[#4a5a4a] text-white'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        Color-ups
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                      Break Every
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        min="1"
-                        max="12"
-                        disabled={colorUpBreaksOnly}
-                        value={breakEveryLevels}
-                        onChange={(e) => setBreakEveryLevels(e.target.value)}
-                        className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a] disabled:opacity-40 disabled:cursor-not-allowed"
-                      />
-                      <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">lvls</span>
-                    </div>
-                  </div>
-
-                    </>
-                  )}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                      Structure Speed
-                    </label>
-                    <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#1e2227] p-0.5 border border-[#2a2f37]">
-                      <button
-                        type="button"
-                        onClick={() => setGeneratorSpeed('balanced')}
-                        className={`py-1 text-center rounded text-xs font-medium cursor-pointer transition-colors ${
-                          generatorSpeed === 'balanced'
-                            ? 'bg-[#4a5a4a] text-white'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        Balanced
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setGeneratorSpeed('turbo')}
-                        className={`py-1 text-center rounded text-xs font-medium cursor-pointer transition-colors ${
-                          generatorSpeed === 'turbo'
-                            ? 'bg-[#4a5a4a] text-white'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        Turbo
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 bg-[#1e2227] p-2.5 rounded-lg border border-[#2a2f37]">
-                  <span>
-                    Lowest Chip: <span className="font-mono text-emerald-400 font-bold">{lowestChip}</span> · Starting Stack: <span className="font-mono text-white font-bold">{Math.round(estStartingStack).toLocaleString()}</span> (
-                    {isBombVariant
-                      ? `${Math.round(estStartingStack / (schedFirstAnte || lowestChip))} Antes at Level 1`
-                      : `${Math.round(estStartingStack / (2 * lowestChip))} BBs at Level 1`}
-                    )
-                  </span>
-                  <span className="text-slate-400">
-                    {isGoMode
-                      ? Number(desiredDurationMinutes) > 0
-                        ? `Target: ${Math.floor(desiredDurationMinutes / 60)}h ${String(desiredDurationMinutes % 60).padStart(2, '0')}m · no breaks`
-                        : 'Standard full schedule · no breaks'
-                      : (
-                        <>
-                          {Number(desiredDurationMinutes) > 0
-                            ? `Target: ${Math.floor(desiredDurationMinutes / 60)}h ${String(desiredDurationMinutes % 60).padStart(2, '0')}m · `
-                            : 'Standard full schedule · '}
-                          {colorUpBreaksOnly
-                            ? `Breaks during color-ups only (${breakDurationMinutes}m each)`
-                            : `Breaks every ${breakEveryLevels} levels (${breakDurationMinutes}m each)`}
-                        </>
-                      )}
-                  </span>
-                </div>
-              </div>
-
-              <BlindScheduleEditor schedule={strippedSchedule} onChange={setSchedule} anteType={anteType} chipDenominations={chipDenoms} allowBreaks={!isGoMode} isBombPot={isBombVariant} />
-            </div>
-          );
-        })()}
-        {!isCash && (() => {
           const sched = strippedSchedule;
           let playMinutes = 0;
           let breakMinutes = 0;
@@ -1639,359 +1366,1206 @@ export default function SetupDialog({ initial, onSave, onClose }) {
 
           const totalMinutes = playMinutes + breakMinutes;
 
+          const STRUCTURE_BUTTON_STYLES = {
+            balanced: {
+              active: 'bg-emerald-600 border-emerald-400 text-white shadow-[0_0_10px_rgba(16,185,129,0.3)]',
+              inactive: 'bg-[#15201c] border-emerald-500/40 text-emerald-200 hover:bg-emerald-950/60 hover:border-emerald-400/70',
+              subActive: 'text-emerald-100',
+              subInactive: 'text-emerald-300/70',
+            },
+            turbo: {
+              active: 'bg-rose-600 border-rose-400 text-white shadow-[0_0_10px_rgba(225,29,72,0.35)]',
+              inactive: 'bg-[#23151a] border-rose-500/40 text-rose-200 hover:bg-rose-950/60 hover:border-rose-400/70',
+              subActive: 'text-rose-100',
+              subInactive: 'text-rose-300/70',
+            },
+            deep: {
+              active: 'bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.35)]',
+              inactive: 'bg-[#151c27] border-blue-500/40 text-blue-200 hover:bg-blue-950/60 hover:border-blue-400/70',
+              subActive: 'text-blue-100',
+              subInactive: 'text-blue-300/70',
+            },
+          };
+
+          const formatLabelMap = {
+            freezeout: 'Freezeout',
+            reentry: 'Re-entry',
+            rebuy: 'Re-buy',
+            bounty: 'Bounty',
+            'mystery bounty': 'Mystery Bounty',
+          };
+
           return (
-            <div className="rounded-xl border border-emerald-500/30 bg-[#141c18] p-3.5 mb-4 shadow-sm">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 mb-2 flex items-center gap-1.5">
-                <Clock size={13} />
-                <span>Structure Schedule Timing Breakdown</span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
-                {levelMethod === 'minutes' ? (
-                  <>
-                    <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
-                      <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">Playing Time</span>
-                      <span className="text-white font-mono font-bold text-sm">{fmtDuration(playMinutes)}</span>
-                      <span className="text-slate-500 text-[10px] block mt-0.5">({levelCount} levels)</span>
-                    </div>
-                    {!isGoMode && (
-                    <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
-                      <span className="text-amber-400 text-[10px] uppercase font-bold block mb-0.5">On Break</span>
-                      <span className="text-amber-300 font-mono font-bold text-sm">{fmtDuration(breakMinutes)}</span>
-                      <span className="text-slate-500 text-[10px] block mt-0.5">total break time</span>
-                    </div>
-                    )}
-                    <div className="col-span-2 sm:col-span-1 rounded-lg bg-emerald-950/40 border border-emerald-600/40 p-2.5">
-                      <span className="text-emerald-400 text-[10px] uppercase font-bold block mb-0.5">Total Time</span>
-                      <span className="text-emerald-200 font-mono font-black text-sm">{fmtDuration(totalMinutes)}</span>
-                      <span className="text-emerald-400/60 text-[10px] block mt-0.5">{isGoMode ? 'play time' : 'play + breaks'}</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
-                      <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">
-                        {levelMethod === 'hands' ? 'Total Hands Playing' : 'Total Orbits Playing'}
-                      </span>
-                      <span className="text-white font-mono font-bold text-sm">
-                        {levelCount * defVal} {levelMethod}
-                      </span>
-                      <span className="text-slate-500 text-[10px] block mt-0.5">({levelCount} levels × {defVal} {levelMethod})</span>
-                    </div>
-                    {!isGoMode && (
-                    <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
-                      <span className="text-amber-400 text-[10px] uppercase font-bold block mb-0.5">On Break</span>
-                      <span className="text-amber-300 font-mono font-bold text-sm">{fmtDuration(breakMinutes)}</span>
-                      <span className="text-slate-500 text-[10px] block mt-0.5">total break time</span>
-                    </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          );
-        })()}
-        {!isCash && (
-          <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
-            <div className="text-xs text-slate-400 mb-2">Level timing</div>
-            <div className="flex flex-wrap items-center gap-3 mb-3">
-              <div className="min-w-[130px]">
-                <label className="text-xs text-slate-400 block mb-1">Each level lasts</label>
-                <select value={levelMethod} onChange={(e) => handleLevelMethodChange(e.target.value)} className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm">
-                  <option value="minutes">Minutes</option>
-                  <option value="hands">Hands</option>
-                  <option value="orbits">Orbits</option>
-                </select>
-              </div>
-              <div className="w-28">
-                <label className="text-xs text-slate-400 block mb-1">{levelMethod === 'minutes' ? 'Minutes' : levelMethod === 'hands' ? 'Hands' : 'Orbits'}</label>
-                <input type="number" min="1" value={levelValue} onChange={(e) => setLevelValue(e.target.value)} className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
-              </div>
-              <div className="text-[11px] text-slate-500 max-w-[200px]">
-                {levelMethod === 'minutes' ? 'Levels and breaks advance automatically on the clock.' : levelMethod === 'hands' ? 'One completed hand counts toward the level.' : 'One dealer-button orbit counts toward the level.'}
-              </div>
-            </div>
-          </div>
-        )}
-        {/* Action Clock System Setup */}
-        {!isCash && (
-          <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <Clock size={16} className="text-emerald-400" />
-              <span className="text-sm font-semibold text-white">Action Clock System</span>
-            </div>
-            <span className="text-[11px] text-slate-400">
-              {clockSystem === 'call_clock' ? 'Passive Clock' : 'Shot Clock with Time Banks'}
-            </span>
-          </div>
-
-          <div className="mb-3">
-            <label className="text-xs text-slate-400 block mb-1">Clock Mode</label>
-            <select
-              value={clockSystem}
-              onChange={(e) => setClockSystem(e.target.value)}
-              className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-            >
-              <option value="call_clock">Call the clock (default)</option>
-              <option value="time_banks">Time banks (Shot clock)</option>
-            </select>
-          </div>
-
-          {clockSystem === 'call_clock' ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="w-48">
-                <label className="text-xs text-slate-400 block mb-1">Time given when clock is called</label>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="number"
-                    min="5"
-                    max="300"
-                    value={callClockSeconds}
-                    onChange={(e) => setCallClockSeconds(e.target.value)}
-                    className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                  />
-                  <span className="text-xs text-slate-400">seconds (default 30s)</span>
-                </div>
-              </div>
-              <div className="text-[11px] text-slate-500 max-w-sm mt-1">
-                A "Clock" button appears in the control menu. When pressed, the active player gets {callClockSeconds || 30}s to act before auto fold/check.
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {/* Timing mode selector */}
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">Base Action Timing</label>
-                <select
-                  value={timeBankMode}
-                  onChange={(e) => setTimeBankMode(e.target.value)}
-                  className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                >
-                  <option value="single">1. One base time for all actions</option>
-                  <option value="split">2. Separate preflop and postflop times</option>
-                </select>
-              </div>
-
-              {timeBankMode === 'single' ? (
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Base time for all actions</label>
+            <div className="mb-4">
+              {/* 1. Players & Stacks */}
+              <CollapsibleSection
+                title="Players & Stacks"
+                subtitle={`${activePlayerCount} of ${seatCount} seated · Starting stack ${Math.round(estStartingStack).toLocaleString()}`}
+                isOpen={openSections.players}
+                onToggle={() => toggleSection('players')}
+              >
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-slate-400">Seats</span>
+                    <button type="button" onClick={() => adjustSeats(-1)} className="rounded-md bg-[#2a2f37] p-1.5 text-white hover:bg-[#363c45] cursor-pointer"><Minus size={16} /></button>
+                    <span className="w-8 text-center text-white font-medium">{seatCount}</span>
+                    <button type="button" onClick={() => adjustSeats(1)} className="rounded-md bg-[#2a2f37] p-1.5 text-white hover:bg-[#363c45] cursor-pointer"><Plus size={16} /></button>
+                    <span className="text-[11px] text-slate-500">table size – empty seats stay open</span>
+                  </div>
                   <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="5"
-                      max="180"
-                      value={singleSeconds}
-                      onChange={(e) => setSingleSeconds(e.target.value)}
-                      className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                    />
-                    <span className="text-xs text-slate-400">seconds (default 30s)</span>
+                    <span className="text-xs text-slate-400">Set all stacks</span>
+                    {stackUnit && <span className="text-xs text-slate-400">{stackUnit}</span>}
+                    <input type="text" inputMode="decimal" value={bulkStack} onChange={(e) => setBulkStack(e.target.value)} placeholder={!isBombVariant && stackInBB ? '100' : String(200 * smallestChip)} className="w-28 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm text-left" />
+                    <button type="button" onClick={applyBulk} className="rounded-md bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-3 py-2 cursor-pointer">Apply to all</button>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-3 bg-[#181c22] p-2.5 rounded-lg border border-[#252a33]">
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-1">Preflop time</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="5"
-                        max="180"
-                        value={preflopSeconds}
-                        onChange={(e) => setPreflopSeconds(e.target.value)}
-                        className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                      />
-                      <span className="text-xs text-slate-400">seconds (default 20s)</span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-1">Postflop configuration</label>
-                    <div className="flex flex-wrap items-center gap-4 mb-2">
-                      <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
-                        <input
-                          type="radio"
-                          name="postflopSplit"
-                          checked={!postflopSplitStreet}
-                          onChange={() => setPostflopSplitStreet(false)}
-                          className="accent-[#4a5a4a]"
-                        />
-                        One time for all postflop streets (default 40s)
-                      </label>
-                      <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
-                        <input
-                          type="radio"
-                          name="postflopSplit"
-                          checked={postflopSplitStreet}
-                          onChange={() => setPostflopSplitStreet(true)}
-                          className="accent-[#4a5a4a]"
-                        />
-                        Split postflop by street
-                      </label>
-                    </div>
-
-                    {!postflopSplitStreet ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min="5"
-                          max="180"
-                          value={postflopSeconds}
-                          onChange={(e) => setPostflopSeconds(e.target.value)}
-                          className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
-                        />
-                        <span className="text-xs text-slate-400">seconds for flop, turn, and river</span>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <label className="text-[11px] text-slate-400 block mb-1">Flop time (s)</label>
-                          <input
-                            type="number"
-                            min="5"
-                            max="180"
-                            value={flopSeconds}
-                            onChange={(e) => setFlopSeconds(e.target.value)}
-                            className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-slate-400 block mb-1">Turn time (s)</label>
-                          <input
-                            type="number"
-                            min="5"
-                            max="180"
-                            value={turnSeconds}
-                            onChange={(e) => setTurnSeconds(e.target.value)}
-                            className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-slate-400 block mb-1">River time (s)</label>
-                          <input
-                            type="number"
-                            min="5"
-                            max="180"
-                            value={riverSeconds}
-                            onChange={(e) => setRiverSeconds(e.target.value)}
-                            className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Time Banks */}
-              <div className="pt-2 border-t border-[#252a33]">
-                <div className="flex items-center gap-2 mb-2">
-                  <label className="text-xs text-slate-400">Initial time bank chips per player:</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="20"
-                    value={initialTimeBanks}
-                    onChange={(e) => setInitialTimeBanks(e.target.value)}
-                    className="w-16 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm text-center"
-                  />
-                  <span className="text-xs text-slate-500">(default 3 chips)</span>
-                </div>
-
-                <div className="flex items-center gap-2 mb-2">
-                  <label className="text-xs text-slate-400">Time added per bank chip:</label>
-                  <input
-                    type="number"
-                    min="5"
-                    max="300"
-                    value={timeBankAddSeconds}
-                    onChange={(e) => setTimeBankAddSeconds(e.target.value)}
-                    className="w-16 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm text-center"
-                  />
-                  <span className="text-xs text-slate-500">seconds (default 30s)</span>
-                </div>
-
-                {/* Add-on rules schedule */}
-                <div className="mt-2">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs text-slate-300 font-medium">Scheduled Time Bank Chip Add-ons</span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setAddOnRules((prev) => [
-                          ...prev,
-                          { id: Date.now().toString(), triggerType: 'level', triggerValue: 4, chips: 1 },
-                        ])
-                      }
-                      className="flex items-center gap-1 rounded bg-[#2a2f37] hover:bg-[#363c45] text-emerald-400 text-xs px-2 py-1 cursor-pointer"
-                    >
-                      <Plus size={13} /> Add chip rule
-                    </button>
-                  </div>
-                  {addOnRules.length === 0 ? (
-                    <div className="text-[11px] text-slate-500 italic">
-                      No chips will be added on later (default). You can schedule chips after certain levels or during breaks.
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {addOnRules.map((rule, idx) => (
-                        <div
-                          key={rule.id || idx}
-                          className="flex items-center gap-2 bg-[#1b2027] border border-[#2a2f37] rounded-md px-2.5 py-1.5 text-xs text-white"
-                        >
-                          <span className="text-slate-400">Add</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="10"
-                            value={rule.chips}
-                            onChange={(e) =>
-                              setAddOnRules((prev) =>
-                                prev.map((r, i) => (i === idx ? { ...r, chips: Number(e.target.value) || 1 } : r))
-                              )
-                            }
-                            className="w-12 rounded bg-[#15181d] border border-[#2a2f37] px-1.5 py-0.5 text-center text-white"
-                          />
-                          <span className="text-slate-400">chip{rule.chips > 1 ? 's' : ''}</span>
-                          <select
-                            value={rule.triggerType}
-                            onChange={(e) =>
-                              setAddOnRules((prev) =>
-                                prev.map((r, i) => (i === idx ? { ...r, triggerType: e.target.value } : r))
-                              )
-                            }
-                            className="rounded bg-[#15181d] border border-[#2a2f37] px-2 py-0.5 text-white"
-                          >
-                            <option value="level">After level</option>
-                            <option value="break">During break</option>
-                          </select>
-                          <input
-                            type="number"
-                            min="1"
-                            value={rule.triggerValue}
-                            onChange={(e) =>
-                              setAddOnRules((prev) =>
-                                prev.map((r, i) => (i === idx ? { ...r, triggerValue: Number(e.target.value) || 1 } : r))
-                              )
-                            }
-                            className="w-14 rounded bg-[#15181d] border border-[#2a2f37] px-1.5 py-0.5 text-center text-white"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setAddOnRules((prev) => prev.filter((_, i) => i !== idx))}
-                            className="ml-auto text-rose-400 hover:text-rose-300 p-1 cursor-pointer"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      ))}
+                  {!isBombVariant && (
+                    <div className="ml-auto">
+                      <ToggleRow label="Enter stacks in BB" checked={stackInBB} onChange={setStackInBB} />
                     </div>
                   )}
                 </div>
-              </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {players.map((p, i) => (
+                    <div key={i} className={`rounded-lg border p-3 ${p.occupied ? 'border-[#2a2f37] bg-[#15181d]' : 'border-dashed border-[#2a2f37] bg-[#121417] opacity-50'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-xs text-slate-400 font-medium">Seat {p.seat}</div>
+                        <button type="button" onClick={() => toggleSeatOccupied(i)} className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${p.occupied ? 'bg-[#4a5a4a] text-white' : 'bg-[#2a2f37] text-slate-400'}`}>
+                          {p.occupied ? 'Occupied' : 'Empty'}
+                        </button>
+                      </div>
+                      {p.occupied && (
+                        <>
+                          <input
+                            value={p.name}
+                            onChange={(e) => updatePlayer(i, 'name', e.target.value)}
+                            placeholder={`Player ${p.seat || (i + 1)}`}
+                            className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm mb-2 focus:outline-none focus:border-[#4a5a4a] placeholder:text-slate-500"
+                          />
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500">Stack</span>
+                            {stackUnit && <span className="text-xs text-slate-400">{stackUnit}</span>}
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={p.stack}
+                              onChange={(e) => updatePlayer(i, 'stack', e.target.value)}
+                              placeholder={String(stackInBB ? 100 : (200 * smallestChip))}
+                              className="flex-1 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm focus:outline-none focus:border-[#4a5a4a] placeholder:text-slate-500"
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </CollapsibleSection>
+
+              {/* 2. Structure */}
+              <CollapsibleSection
+                title="Structure"
+                subtitle={`${formatLabelMap[tournamentFormat] || tournamentFormat} · Buy-in ${effBuyIn}`}
+                isOpen={openSections.structure}
+                onToggle={() => toggleSection('structure')}
+              >
+                <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3">
+                  <div className="text-xs text-slate-400 mb-2">Tournament format</div>
+                  <div className="flex flex-wrap items-center gap-3 mb-3">
+                    <select value={tournamentFormat} onChange={(e) => setTournamentFormat(e.target.value)} className="rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm">
+                      <option value="freezeout">Freezeout</option>
+                      <option value="reentry">Re-entry</option>
+                      <option value="rebuy">Re-buy</option>
+                      <option value="bounty">Bounty</option>
+                      <option value="mystery bounty">Mystery Bounty</option>
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-slate-400">Buy-in</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={buyIn}
+                        onChange={(e) => setBuyIn(e.target.value)}
+                        className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                      />
+                    </div>
+                    {tournamentFormat === 'reentry' && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-slate-400">Max re-entries</label>
+                        <input type="number" min="0" value={maxReEntries} onChange={(e) => setMaxReEntries(e.target.value)} className="w-20 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                        <span className="text-[11px] text-slate-500">0 = unlimited</span>
+                      </div>
+                    )}
+                    {tournamentFormat === 'bounty' && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-amber-300 font-semibold">Bounty amount</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={bountyAmount}
+                          onChange={(e) => setBountyAmount(e.target.value)}
+                          placeholder="50"
+                          className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  {tournamentFormat === 'mystery bounty' && (
+                    <div className="text-[11px] text-amber-300/90 mb-3 bg-amber-950/30 border border-amber-500/30 rounded-lg p-2.5">
+                      Mystery Bounty: Eliminating a player prompts host to enter the drawn envelope amount after the hand.
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-3 mb-3">
+                    <ToggleRow label="Late registration" checked={lateRegEnabled} onChange={setLateRegEnabled} />
+                    {lateRegEnabled && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-slate-400">Until level</label>
+                        <input type="number" min="1" value={lateRegLevel} onChange={(e) => setLateRegLevel(e.target.value)} className="w-20 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                      </div>
+                    )}
+                  </div>
+
+                  {tournamentFormat === 'rebuy' && (
+                    <div className="border-t border-[#2a2f37] pt-3 mt-2 space-y-3">
+                      <div className="text-xs font-semibold text-slate-300">Re-buy Configuration</div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-slate-400">Rebuy price</label>
+                          <input
+                            type="number"
+                            value={rebuyPrice}
+                            onChange={(e) => setRebuyPrice(e.target.value)}
+                            placeholder={String(dynamicRebuyPrice)}
+                            className="w-28 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-slate-400">Rebuy chips</label>
+                          <input
+                            type="number"
+                            value={rebuyChips}
+                            onChange={(e) => setRebuyChips(e.target.value)}
+                            placeholder={String(dynamicRebuyChips)}
+                            className="w-32 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg bg-[#12161c] border border-[#2a2f37] p-2.5 space-y-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rebuy Modifiers</div>
+
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                            <input
+                              type="checkbox"
+                              checked={rebuyTimeEnabled}
+                              onChange={(e) => setRebuyTimeEnabled(e.target.checked)}
+                              className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                            />
+                            <span>Cutoff level (time limit)</span>
+                          </label>
+                          {rebuyTimeEnabled && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] text-slate-400">Level:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={rebuyCutoffLevel}
+                                onChange={(e) => setRebuyCutoffLevel(e.target.value)}
+                                placeholder="4"
+                                className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-xs text-center font-bold"
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                            <input
+                              type="checkbox"
+                              checked={rebuyStackCapEnabled}
+                              onChange={(e) => setRebuyStackCapEnabled(e.target.checked)}
+                              className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                            />
+                            <span>Stack requirement (must be ≤ amount)</span>
+                          </label>
+                          {rebuyStackCapEnabled && (
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                min="0"
+                                value={rebuyStackCapAmount}
+                                onChange={(e) => setRebuyStackCapAmount(e.target.value)}
+                                placeholder={String(dynamicStackCapAmount)}
+                                className="w-24 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-xs text-center font-bold"
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                            <input
+                              type="checkbox"
+                              checked={rebuyCappedEnabled}
+                              onChange={(e) => setRebuyCappedEnabled(e.target.checked)}
+                              className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                            />
+                            <span>Capped rebuys per player</span>
+                          </label>
+                          {rebuyCappedEnabled && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] text-slate-400">Max:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={rebuyMaxRebuys}
+                                onChange={(e) => setRebuyMaxRebuys(e.target.value)}
+                                placeholder="1"
+                                className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-xs text-center font-bold"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-1">
+                        <ToggleRow label="Allow add-on (at break)" checked={allowAddOn} onChange={setAllowAddOn} />
+                        {allowAddOn && (
+                          <div className="flex flex-wrap items-center gap-3 mt-2">
+                            <div className="flex items-center gap-2">
+                              <label className="text-xs text-slate-400">Add-on price</label>
+                              <input
+                                type="number"
+                                value={addOnPrice}
+                                onChange={(e) => setAddOnPrice(e.target.value)}
+                                placeholder={String(dynamicAddOnPrice)}
+                                className="w-28 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <label className="text-xs text-slate-400">Add-on chips</label>
+                              <input
+                                type="number"
+                                value={addOnChips}
+                                onChange={(e) => setAddOnChips(e.target.value)}
+                                placeholder={String(dynamicAddOnChips)}
+                                className="w-32 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CollapsibleSection>
+
+              {/* 3. Blinds */}
+              <CollapsibleSection
+                title="Blinds"
+                subtitle={`Base ${lowestChip} · ${levelCount} levels · ${levelValue} ${levelMethod}`}
+                isOpen={openSections.blinds}
+                onToggle={() => toggleSection('blinds')}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {gameType !== 'fl' ? (
+                    <div className="text-xs text-slate-500">
+                      {isBombVariant ? 'Antes come from level 1 of the schedule below.' : 'Blinds come from level 1 of the schedule below.'}
+                    </div>
+                  ) : <div />}
+                  <button
+                    type="button"
+                    onClick={() => setShowStructures(true)}
+                    className="flex items-center gap-1.5 rounded-md bg-[#2a2f37] hover:bg-[#363c45] text-slate-300 text-xs px-3 py-1.5 cursor-pointer"
+                  >
+                    <FolderOpen size={14} /> Saved structures
+                  </button>
+                </div>
+
+                {isShortDeck ? (
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="flex-1 min-w-[140px]">
+                      <label className="text-xs text-amber-300 font-semibold block mb-1">
+                        Ante
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={anteAmount !== '' ? anteAmount : '25'}
+                        onChange={(e) => setAnteAmount(e.target.value)}
+                        placeholder="25"
+                        className="w-full rounded-md bg-[#15181d] border border-amber-500/40 px-3 py-2 text-white text-sm focus:border-amber-400"
+                      />
+                      <span className="text-[11px] text-slate-400 block mt-1">
+                        Everyone pays {anteAmount || '25'} ante; BTN pays double ({(Number(anteAmount) || 25) * 2}). Action starts left of button (UTG).
+                      </span>
+                    </div>
+                  </div>
+                ) : !isBombVariant && (
+                  <div className="flex flex-wrap items-end gap-3">
+                    {gameType === 'fl' && (
+                      <>
+                        <div className="flex-1 min-w-[120px]">
+                          <label className="text-xs text-slate-400 block mb-1">Small bet</label>
+                          <input type="text" inputMode="decimal" value={smallBet} onChange={(e) => setSmallBet(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                        </div>
+                        <div className="flex-1 min-w-[120px]">
+                          <label className="text-xs text-slate-400 block mb-1">Big bet</label>
+                          <input type="text" inputMode="decimal" value={bigBet} onChange={(e) => setBigBet(e.target.value)} className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                        </div>
+                      </>
+                    )}
+                    <div className="min-w-[160px] flex-1">
+                      <label className="text-xs text-slate-400 block mb-1">Ante / Blind Structure</label>
+                      <select
+                        value={anteType}
+                        onChange={(e) => {
+                          const t = e.target.value;
+                          setAnteType(t);
+                          if (t === 'traditional') setAnteAmount(suggestAnte(bigBlind));
+                          else if (t === 'bba' || t === 'btn_ante') setAnteAmount(Number(bigBlind));
+                          else if (t === 'sb_half_ante') setAnteAmount(Math.max(1, Math.round(Number(bigBlind) * 0.5)));
+                          else setAnteAmount(0);
+                        }}
+                        className="w-full rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                      >
+                        <option value="none">No ante</option>
+                        <option value="bba">Big blind ante (BBA)</option>
+                        <option value="sb_half_ante">Big blind half ante (0.5 BB)</option>
+                        <option value="btn_ante">Button ante (BTN 1 BB)</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {!isBombVariant && gameType === 'fl' && (
+                  <div className="flex items-center gap-3">
+                    <label className="text-xs text-slate-400 whitespace-nowrap">Max raises / street</label>
+                    <input type="number" min="1" value={flMaxRaises} onChange={(e) => setFlMaxRaises(e.target.value)} className="w-20 rounded-md bg-[#15181d] border border-[#2a2f37] px-3 py-2 text-white text-sm" />
+                    <span className="text-[11px] text-slate-500">e.g. 3 – 4-bet is the cap</span>
+                  </div>
+                )}
+
+                <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 space-y-3">
+                  <ChipDenominationPicker selected={chipDenoms} onChange={handleDenomsChange} />
+                  {!isBombVariant && (
+                    <div className="pt-2.5 border-t border-[#2a2f37] space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                          Blind Structure
+                        </label>
+                        <span className="text-[11px] text-slate-400">
+                          {defaultStructureType === 'balanced'
+                            ? '16 levels · Balanced'
+                            : defaultStructureType === 'turbo'
+                            ? '12 levels · Turbo'
+                            : '20 levels · Deep'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { id: 'balanced', label: 'Balanced', sub: '16 levels' },
+                          { id: 'turbo', label: 'Turbo', sub: '12 levels' },
+                          { id: 'deep', label: 'Deep', sub: '20 levels' },
+                        ].map((opt) => {
+                          const active = defaultStructureType === opt.id;
+                          const st = STRUCTURE_BUTTON_STYLES[opt.id];
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => handleDefaultStructureChange(opt.id)}
+                              className={`py-2 px-3 rounded-xl text-xs font-bold transition-all border flex flex-col items-center justify-center cursor-pointer ${
+                                active ? st.active : st.inactive
+                              }`}
+                            >
+                              <span>{opt.label}</span>
+                              <span className={`text-[10px] font-normal ${active ? st.subActive : st.subInactive}`}>{opt.sub}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Level timing: Length (e.g. 15) first, then Type (e.g. Minutes) */}
+                <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3">
+                  <div className="text-xs text-slate-400 mb-2">Level timing</div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="w-28">
+                      <label className="text-xs text-slate-400 block mb-1">Each level lasts</label>
+                      <input
+                        type="number"
+                        min={levelMethod === 'minutes' ? 3 : levelMethod === 'hands' ? 2 : 1}
+                        value={levelValue}
+                        onChange={(e) => setLevelValue(e.target.value)}
+                        onBlur={() => {
+                          const minVal = levelMethod === 'minutes' ? 3 : levelMethod === 'hands' ? 2 : 1;
+                          setLevelValue((v) => Math.max(minVal, Number(v) || LEVEL_PRESETS[levelMethod]));
+                        }}
+                        className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                      />
+                    </div>
+                    <div className="min-w-[130px]">
+                      <label className="text-xs text-slate-400 block mb-1">Unit</label>
+                      <select value={levelMethod} onChange={(e) => handleLevelMethodChange(e.target.value)} className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm">
+                        <option value="minutes">Minutes</option>
+                        <option value="hands">Hands</option>
+                        <option value="orbits">Orbits</option>
+                      </select>
+                    </div>
+                    <div className="text-[11px] text-slate-500 max-w-[220px]">
+                      {levelMethod === 'minutes' ? 'Levels and breaks advance automatically on the clock.' : levelMethod === 'hands' ? 'One completed hand counts toward the level.' : 'One dealer-button orbit counts toward the level.'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Level Pacing & Blind Structure Generator */}
+                <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3.5 space-y-3.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#2a2f37] pb-2.5">
+                    <div>
+                      <div className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <Clock size={14} className="text-emerald-400" />
+                        <span>{isBombVariant ? 'Level Pacing & Ante Structure Generator' : 'Level Pacing & Blind Structure Generator'}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        {isBombVariant
+                          ? 'Generate an ante progression sized to your players, total chips in play, and tournament length.'
+                          : 'Generate a blind progression sized to reach finish blinds at your target length, plus extra buffer levels.'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleGenerateBlindStructure}
+                      className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white flex items-center gap-1.5 cursor-pointer transition-colors shadow self-start sm:self-center shrink-0"
+                    >
+                      <Sparkles size={14} /> {isBombVariant ? 'Generate Ante Schedule' : 'Generate Blind Schedule'}
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg bg-[#1e2227] border border-[#2a2f37] px-3 py-2">
+                    <div>
+                      <div className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider">Pacing Unit</div>
+                      <div className="text-[10px] text-slate-400">
+                        {levelMethod === 'minutes'
+                          ? 'Levels advance by clock minutes (breaks subtracted from target play time).'
+                          : levelMethod === 'hands'
+                          ? 'Levels advance every N completed hands.'
+                          : 'Levels advance by orbits (locked to hands × active players at level start).'}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 rounded-lg bg-[#15181d] p-0.5 border border-[#2a2f37] shrink-0">
+                      {[
+                        { id: 'minutes', label: 'Minutes' },
+                        { id: 'hands', label: 'Hands' },
+                        { id: 'orbits', label: 'Orbits' },
+                      ].map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => handleLevelMethodChange(u.id)}
+                          className={`px-2.5 py-1 rounded text-[11px] font-semibold cursor-pointer transition-colors ${
+                            levelMethod === u.id
+                              ? 'bg-[#4a5a4a] text-white'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {u.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                        Desired Length
+                      </label>
+                      {levelMethod === 'minutes' ? (
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="0"
+                              max="24"
+                              value={curDurH}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const h = raw === '' ? 0 : Math.max(0, Math.min(24, parseInt(raw, 10) || 0));
+                                const m = curDurM;
+                                const next = h * 60 + m;
+                                setDesiredDurationMinutes(next < 30 ? 30 : next);
+                              }}
+                              onBlur={() => setDesiredDurationMinutes((v) => Math.max(30, Number(v) || 30))}
+                              className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 pr-6 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                            />
+                            <span className="absolute right-2 top-1.5 text-slate-400 text-[11px] pointer-events-none">hr</span>
+                          </div>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min={curDurH === 0 ? 30 : 0}
+                              max="59"
+                              step="5"
+                              value={curDurM}
+                              onKeyDown={(e) => {
+                                if (e.key === 'ArrowDown' && curDurM === 0 && curDurH >= 1) {
+                                  e.preventDefault();
+                                  setDesiredDurationMinutes(Math.max(30, curDurMins - 5));
+                                }
+                              }}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const m = raw === '' ? 0 : Math.max(0, Math.min(59, parseInt(raw, 10) || 0));
+                                const next = curDurH * 60 + m;
+                                setDesiredDurationMinutes(next < 30 ? 30 : next);
+                              }}
+                              onBlur={() => setDesiredDurationMinutes((v) => Math.max(30, Number(v) || 30))}
+                              className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 pr-6 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                            />
+                            <span className="absolute right-2 top-1.5 text-slate-400 text-[11px] pointer-events-none">m</span>
+                          </div>
+                        </div>
+                      ) : levelMethod === 'hands' ? (
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="10"
+                            max="2000"
+                            step="10"
+                            value={desiredTotalHands}
+                            onChange={(e) => setDesiredTotalHands(e.target.value)}
+                            onBlur={() => setDesiredTotalHands((v) => Math.max(10, Number(v) || 10))}
+                            className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 pr-12 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                          />
+                          <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">hands</span>
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="3"
+                            max="200"
+                            value={desiredTotalOrbits}
+                            onChange={(e) => setDesiredTotalOrbits(e.target.value)}
+                            onBlur={() => setDesiredTotalOrbits((v) => Math.max(3, Number(v) || 3))}
+                            className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 pr-12 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                          />
+                          <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">orbits</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                        Level Duration
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min={minLevelUnit}
+                          max={levelMethod === 'minutes' ? 120 : levelMethod === 'hands' ? 200 : 50}
+                          value={levelValue}
+                          onChange={(e) => setLevelValue(e.target.value)}
+                          onBlur={() => setLevelValue((v) => Math.max(minLevelUnit, Number(v) || LEVEL_PRESETS[levelMethod]))}
+                          className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 pr-12 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                        />
+                        <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">
+                          {levelMethod === 'minutes' ? 'min' : levelMethod}
+                        </span>
+                      </div>
+                    </div>
+
+                    {!isGoMode && (
+                      <>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                            Break Duration
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="1"
+                              max="60"
+                              value={breakDurationMinutes}
+                              onChange={(e) => setBreakDurationMinutes(e.target.value)}
+                              className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                            />
+                            <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">min</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                            Break Schedule
+                          </label>
+                          <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#1e2227] p-0.5 border border-[#2a2f37]">
+                            <button
+                              type="button"
+                              onClick={() => setColorUpBreaksOnly(false)}
+                              className={`py-1 text-center rounded text-[11px] font-medium cursor-pointer transition-colors ${
+                                !colorUpBreaksOnly
+                                  ? 'bg-[#4a5a4a] text-white'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Interval
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setColorUpBreaksOnly(true)}
+                              className={`py-1 text-center rounded text-[11px] font-medium cursor-pointer transition-colors ${
+                                colorUpBreaksOnly
+                                  ? 'bg-[#4a5a4a] text-white'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Color-ups
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                            Break Every
+                          </label>
+                          {colorUpBreaksOnly ? (
+                            <div className="w-full rounded-lg bg-[#1a1d22] border border-[#2a2f37] px-2.5 py-1.5 text-[11px] text-slate-400 italic leading-tight">
+                              Breaks occur only at chip color-ups
+                            </div>
+                          ) : (
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="1"
+                                max="12"
+                                value={breakEveryLevels}
+                                onChange={(e) => setBreakEveryLevels(e.target.value)}
+                                className="w-full rounded-lg bg-[#1e2227] border border-[#2a2f37] px-2.5 py-1.5 text-white font-mono focus:outline-none focus:border-[#4a5a4a]"
+                              />
+                              <span className="absolute right-2.5 top-1.5 text-slate-400 text-xs pointer-events-none">lvls</span>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                        Structure Speed
+                      </label>
+                      <div className="grid grid-cols-3 gap-1 rounded-lg bg-[#1e2227] p-0.5 border border-[#2a2f37]">
+                        {[
+                          { id: 'deep', label: 'Deep' },
+                          { id: 'balanced', label: 'Balanced' },
+                          { id: 'turbo', label: 'Turbo' },
+                        ].map((spd) => {
+                          const active = generatorSpeed === spd.id;
+                          const st = STRUCTURE_BUTTON_STYLES[spd.id];
+                          return (
+                            <button
+                              key={spd.id}
+                              type="button"
+                              onClick={() => setGeneratorSpeed(spd.id)}
+                              className={`py-1 text-center rounded text-xs font-medium cursor-pointer transition-colors border ${
+                                active
+                                  ? st.active
+                                  : 'border-transparent text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {spd.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 text-[11px] text-slate-400 bg-[#1e2227] p-2.5 rounded-lg border border-[#2a2f37]">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                      <span>
+                        Active Players: <span className="font-mono text-white font-bold">{activePlayerCount}</span> · Total Chips in Play: <span className="font-mono text-emerald-400 font-bold">{Math.round(totalChipsInPlay).toLocaleString()}</span> · Base Chip: <span className="font-mono text-emerald-400 font-bold">{lowestChip}</span> · Avg Stack: <span className="font-mono text-white font-bold">{Math.round(estStartingStack).toLocaleString()}</span> (
+                        {isBombVariant
+                          ? `${Math.round(estStartingStack / (schedFirstAnte || lowestChip))} Antes`
+                          : `${Math.round(estStartingStack / (firstSchedBB || 2 * lowestChip))} BBs`}
+                        )
+                      </span>
+                      <span className="text-slate-300 font-medium">
+                        {`Est. Finish: Level ${schedulePlan.targetFinishLevel} (${schedulePlan.estFinishFormatted})`}
+                        {` · ${schedulePlan.levelCount} Levels Generated`}
+                        {!isBombVariant && ` · Finish BB: ${schedulePlan.targetFinishBB.toLocaleString()} (${schedulePlan.targetFinishBBPercent}% of chips)`}
+                        {isGoMode
+                          ? ' · no breaks'
+                          : colorUpBreaksOnly
+                          ? ` · ${schedulePlan.breakCount} color-up break${schedulePlan.breakCount === 1 ? '' : 's'} (${breakDurationMinutes}m)`
+                          : ` · breaks every ${breakEveryLevels} lvls`}
+                      </span>
+                    </div>
+                    {schedulePlan.tooFewLevels && (
+                      <div className="rounded border border-amber-500/40 bg-amber-950/40 px-2.5 py-1.5 text-[11px] text-amber-200">
+                        Short schedule warning: Current Desired Length and Level Duration yield fewer than 3 playable levels (Est. Finish: Level {schedulePlan.targetFinishLevel}). Increase Desired Length or lower Level Duration for a fuller progression.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <BlindScheduleEditor schedule={strippedSchedule} onChange={setSchedule} anteType={anteType} chipDenominations={chipDenoms} allowBreaks={!isGoMode} isBombPot={isBombVariant} />
+
+                <div className="rounded-xl border border-emerald-500/30 bg-[#141c18] p-3.5 shadow-sm">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 mb-2 flex items-center gap-1.5">
+                    <Clock size={13} />
+                    <span>Structure Schedule Timing Breakdown</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                    {levelMethod === 'minutes' ? (
+                      <>
+                        <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
+                          <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">Playing Time</span>
+                          <span className="text-white font-mono font-bold text-sm">{fmtDuration(playMinutes)}</span>
+                          <span className="text-slate-500 text-[10px] block mt-0.5">({levelCount} levels)</span>
+                        </div>
+                        {!isGoMode && (
+                          <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
+                            <span className="text-amber-400 text-[10px] uppercase font-bold block mb-0.5">On Break</span>
+                            <span className="text-amber-300 font-mono font-bold text-sm">{fmtDuration(breakMinutes)}</span>
+                            <span className="text-slate-500 text-[10px] block mt-0.5">total break time</span>
+                          </div>
+                        )}
+                        <div className="col-span-2 sm:col-span-1 rounded-lg bg-emerald-950/40 border border-emerald-600/40 p-2.5">
+                          <span className="text-emerald-400 text-[10px] uppercase font-bold block mb-0.5">Total Time</span>
+                          <span className="text-emerald-200 font-mono font-black text-sm">{fmtDuration(totalMinutes)}</span>
+                          <span className="text-emerald-400/60 text-[10px] block mt-0.5">{isGoMode ? 'play time' : 'play + breaks'}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
+                          <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">
+                            {levelMethod === 'hands' ? 'Total Hands Playing' : 'Total Orbits Playing'}
+                          </span>
+                          <span className="text-white font-mono font-bold text-sm">
+                            {levelCount * defVal} {levelMethod}
+                          </span>
+                          <span className="text-slate-500 text-[10px] block mt-0.5">({levelCount} levels × {defVal} {levelMethod})</span>
+                        </div>
+                        {!isGoMode && (
+                          <div className="rounded-lg bg-black/40 border border-slate-800 p-2.5">
+                            <span className="text-amber-400 text-[10px] uppercase font-bold block mb-0.5">On Break</span>
+                            <span className="text-amber-300 font-mono font-bold text-sm">{fmtDuration(breakMinutes)}</span>
+                            <span className="text-slate-500 text-[10px] block mt-0.5">total break time</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </CollapsibleSection>
+
+              {/* 4. Advanced */}
+              <CollapsibleSection
+                title="Advanced"
+                subtitle="BBA rules, calling clock & specialized options"
+                isOpen={openSections.advanced}
+                onToggle={() => toggleSection('advanced')}
+              >
+                {/* Short-handed BBA reduction & Early level no BBA */}
+                {!isBombVariant && !isShortDeck && (
+                  <div className="rounded-lg border border-[#2a2f37] bg-[#12161c] p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-300">BBA Ante Rules</span>
+                      {anteType !== 'bba' && (
+                        <span className="text-[11px] text-slate-500 italic">Applies when Ante is Big blind ante (BBA)</span>
+                      )}
+                    </div>
+                    <div className={anteType !== 'bba' ? 'opacity-50 pointer-events-none space-y-2' : 'space-y-2'}>
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={sbHalfAnteShortHanded}
+                          disabled={anteType !== 'bba'}
+                          onChange={(e) => setSbHalfAnteShortHanded(e.target.checked)}
+                          className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                        />
+                        <span>Short-handed BBA reduction (BB pays 0.5 BB ante for table when fewer than X players remain)</span>
+                      </label>
+                      {sbHalfAnteShortHanded && (
+                        <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
+                          <span>When remaining players are fewer than:</span>
+                          <input
+                            type="number"
+                            min="2"
+                            max="10"
+                            value={shortHandedThreshold}
+                            disabled={anteType !== 'bba'}
+                            onChange={(e) => setShortHandedThreshold(Math.max(2, Math.min(10, Number(e.target.value) || 5)))}
+                            className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
+                          />
+                          <span className="text-[11px] text-slate-500">
+                            (Default: 5 — if less than {shortHandedThreshold} players remain, BB pays 1/2 ante instead of full BBA)
+                          </span>
+                        </div>
+                      )}
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-200 pt-2 border-t border-[#2a2f37]/60">
+                        <input
+                          type="checkbox"
+                          checked={bbaEarlyHalfAnte}
+                          disabled={anteType !== 'bba'}
+                          onChange={(e) => setBbaEarlyHalfAnte(e.target.checked)}
+                          className="w-4 h-4 rounded border-[#2a2f37] bg-[#1e2227] accent-emerald-500 cursor-pointer"
+                        />
+                        <span>Early level no BBA (no ante through level X)</span>
+                      </label>
+                      {bbaEarlyHalfAnte && (
+                        <div className="flex flex-wrap items-center gap-2 pl-6 pt-1 text-xs text-slate-400">
+                          <span>No ante through level:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="20"
+                            value={bbaEarlyHalfAnteLevel}
+                            disabled={anteType !== 'bba'}
+                            onChange={(e) => setBbaEarlyHalfAnteLevel(Math.max(1, Number(e.target.value) || 2))}
+                            className="w-16 rounded bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white font-semibold text-center text-xs"
+                          />
+                          <span className="text-[11px] text-slate-500">
+                            (No ante for levels 1 to {bbaEarlyHalfAnteLevel}; full 1 BB ante starts on level {Number(bbaEarlyHalfAnteLevel) + 1})
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* First Button & GO Mode Stack Approximation */}
+                <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <span className="text-xs font-semibold text-slate-200 block">First Dealer Button</span>
+                      <span className="text-[11px] text-slate-400">Choose who starts with the button on Hand 1</span>
+                    </div>
+                    <select
+                      value={firstButton}
+                      onChange={(e) => setFirstButton(e.target.value)}
+                      className="rounded-lg border border-[#2a2f37] bg-[#1e2227] px-3 py-2 text-sm text-white"
+                    >
+                      <option value="random">Random</option>
+                      {players.map((p) => (
+                        <option key={p.seat} value={p.seat}>
+                          Seat {p.seat}{p.name ? ` (${p.name})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {isGoMode && (
+                    <div className="space-y-3 p-3 rounded-xl border border-amber-500/30 bg-amber-950/20">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <span className="text-xs font-bold text-amber-200">
+                          Stack Approximation
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={stackRounding || getDefaultStackRounding(smallBlind)}
+                            onChange={(e) => setStackRounding(e.target.value === 'exact' ? 'exact' : Number(e.target.value))}
+                            className="rounded-lg border border-amber-500/40 bg-[#15181d] px-3 py-1.5 text-xs font-bold text-white"
+                          >
+                            {ROUNDING_OPTIONS.map((opt) => {
+                              const disabled = isRoundingOptionDisabled(opt.value, smallBlind);
+                              return (
+                                <option key={opt.value} value={opt.value} disabled={disabled}>
+                                  {opt.label} {disabled ? '(Disabled)' : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="border-t border-amber-500/20 pt-2.5 text-[11px] text-slate-400 leading-relaxed">
+                        Every turn opens behind a hold-to-open handoff screen. Each player can add a 3-digit hole-card PIN from
+                        <span className="text-amber-200 font-bold"> Settings</span> during the game (off by default).
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Action Clock System (Calling clock) */}
+                <div className="rounded-lg border border-[#2a2f37] bg-[#15181d] p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Clock size={16} className="text-emerald-400" />
+                      <span className="text-sm font-semibold text-white">Action Clock System</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      {clockSystem === 'call_clock' ? 'Passive Clock' : 'Shot Clock with Time Banks'}
+                    </span>
+                  </div>
+
+                  <div className="mb-3">
+                    <label className="text-xs text-slate-400 block mb-1">Clock Mode</label>
+                    <select
+                      value={clockSystem}
+                      onChange={(e) => setClockSystem(e.target.value)}
+                      className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                    >
+                      <option value="call_clock">Call the clock (default)</option>
+                      <option value="time_banks">Time banks (Shot clock)</option>
+                    </select>
+                  </div>
+
+                  {clockSystem === 'call_clock' ? (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="w-48">
+                        <label className="text-xs text-slate-400 block mb-1">Time given when clock is called</label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min="5"
+                            max="300"
+                            value={callClockSeconds}
+                            onChange={(e) => setCallClockSeconds(e.target.value)}
+                            className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                          />
+                          <span className="text-xs text-slate-400">seconds (default 30s)</span>
+                        </div>
+                      </div>
+                      <div className="text-[11px] text-slate-500 max-w-sm mt-1">
+                        A "Clock" button appears in the control menu. When pressed, the active player gets {callClockSeconds || 30}s to act before auto fold/check.
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Base Action Timing</label>
+                        <select
+                          value={timeBankMode}
+                          onChange={(e) => setTimeBankMode(e.target.value)}
+                          className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                        >
+                          <option value="single">1. One base time for all actions</option>
+                          <option value="split">2. Separate preflop and postflop times</option>
+                        </select>
+                      </div>
+
+                      {timeBankMode === 'single' ? (
+                        <div>
+                          <label className="text-xs text-slate-400 block mb-1">Base time for all actions</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="5"
+                              max="180"
+                              value={singleSeconds}
+                              onChange={(e) => setSingleSeconds(e.target.value)}
+                              className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                            />
+                            <span className="text-xs text-slate-400">seconds (default 30s)</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3 bg-[#181c22] p-2.5 rounded-lg border border-[#252a33]">
+                          <div>
+                            <label className="text-xs text-slate-400 block mb-1">Preflop time</label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min="5"
+                                max="180"
+                                value={preflopSeconds}
+                                onChange={(e) => setPreflopSeconds(e.target.value)}
+                                className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                              />
+                              <span className="text-xs text-slate-400">seconds (default 20s)</span>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-xs text-slate-400 block mb-1">Postflop configuration</label>
+                            <div className="flex flex-wrap items-center gap-4 mb-2">
+                              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                                <input
+                                  type="radio"
+                                  name="postflopSplit"
+                                  checked={!postflopSplitStreet}
+                                  onChange={() => setPostflopSplitStreet(false)}
+                                  className="accent-[#4a5a4a]"
+                                />
+                                One time for all postflop streets (default 40s)
+                              </label>
+                              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                                <input
+                                  type="radio"
+                                  name="postflopSplit"
+                                  checked={postflopSplitStreet}
+                                  onChange={() => setPostflopSplitStreet(true)}
+                                  className="accent-[#4a5a4a]"
+                                />
+                                Split postflop by street
+                              </label>
+                            </div>
+
+                            {!postflopSplitStreet ? (
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min="5"
+                                  max="180"
+                                  value={postflopSeconds}
+                                  onChange={(e) => setPostflopSeconds(e.target.value)}
+                                  className="w-24 rounded-md bg-[#1e2227] border border-[#2a2f37] px-3 py-2 text-white text-sm"
+                                />
+                                <span className="text-xs text-slate-400">seconds for flop, turn, and river</span>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                  <label className="text-[11px] text-slate-400 block mb-1">Flop time (s)</label>
+                                  <input
+                                    type="number"
+                                    min="5"
+                                    max="180"
+                                    value={flopSeconds}
+                                    onChange={(e) => setFlopSeconds(e.target.value)}
+                                    className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[11px] text-slate-400 block mb-1">Turn time (s)</label>
+                                  <input
+                                    type="number"
+                                    min="5"
+                                    max="180"
+                                    value={turnSeconds}
+                                    onChange={(e) => setTurnSeconds(e.target.value)}
+                                    className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[11px] text-slate-400 block mb-1">River time (s)</label>
+                                  <input
+                                    type="number"
+                                    min="5"
+                                    max="180"
+                                    value={riverSeconds}
+                                    onChange={(e) => setRiverSeconds(e.target.value)}
+                                    className="w-full rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1.5 text-white text-sm"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="pt-2 border-t border-[#252a33]">
+                        <div className="flex items-center gap-2 mb-2">
+                          <label className="text-xs text-slate-400">Initial time bank chips per player:</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="20"
+                            value={initialTimeBanks}
+                            onChange={(e) => setInitialTimeBanks(e.target.value)}
+                            className="w-16 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm text-center"
+                          />
+                          <span className="text-xs text-slate-500">(default 3 chips)</span>
+                        </div>
+
+                        <div className="flex items-center gap-2 mb-2">
+                          <label className="text-xs text-slate-400">Time added per bank chip:</label>
+                          <input
+                            type="number"
+                            min="5"
+                            max="300"
+                            value={timeBankAddSeconds}
+                            onChange={(e) => setTimeBankAddSeconds(e.target.value)}
+                            className="w-16 rounded-md bg-[#1e2227] border border-[#2a2f37] px-2 py-1 text-white text-sm text-center"
+                          />
+                          <span className="text-xs text-slate-500">seconds (default 30s)</span>
+                        </div>
+
+                        <div className="mt-2">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-xs text-slate-300 font-medium">Scheduled Time Bank Chip Add-ons</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAddOnRules((prev) => [
+                                  ...prev,
+                                  { id: Date.now().toString(), triggerType: 'level', triggerValue: 4, chips: 1 },
+                                ])
+                              }
+                              className="flex items-center gap-1 rounded bg-[#2a2f37] hover:bg-[#363c45] text-emerald-400 text-xs px-2 py-1 cursor-pointer"
+                            >
+                              <Plus size={13} /> Add chip rule
+                            </button>
+                          </div>
+                          {addOnRules.length === 0 ? (
+                            <div className="text-[11px] text-slate-500 italic">
+                              No chips will be added on later (default). You can schedule chips after certain levels or during breaks.
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {addOnRules.map((rule, idx) => (
+                                <div
+                                  key={rule.id || idx}
+                                  className="flex items-center gap-2 bg-[#1b2027] border border-[#2a2f37] rounded-md px-2.5 py-1.5 text-xs text-white"
+                                >
+                                  <span className="text-slate-400">Add</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="10"
+                                    value={rule.chips}
+                                    onChange={(e) =>
+                                      setAddOnRules((prev) =>
+                                        prev.map((r, i) => (i === idx ? { ...r, chips: Number(e.target.value) || 1 } : r))
+                                      )
+                                    }
+                                    className="w-12 rounded bg-[#15181d] border border-[#2a2f37] px-1.5 py-0.5 text-center text-white"
+                                  />
+                                  <span className="text-slate-400">chip{rule.chips > 1 ? 's' : ''}</span>
+                                  <select
+                                    value={rule.triggerType}
+                                    onChange={(e) =>
+                                      setAddOnRules((prev) =>
+                                        prev.map((r, i) => (i === idx ? { ...r, triggerType: e.target.value } : r))
+                                      )
+                                    }
+                                    className="rounded bg-[#15181d] border border-[#2a2f37] px-2 py-0.5 text-white"
+                                  >
+                                    <option value="level">After level</option>
+                                    <option value="break">During break</option>
+                                  </select>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={rule.triggerValue}
+                                    onChange={(e) =>
+                                      setAddOnRules((prev) =>
+                                        prev.map((r, i) => (i === idx ? { ...r, triggerValue: Number(e.target.value) || 1 } : r))
+                                      )
+                                    }
+                                    className="w-14 rounded bg-[#15181d] border border-[#2a2f37] px-1.5 py-0.5 text-center text-white"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setAddOnRules((prev) => prev.filter((_, i) => i !== idx))}
+                                    className="ml-auto text-rose-400 hover:text-rose-300 p-1 cursor-pointer"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CollapsibleSection>
             </div>
-          )}
-        </div>
-        )}
+          );
+        })()}
 
         {error && <div className="text-sm text-rose-400 mb-3">{error}</div>}
         <button onClick={save} className="w-full rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white font-medium py-2.5 transition-colors cursor-pointer">

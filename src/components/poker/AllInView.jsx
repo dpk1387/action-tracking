@@ -244,6 +244,7 @@ export default function AllInView({
   clockType = null,
   onUseTimeBank = null,
   displayUnit = 'chips',
+  matchTableHeight = false,
 }) {
   const isTournament = hand?.mode === 'tournament';
   const cur = isTournament ? '' : (hand?.currency || '');
@@ -795,7 +796,7 @@ export default function AllInView({
           else delete tagDomRefs.current[p.id];
         }}
         style={{
-          maxHeight: isCollapsing ? '0px' : '90px',
+          maxHeight: isCollapsing ? '0px' : (matchTableHeight ? '76px' : '90px'),
           opacity: isCollapsing ? 0 : 1,
           transform: isCollapsing ? 'scaleY(0)' : 'none',
           transformOrigin: 'bottom center',
@@ -821,7 +822,7 @@ export default function AllInView({
       >
         {/* TOP SECTION */}
         <div
-          className={`px-2.5 py-1.5 flex items-center justify-between min-h-[46px] transition-colors ${
+          className={`px-2.5 ${matchTableHeight ? 'py-1 min-h-[38px]' : 'py-1.5 min-h-[46px]'} flex items-center justify-between transition-colors ${
             isCurrentActor
               ? 'bg-gradient-to-r from-[#cfac3e] via-[#f3d058] to-[#cfac3e]'
               : 'bg-black border-b border-zinc-800'
@@ -872,7 +873,7 @@ export default function AllInView({
         </div>
 
         {/* BOTTOM BAR: Left stack, right action area */}
-        <div className="bg-black px-2.5 py-1 relative flex items-center justify-between border-t border-black min-h-[30px]">
+        <div className={`bg-black px-2.5 ${matchTableHeight ? 'py-0.5 min-h-[24px]' : 'py-1 min-h-[30px]'} relative flex items-center justify-between border-t border-black`}>
           <div className="text-[#f3d058] font-black tabular-nums text-xs tracking-tight shrink-0 z-10">
             {stackShown(p) ? formatPlayerTagAmount(p.stack, cur, hand, false, activeUnit) : '—'}
           </div>
@@ -969,7 +970,7 @@ export default function AllInView({
   const displayPot = hasAwarded ? remainingPot : totalPot;
 
   return (
-    <div className="relative w-full min-h-[500px] rounded-[2rem] border-2 border-[#364536] bg-gradient-to-b from-[#14181e] via-[#111419] to-[#0c0f13] overflow-hidden p-4 flex flex-col justify-between shadow-2xl select-none transition-all duration-700 ease-in-out">
+    <div className={`relative w-full ${matchTableHeight ? 'h-[480px] p-3' : 'min-h-[500px] p-4'} rounded-[2rem] border-2 border-[#364536] bg-gradient-to-b from-[#14181e] via-[#111419] to-[#0c0f13] overflow-hidden flex flex-col justify-between shadow-2xl select-none transition-all duration-700 ease-in-out`}>
       <div className="absolute inset-4 rounded-[1.6rem] border border-[#273229]/50 pointer-events-none bg-[#182318]/10" />
 
       {/* Top Bar */}
@@ -1007,11 +1008,11 @@ export default function AllInView({
 
       {/* WHEN ACTION HAS ENDED: Redesigned Layout (Graphics slide to new position) */}
       {actionEnded ? (
-        <div className="relative z-10 flex-1 flex flex-col justify-between mt-3 gap-4 min-h-0 transition-all duration-700 ease-in-out">
+        <div className={`relative z-10 flex-1 flex flex-col justify-between ${matchTableHeight ? 'mt-2 gap-2' : 'mt-3 gap-4'} min-h-0 transition-all duration-700 ease-in-out`}>
           {/* TOP / MIDDLE SECTION: Player Tags and Outs Area */}
-          <div className="flex-1 flex flex-row items-stretch justify-between gap-6 overflow-x-auto py-1 min-h-[280px]">
+          <div className={`flex-1 flex flex-row items-stretch justify-between gap-6 overflow-x-auto py-1 ${matchTableHeight ? 'min-h-0 overflow-y-auto' : 'min-h-[280px]'}`}>
             {/* Left Side: Player Tags (or Left half if 5+) */}
-            <div className="flex flex-col justify-start gap-2.5 shrink-0">
+            <div className={`flex flex-col justify-start ${matchTableHeight ? 'gap-1.5' : 'gap-2.5'} shrink-0`}>
               {leftContestants.map((item) => (
                 <div key={item.player.id} className="flex items-center gap-3">
                   {renderPlayerTag(item)}
@@ -1131,16 +1132,16 @@ export default function AllInView({
         </div>
       ) : (
         /* WHEN ACTION IS STILL IN PROGRESS: Standard Layout */
-        <div className="relative z-10 flex-1 flex flex-col md:flex-row gap-4 items-stretch mt-3 min-h-0">
+        <div className={`relative z-10 flex-1 flex flex-col md:flex-row gap-4 items-stretch ${matchTableHeight ? 'mt-2' : 'mt-3'} min-h-0`}>
           {/* Left: Player tags stacked vertically */}
-          <div className="flex-1 flex flex-row items-end gap-5 overflow-x-auto overflow-y-hidden pb-1 min-h-[380px]">
+          <div className={`flex-1 flex flex-row items-end gap-4 overflow-x-auto pb-1 ${matchTableHeight ? 'min-h-0 overflow-y-auto' : 'overflow-y-hidden min-h-[380px]'}`}>
             {(() => {
               const col1 = sortedContestants.slice(0, 5);
               const col2 = sortedContestants.slice(5, 10);
 
               return (
                 <>
-                  <div className="flex flex-col-reverse justify-start gap-2.5">
+                  <div className={`flex flex-col-reverse justify-start ${matchTableHeight ? 'gap-1.5' : 'gap-2.5'}`}>
                     {col1.map((item) => (
                       <div key={item.player.id} className="flex items-center gap-2">
                         {renderPlayerTag(item)}
@@ -1149,7 +1150,7 @@ export default function AllInView({
                   </div>
 
                   {col2.length > 0 && (
-                    <div className="flex flex-col-reverse justify-start gap-2.5">
+                    <div className={`flex flex-col-reverse justify-start ${matchTableHeight ? 'gap-1.5' : 'gap-2.5'}`}>
                       {col2.map((item) => (
                         <div key={item.player.id} className="flex items-center gap-2">
                           {renderPlayerTag(item)}

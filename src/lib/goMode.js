@@ -25,9 +25,7 @@ export function isRoundingOptionDisabled(optionValue, smallBlind) {
 export function getDefaultStackRounding(lowestDenom) {
   const d = Number(lowestDenom) || 25;
   if (d <= 5) return 25;
-  if (d <= 10) return 50;
   if (d <= 25) return 100;   // 4x 25 = 100
-  if (d <= 50) return 250;   // 5x 50 = 250
   if (d <= 100) return 500;  // 5x 100 = 500
   if (d <= 250) return 1000; // 4x 250 = 1000
   if (d <= 500) return 2500; // 5x 500 = 2500

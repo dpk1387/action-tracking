@@ -142,12 +142,22 @@ export function parseAmount(raw) {
   return Math.round(v * mult * 100) / 100;
 }
 
+export function playableLevelNumber(schedule, blindLevel) {
+  const idx = Number(blindLevel) || 0;
+  if (!Array.isArray(schedule) || !schedule.length) return idx + 1;
+  let count = 0;
+  for (let i = 0; i <= idx && i < schedule.length; i++) {
+    if (schedule[i]?.type !== 'break' && schedule[i]?.type !== 'color_up') count++;
+  }
+  return Math.max(1, count);
+}
+
 export function calcAnteForType(anteType, bigBlind, levelAnte, bbaEarlyHalfAnte = false, bbaEarlyHalfAnteLevel = 2, currentLevelNum = 1) {
   const bb = parseAmount(bigBlind) ?? Number(bigBlind) ?? 0;
   const lAnte = parseAmount(levelAnte) ?? Number(levelAnte) ?? 0;
   if (anteType === 'bba') {
     if (bbaEarlyHalfAnte && currentLevelNum <= (Number(bbaEarlyHalfAnteLevel) || 2)) {
-      return Math.round(bb * 0.5 * 100) / 100;
+      return 0;
     }
     return bb;
   }
@@ -192,6 +202,12 @@ export function formatBlinds(hand) {
     return `${sb} / ${bb} / ${tb} (3 BLINDS)`;
   }
 
+  const curLevelNum = playableLevelNumber(hand.blindSchedule, hand.blindLevel);
+  const isEarlyNoAnte = hand.anteType === 'bba' && hand.bbaEarlyHalfAnte && curLevelNum <= (Number(hand.bbaEarlyHalfAnteLevel) || 2);
+  if (isEarlyNoAnte) {
+    return `${sb} / ${bb}`;
+  }
+
   const activeCount = (hand.players || []).filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
   const isShortHandedSB = hand.sbHalfAnteShortHanded && activeCount < (Number(hand.shortHandedThreshold) || 5);
   const effectiveAnte = hand.anteType === 'bba' && isShortHandedSB ? 'sb_half_ante' : hand.anteType;
@@ -209,13 +225,9 @@ export function formatBlinds(hand) {
   }
 
   if (effectiveAnte === 'bba') {
-    const curLevelNum = (hand.blindLevel || 0) + 1;
-    const isBBAEarlyHalf = hand.bbaEarlyHalfAnte && curLevelNum <= (Number(hand.bbaEarlyHalfAnteLevel) || 2);
-    const bbaAmt = isBBAEarlyHalf
-      ? Math.round((Number(hand.bigBlind) || 0) * 0.5 * 100) / 100
-      : (hand.anteAmount || hand.bigBlind);
+    const bbaAmt = hand.anteAmount || hand.bigBlind;
     const bba = fmt(bbaAmt);
-    return isBBAEarlyHalf ? `${sb} / ${bb} - ${bba} (BBA 1/2 ANTE)` : `${sb} / ${bb} - ${bba} (BBA)`;
+    return `${sb} / ${bb} - ${bba} (BBA)`;
   }
 
   if (effectiveAnte === 'traditional' && (parseAmount(hand.anteAmount) ?? Number(hand.anteAmount)) > 0) {
@@ -731,20 +743,25 @@ export function startHand(config, buttonSeat, handNumber) {
   const tbIndex = (isThreeBlinds || isFourBlinds) ? (buttonIndex + 3) % n : -1;
   const fbIndex = isFourBlinds ? (buttonIndex + 4) % n : -1;
 
+  const curLevelNum = playableLevelNumber(config.blindSchedule, config.blindLevel);
+  const isEarlyNoAnte = config.anteType === 'bba' && config.bbaEarlyHalfAnte && curLevelNum <= (Number(config.bbaEarlyHalfAnteLevel) || 2);
+
   const activeCount = players.filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
   const isShortHandedSB = config.sbHalfAnteShortHanded && activeCount < (Number(config.shortHandedThreshold) || 5);
   let effectiveAnteType = config.anteType;
-  if (config.anteType === 'bba' && isShortHandedSB) {
+  if (config.anteType === 'bba' && isEarlyNoAnte) {
+    effectiveAnteType = 'none';
+  } else if (config.anteType === 'bba' && isShortHandedSB) {
     effectiveAnteType = 'sb_half_ante';
   }
 
   const bba = effectiveAnteType === 'bba';
   const isBtnAnte = effectiveAnteType === 'btn_ante';
   const isSBHalfAnte = effectiveAnteType === 'sb_half_ante';
-  const curLevelNum = (config.blindLevel || 0) + 1;
-  const isBBAEarlyHalf = bba && config.bbaEarlyHalfAnte && curLevelNum <= (Number(config.bbaEarlyHalfAnteLevel) || 2);
-  const ante = (bba || isBtnAnte)
-    ? (isBBAEarlyHalf ? Math.round((Number(config.bigBlind) || 0) * 0.5 * 100) / 100 : config.bigBlind)
+  const ante = isEarlyNoAnte
+    ? 0
+    : (bba || isBtnAnte)
+    ? config.bigBlind
     : isSBHalfAnte
     ? Math.round((Number(config.bigBlind) || 0) * 0.5 * 100) / 100
     : (config.anteAmount || 0);
@@ -773,8 +790,10 @@ export function startHand(config, buttonSeat, handNumber) {
     bbaEarlyHalfAnteLevel: Number(config.bbaEarlyHalfAnteLevel) || 2,
     anteAmount: isPermBomb
       ? bombAmount
+      : isEarlyNoAnte
+      ? 0
       : (effectiveAnteType === 'bba' || effectiveAnteType === 'btn_ante')
-      ? (isBBAEarlyHalf ? Math.round((Number(config.bigBlind) || 0) * 0.5 * 100) / 100 : config.bigBlind)
+      ? config.bigBlind
       : effectiveAnteType === 'sb_half_ante'
       ? Math.round((Number(config.bigBlind) || 0) * 0.5 * 100) / 100
       : (config.anteAmount || 0),
@@ -2179,10 +2198,15 @@ export function postBlinds(hand) {
   const tbIndex = (isThreeBlinds || isFourBlinds) ? (buttonIndex + 3) % n : -1;
   const fbIndex = isFourBlinds ? (buttonIndex + 4) % n : -1;
 
+  const curLevelNum = playableLevelNumber(h.blindSchedule, h.blindLevel);
+  const isEarlyNoAnte = h.anteType === 'bba' && h.bbaEarlyHalfAnte && curLevelNum <= (Number(h.bbaEarlyHalfAnteLevel) || 2);
+
   const activeCount = h.players.filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
   const isShortHandedSB = h.sbHalfAnteShortHanded && activeCount < (Number(h.shortHandedThreshold) || 5);
   let effectiveAnteType = h.anteType;
-  if (h.anteType === 'bba' && isShortHandedSB) {
+  if (h.anteType === 'bba' && isEarlyNoAnte) {
+    effectiveAnteType = 'none';
+  } else if (h.anteType === 'bba' && isShortHandedSB) {
     effectiveAnteType = 'sb_half_ante';
   }
   h.effectiveAnteType = effectiveAnteType;
@@ -2190,10 +2214,10 @@ export function postBlinds(hand) {
   const bba = effectiveAnteType === 'bba';
   const isBtnAnte = effectiveAnteType === 'btn_ante';
   const isSBHalfAnte = effectiveAnteType === 'sb_half_ante';
-  const curLevelNum = (h.blindLevel || 0) + 1;
-  const isBBAEarlyHalf = bba && h.bbaEarlyHalfAnte && curLevelNum <= (Number(h.bbaEarlyHalfAnteLevel) || 2);
-  const ante = (bba || isBtnAnte)
-    ? (isBBAEarlyHalf ? Math.round((Number(h.bigBlind) || 0) * 0.5 * 100) / 100 : h.bigBlind)
+  const ante = isEarlyNoAnte
+    ? 0
+    : (bba || isBtnAnte)
+    ? h.bigBlind
     : isSBHalfAnte
     ? Math.round((Number(h.bigBlind) || 0) * 0.5 * 100) / 100
     : (h.anteAmount || 0);
@@ -2352,10 +2376,15 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
   const tbIndex = (isThreeBlinds || isFourBlinds) ? (buttonIndex + 3) % n : -1;
   const fbIndex = isFourBlinds ? (buttonIndex + 4) % n : -1;
 
+  const curLevelNum = playableLevelNumber(h.blindSchedule, h.blindLevel);
+  const isEarlyNoAnte = h.anteType === 'bba' && h.bbaEarlyHalfAnte && curLevelNum <= (Number(h.bbaEarlyHalfAnteLevel) || 2);
+
   const activeCount = h.players.filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
   const isShortHandedSB = h.sbHalfAnteShortHanded && activeCount < (Number(h.shortHandedThreshold) || 5);
   let effectiveAnteType = h.anteType;
-  if (h.anteType === 'bba' && isShortHandedSB) {
+  if (h.anteType === 'bba' && isEarlyNoAnte) {
+    effectiveAnteType = 'none';
+  } else if (h.anteType === 'bba' && isShortHandedSB) {
     effectiveAnteType = 'sb_half_ante';
   }
   h.effectiveAnteType = effectiveAnteType;
@@ -2363,10 +2392,10 @@ export function recomputeBlindsForLevel(hand, newSmallBlind, newBigBlind, newAnt
   const bba = effectiveAnteType === 'bba';
   const isBtnAnte = effectiveAnteType === 'btn_ante';
   const isSBHalfAnte = effectiveAnteType === 'sb_half_ante';
-  const curLevelNum = (h.blindLevel || 0) + 1;
-  const isBBAEarlyHalf = bba && h.bbaEarlyHalfAnte && curLevelNum <= (Number(h.bbaEarlyHalfAnteLevel) || 2);
-  const ante = (bba || isBtnAnte)
-    ? (isBBAEarlyHalf ? Math.round((Number(bb) || 0) * 0.5 * 100) / 100 : bb)
+  const ante = isEarlyNoAnte
+    ? 0
+    : (bba || isBtnAnte)
+    ? bb
     : isSBHalfAnte
     ? Math.round((Number(bb) || 0) * 0.5 * 100) / 100
     : (newAnte || 0);
@@ -2482,17 +2511,17 @@ export function bbaPotOpts(hand) {
   const buttonIndex = hand.players.findIndex((p) => p.seat === hand.buttonSeat);
   if (buttonIndex === -1) return {};
 
+  const curLevelNum = playableLevelNumber(hand.blindSchedule, hand.blindLevel);
+  const isEarlyNoAnte = hand.anteType === 'bba' && hand.bbaEarlyHalfAnte && curLevelNum <= (Number(hand.bbaEarlyHalfAnteLevel) || 2);
+  if (isEarlyNoAnte) return {};
+
   const activeCount = (hand.players || []).filter((p) => p.status !== 'eliminated' && p.status !== 'out').length;
   const isShortHandedSB = hand.sbHalfAnteShortHanded && activeCount < (Number(hand.shortHandedThreshold) || 5);
   const effectiveAnte = hand.anteType === 'bba' && isShortHandedSB ? 'sb_half_ante' : hand.anteType;
 
   if (effectiveAnte === 'bba') {
     const bbIndex = n === 2 ? (buttonIndex + 1) % n : (buttonIndex + 2) % n;
-    const curLevelNum = (hand.blindLevel || 0) + 1;
-    const isBBAEarlyHalf = hand.bbaEarlyHalfAnte && curLevelNum <= (Number(hand.bbaEarlyHalfAnteLevel) || 2);
-    const bbaAmount = isBBAEarlyHalf
-      ? Math.round((Number(hand.bigBlind) || 0) * 0.5 * 100) / 100
-      : (Number(hand.bigBlind) || 0);
+    const bbaAmount = Number(hand.bigBlind) || 0;
     return { bbaAmount, bbIndex, bigBlind: Number(hand.bigBlind) || 0 };
   }
   if (effectiveAnte === 'btn_ante') {
@@ -2997,6 +3026,8 @@ export function nextHand(hand) {
     anteAmount: hand.anteAmount,
     sbHalfAnteShortHanded: hand.sbHalfAnteShortHanded,
     shortHandedThreshold: hand.shortHandedThreshold,
+    bbaEarlyHalfAnte: !!hand.bbaEarlyHalfAnte,
+    bbaEarlyHalfAnteLevel: Number(hand.bbaEarlyHalfAnteLevel) || 2,
     mode: hand.mode,
     currency: hand.currency,
     allowStraddle: hand.allowStraddle,

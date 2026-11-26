@@ -5,7 +5,6 @@ import StacksBar from '@/components/poker/StacksBar';
 import PokerTable from '@/components/poker/PokerTable';
 import ActionRecorder from '@/components/poker/ActionRecorder';
 import OutOfTurnRecorder from '@/components/poker/OutOfTurnRecorder';
-import ActionHistory from '@/components/poker/ActionHistory';
 import CommunityCardInput from '@/components/poker/CommunityCardInput';
 import EndHandDialog from '@/components/poker/EndHandDialog';
 import SevenTwoAward from '@/components/poker/SevenTwoAward';
@@ -31,7 +30,7 @@ import GoModeView from '@/components/poker/GoModeView';
 import TemporaryGameModal from '@/components/poker/TemporaryGameModal';
 import { findPlanForHand } from '@/lib/tempGameScheduler';
 import { dealGoHoleCards, goHoleSize, fillGoCommunityCards, runOutGoBoardIfFrozen, dealNextGoStreet, getDefaultStackRounding, getLowestDenomination } from '@/lib/goMode';
-import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, Clock, UserPlus, Minimize2, Maximize2, Zap, Settings } from 'lucide-react';
+import { Undo2, Eye, EyeOff, Share2, Save, Power, Rewind, FastForward, Snowflake, Clock, UserPlus, Minimize2, Maximize2, Zap, Settings, ChevronDown, ChevronUp } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { sessionStore } from '@/lib/sessionStore';
 import { useAuth } from '@/lib/AuthContext';
@@ -51,7 +50,7 @@ import {
 import { rewardFor } from '@/lib/sevenTwoPatterns';
 import { suggestAnte } from '@/lib/poker';
 import { suggestNextBlinds, suggestNextAnte } from '@/lib/tournamentStructures';
-import { advanceToNextHand, initLevelTimer, advanceTimerSegment, removeScheduleStops, pauseLevelTimer, resumeLevelTimer, levelTimerState, formatTimer, formatTimerLabel, nudgeLevelTimer, scheduledLevelNumber } from '@/lib/levelTimer';
+import { advanceToNextHand, initLevelTimer, advanceTimerSegment, removeScheduleStops, pauseLevelTimer, resumeLevelTimer, levelTimerState, formatTimer, formatTimerLabel, nudgeLevelTimer, scheduledLevelNumber, appliedLevelNumber } from '@/lib/levelTimer';
 import { minChipForBlinds, roundHandToMinChip } from '@/lib/tableRules';
 import { buildBustRecovery, recoveryChips } from '@/lib/bustRecovery';
 
@@ -73,7 +72,7 @@ function applyGoDiscardGate(h, holeCards) {
 export default function PokerTracker() {
   const [config, setConfig] = useState(() => sessionStore.get().config);
   const [hand, setHand] = useState(() => sessionStore.get().hand);
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(() => sessionStore.get().undoHistory || []);
   const [sessionHandCount, setSessionHandCount] = useState(() => sessionStore.get().history.length);
   const [showSetup, setShowSetup] = useState(false);
   const [showEnd, setShowEnd] = useState(false);
@@ -81,12 +80,18 @@ export default function PokerTracker() {
   const [blindsPrefill, setBlindsPrefill] = useState(null);
   const [preplannerLevel, setPreplannerLevel] = useState(false);
   const [gameOver, setGameOver] = useState(() => sessionStore.get().gameOver);
-  const [holeCards, setHoleCards] = useState({});
+  const [holeCards, setHoleCards] = useState(() => sessionStore.get().holeCards || {});
   const [equity, setEquity] = useState(null);
-  const [hideAmounts, setHideAmounts] = useState(false);
+  const [hideAmounts, setHideAmounts] = useState(() => Boolean(sessionStore.get().hideAmounts));
+  const [showStacksRow, setShowStacksRow] = useState(() => sessionStore.get().showStacksRow ?? true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [isFullScreen, setIsFullScreen] = useState(() => Boolean(sessionStore.get().isFullScreen));
   const updateHideAmounts = (nextVal) => {
     const resolved = typeof nextVal === 'function' ? nextVal(hideAmounts) : Boolean(nextVal);
     setHideAmounts(resolved);
+    if (resolved) {
+      setShowStacksRow(false);
+    }
     if (!isGoMode) {
       const currentHandNum = hand?.handNumber;
       const reconciledHand = hand ? reconcileHandHideAmounts(hand, resolved) : hand;
@@ -100,6 +105,7 @@ export default function PokerTracker() {
         sessionStore.set((s) => ({
           ...s,
           hideAmounts: resolved,
+          ...(resolved ? { showStacksRow: false } : {}),
           history: Array.isArray(s.history)
             ? s.history.map((item) =>
                 item && item.handNumber === currentHandNum
@@ -158,7 +164,7 @@ export default function PokerTracker() {
       return next;
     });
   };
-  const [goHoleCards, setGoHoleCards] = useState({});
+  const [goHoleCards, setGoHoleCards] = useState(() => sessionStore.get().goHoleCards || {});
   const [goDiscards, setGoDiscards] = useState({});
   const [goExposed, setGoExposed] = useState({});
   const [goExposeDone, setGoExposeDone] = useState(false);
@@ -200,6 +206,15 @@ export default function PokerTracker() {
       localStorage.setItem('poker_compact_mode', String(isCompactMode));
     } catch (_) {}
   }, [isCompactMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => {
+      if (window.innerWidth < 1024) setIsFullScreen(false);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     if (hand) {
@@ -442,8 +457,19 @@ export default function PokerTracker() {
   }, [displayUnit]);
 
   useEffect(() => {
-    sessionStore.set({ config, hand, gameOver, hideAmounts, displayUnit });
-  }, [config, hand, gameOver, hideAmounts, displayUnit]);
+    sessionStore.set({
+      config,
+      hand,
+      gameOver,
+      hideAmounts,
+      showStacksRow,
+      displayUnit,
+      holeCards,
+      goHoleCards,
+      undoHistory: history,
+      isFullScreen,
+    });
+  }, [config, hand, gameOver, hideAmounts, showStacksRow, displayUnit, holeCards, goHoleCards, history, isFullScreen]);
 
   useEffect(() => {
     if (!hand || hand.mode !== 'tournament') return;
@@ -495,12 +521,10 @@ export default function PokerTracker() {
     if (!hand || !hand.players) return;
     const snap = {};
     hand.players.forEach((p) => {
-      snap[p.seat] = hand.phase === 'awarded'
-        ? p.stack
-        : (p.initialStack != null ? p.initialStack : p.stack);
+      snap[p.seat] = p.initialStack != null ? p.initialStack : p.stack;
     });
     setFrozenStacks(snap);
-  }, [hand?.handNumber, hand?.phase]);
+  }, [hand?.handNumber]);
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -528,50 +552,65 @@ export default function PokerTracker() {
     if (s.hand !== hand || s.config !== config || s.gameOver !== gameOver) {
       setConfig(s.config); setHand(s.hand); setGameOver(s.gameOver);
     }
+    if (s.holeCards && s.holeCards !== holeCards) setHoleCards(s.holeCards);
+    if (s.goHoleCards && s.goHoleCards !== goHoleCards) setGoHoleCards(s.goHoleCards);
+    if (s.undoHistory && s.undoHistory !== history) setHistory(s.undoHistory);
+    if (s.hideAmounts !== undefined && s.hideAmounts !== hideAmounts) setHideAmounts(Boolean(s.hideAmounts));
+    if (s.showStacksRow !== undefined && s.showStacksRow !== showStacksRow) setShowStacksRow(Boolean(s.showStacksRow));
+    if (s.isFullScreen !== undefined && s.isFullScreen !== isFullScreen) setIsFullScreen(Boolean(s.isFullScreen));
   }, [location.pathname]);
 
   const recordHand = (h) => {
     if (recordedHandNumbers.current.has(h.handNumber)) return;
     recordedHandNumbers.current.add(h.handNumber);
-    const bi = getButtonIndex(h);
+    const pos = positions(h);
+    const activeHoles = isGoMode ? goHoleCards : holeCards;
+    const resolvedHoles = clone(activeHoles || {});
+    const isBombVar = isBombPotVariant(h.variant);
     sessionStore.addHand({
       handNumber: h.handNumber,
+      mode: h.mode || config?.mode || 'cash',
       variant: h.variant,
-      gameType: h.gameType || config?.gameType || 'nl',
+      gameType: h.gameType,
+      currency: h.currency,
       hideAmounts: Boolean(hideAmounts),
       buttonSeat: h.buttonSeat,
       sbSeat: h.sbSeat,
       bbSeat: h.bbSeat,
-      smallBlind: h.smallBlind,
-      bigBlind: h.bigBlind,
+      smallBlind: isBombVar ? 0 : h.smallBlind,
+      bigBlind: isBombVar ? 0 : h.bigBlind,
+      thirdBlind: h.thirdBlind,
+      fourthBlind: h.fourthBlind,
       anteType: h.anteType,
       anteAmount: h.anteAmount,
       bombAmount: h.bombAmount,
-      currency: h.currency,
-      communityCards: h.communityCards,
-      boardB: h.boardB,
-      boardC: h.boardC,
-      doubleBoard: !!h.doubleBoard,
+      bombPot: h.bombPot,
       bombBoards: h.bombBoards,
-      actions: h.actionHistory,
-      actionHistory: h.actionHistory,
-      holeCards: isGoMode ? { ...goHoleCards } : { ...holeCards },
-      pots: h.pots,
-      winners: h.winners,
+      doubleBoard: h.doubleBoard,
+      killPot: h.killPot,
+      halfKill: h.halfKill,
       notes: h.sideNotes || [],
-      bombPot: !!h.bombPot,
-      killPot: !!(h.sideGames?.killPot || h.sideGames?.halfKill),
-      halfKill: !!h.sideGames?.halfKill,
-      players: h.players.map((p, i) => ({
+      communityCards: clone(h.communityCards || []),
+      boardB: clone(h.boardB || []),
+      boardC: clone(h.boardC || []),
+      actions: clone(h.actionHistory || []),
+      actionHistory: clone(h.actionHistory || []),
+      holeCards: resolvedHoles,
+      pots: clone(h.pots || []),
+      winners: clone(h.winners || []),
+      refunds: clone(h.refunds || []),
+      players: (h.players || []).map((p, i) => ({
         id: p.id,
         name: p.name,
         seat: p.seat,
-        initialStack: p.initialStack,
+        stack: p.stack,
         endStack: p.stack,
-        stack: p.initialStack != null ? p.initialStack : p.stack,
-        totalBet: p.totalBet || 0,
-        antePaid: p.antePaid || 0,
-        position: positionForSeat(h.players.length, bi, i, h.variant),
+        initialStack: p.initialStack,
+        totalBet: p.totalBet,
+        antePaid: p.antePaid,
+        status: p.status,
+        position: pos[i] || '',
+        holeCards: resolvedHoles[p.id] ? clone(resolvedHoles[p.id]) : [],
       })),
     });
     setSessionHandCount(sessionStore.get().history.length);
@@ -677,6 +716,8 @@ export default function PokerTracker() {
           anteType: cfg.anteType || prev.anteType,
           sbHalfAnteShortHanded: cfg.sbHalfAnteShortHanded !== undefined ? cfg.sbHalfAnteShortHanded : prev.sbHalfAnteShortHanded,
           shortHandedThreshold: cfg.shortHandedThreshold || prev.shortHandedThreshold,
+          bbaEarlyHalfAnte: cfg.bbaEarlyHalfAnte !== undefined ? cfg.bbaEarlyHalfAnte : prev.bbaEarlyHalfAnte,
+          bbaEarlyHalfAnteLevel: cfg.bbaEarlyHalfAnteLevel || prev.bbaEarlyHalfAnteLevel,
           smallBet: Number(cfg.smallBet) || prev.smallBet,
           bigBet: Number(cfg.bigBet) || prev.bigBet,
           flMaxRaises: Number(cfg.flMaxRaises) || prev.flMaxRaises,
@@ -701,6 +742,12 @@ export default function PokerTracker() {
           if (updated.players.some((p) => p.seat === chosenSeat)) {
             updated.buttonSeat = chosenSeat;
           }
+        }
+        const levelCfgChanged =
+          (cfg.levelConfig?.method && cfg.levelConfig.method !== prev.levelConfig?.method) ||
+          (cfg.levelConfig?.value != null && Number(cfg.levelConfig.value) !== Number(prev.levelConfig?.value));
+        if (levelCfgChanged || (prev.levelHandsCompleted || 0) === 0) {
+          updated.levelCount = Math.max(1, updated.players.length);
         }
         const noActionYet = !updated.actionHistory || updated.actionHistory.length === 0;
         if (noActionYet && (updated.street === 'preflop' || isBombPotVariant(updated.variant))) {
@@ -740,13 +787,6 @@ export default function PokerTracker() {
     setHistory([]);
     setShowSetup(false);
     resetHoleCards();
-  };
-
-  const updateFrozenStacks = (awardedHand) => {
-    if (!awardedHand || !awardedHand.players) return;
-    const snap = {};
-    awardedHand.players.forEach((p) => { snap[p.seat] = p.stack; });
-    setFrozenStacks(snap);
   };
 
   const handleAction = (...args) => {
@@ -795,18 +835,15 @@ export default function PokerTracker() {
         const winners = {};
         pots.forEach((pot, i) => { winners[i] = nf[0].id; });
         const awarded = awardPots(next, winners, { holeCards: activeHoleCards });
-        updateFrozenStacks(awarded);
         setHand(awarded);
         advanceAfterAward(awarded);
       } else {
         const w = tryAutoWinners(next, activeHoleCards);
         if (w) {
           const awarded = awardPots(next, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, winnersLow: w.winnersLow, holeCards: activeHoleCards });
-          updateFrozenStacks(awarded);
           setHand(awarded);
           advanceAfterAward(awarded);
         } else {
-          updateFrozenStacks(next);
           setHand(next);
           if (!isGoMode) {
             setShowEnd(true);
@@ -833,7 +870,6 @@ export default function PokerTracker() {
       const w = tryAutoWinners(next, activeHoleCards);
       if (w) {
         const awarded = awardPots(next, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, winnersLow: w.winnersLow, holeCards: activeHoleCards });
-        updateFrozenStacks(awarded);
         recordHand(awarded);
         setHand(awarded);
         advanceAfterAward(awarded);
@@ -1042,7 +1078,6 @@ export default function PokerTracker() {
   };
 
   const advanceAfterAward = (awarded) => {
-    updateFrozenStacks(awarded);
     recordHand(awarded);
     if (sevenTwoActive(awarded)) {
       const nonFolded = awarded.players.filter((p) => p.status !== 'folded');
@@ -1055,7 +1090,6 @@ export default function PokerTracker() {
       if (q) {
         pushHistory(awarded);
         const bonusAwarded = awardPots(awarded, {}, { bonuses: [q], holeCards });
-        updateFrozenStacks(bonusAwarded);
         setHand(bonusAwarded);
         setBonusApplied(true);
         setSevenTwoFoldWinner(null);
@@ -1070,7 +1104,6 @@ export default function PokerTracker() {
     if (hand && bonus) {
       pushHistory(hand);
       const bonusAwarded = awardPots(hand, {}, { bonuses: [bonus], holeCards });
-      updateFrozenStacks(bonusAwarded);
       setHand(bonusAwarded);
     }
     setBonusApplied(true);
@@ -1264,6 +1297,9 @@ export default function PokerTracker() {
     };
     const res = nextHand({ ...rec.appliedHand, pendingAdjust: {}, pendingPlayers: [pending] });
     if (!res?.hand) return;
+    if (!res.hand.inBreak && (rec.appliedHand.tLevel !== rec.baseHand?.tLevel || Boolean(rec.baseHand?.inBreak) !== Boolean(res.hand.inBreak))) {
+      res.hand.levelCount = Math.max(1, res.hand.players.length);
+    }
     setBustRecovery(null);
     setHistory([]);
     const snap = {};
@@ -1288,7 +1324,6 @@ export default function PokerTracker() {
 
   const proceedToNextHand = () => {
     if (hand && hand.phase === 'awarded') {
-      updateFrozenStacks(hand);
       recordHand(hand);
     }
     let currentHand = hand;
@@ -1371,9 +1406,8 @@ export default function PokerTracker() {
         currentHand?.mode === 'cash' ? { ...e, chips: Number(frozenStacks?.[e.seat]) || 0 } : e
       ));
       const plan = buildBustRecovery(currentHand, busted);
-      // Always prompt: when the format forbids a re-entry the host can still override it
-      // (or end the tournament) instead of the session ending silently.
-      if (busted.length > 0) {
+      const isFreezeout = (currentHand?.tournamentFormat || config?.tournamentFormat || 'freezeout') === 'freezeout';
+      if (!isFreezeout && plan.anyAllowed && busted.length > 0) {
         setBustRecovery({ winner, busted, baseHand: currentHand, appliedHand: res.appliedHand, plan });
       } else {
         endTournament(winner, currentHand);
@@ -1403,7 +1437,6 @@ export default function PokerTracker() {
       const winners = {};
       pots.forEach((pot, i) => { winners[i] = nf[0].id; });
       const awarded = awardPots(ended, winners, { holeCards });
-      updateFrozenStacks(awarded);
       setHand(awarded);
       advanceAfterAward(awarded);
       return;
@@ -1411,11 +1444,9 @@ export default function PokerTracker() {
     const w = tryAutoWinners(ended, holeCards);
     if (w) {
       const awarded = awardPots(ended, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, winnersLow: w.winnersLow, holeCards });
-      updateFrozenStacks(awarded);
       setHand(awarded);
       advanceAfterAward(awarded);
     } else {
-      updateFrozenStacks(ended);
       setHand(ended);
       setShowEnd(true);
     }
@@ -1424,7 +1455,6 @@ export default function PokerTracker() {
   const handleAward = (winners, opts) => {
     pushHistory(hand);
     const awarded = awardPots(hand, winners, opts);
-    updateFrozenStacks(awarded);
     setHand(awarded);
     setShowEnd(false);
     advanceAfterAward(awarded);
@@ -1491,6 +1521,7 @@ export default function PokerTracker() {
     let prev = history[history.length - 1];
     const timerFields = [
       'tLevel', 'inBreak', 'levelStartEpoch', 'levelHandsCompleted',
+      'levelCount',
       'pendingLevelIdx', 'pausedMs', 'pauseStart', 'pendingRace',
     ];
     const preserved = {};
@@ -1714,7 +1745,8 @@ export default function PokerTracker() {
     const lvlAnteVal = parseAmount(lvl.ante) ?? Number(lvl.ante) ?? 0;
     if (!isBombVar && (bbVal <= 0 || sbVal <= 0)) return;
     if (isBombVar && lvlAnteVal <= 0) return;
-    const ante = isBombVar ? lvlAnteVal : calcAnteForType(hand.anteType, bbVal, lvl.ante);
+    const targetLvlNum = appliedLevelNumber({ ...hand, blindLevel: idx });
+    const ante = isBombVar ? lvlAnteVal : calcAnteForType(hand.anteType, bbVal, lvl.ante, hand.bbaEarlyHalfAnte, hand.bbaEarlyHalfAnteLevel, targetLvlNum);
     const newSB = isBombVar ? 0 : sbVal;
     const newBB = isBombVar ? 0 : bbVal;
     if (newSB === hand.smallBlind && newBB === hand.bigBlind && ante === hand.anteAmount && (!isBombVar || ante === hand.bombAmount)) return;
@@ -1739,7 +1771,6 @@ export default function PokerTracker() {
     if (!w) return;
     pushHistory(hand);
     const awarded = awardPots(hand, w.winnersA, { winnersB: w.winnersB, winnersC: w.winnersC, winnersLow: w.winnersLow, holeCards });
-    updateFrozenStacks(awarded);
     setHand(awarded);
     if (sevenTwoActive(awarded)) {
       const q = sevenTwoQualifyingWinner(awarded);
@@ -1793,11 +1824,12 @@ export default function PokerTracker() {
       const sched = Array.isArray(prev.blindSchedule) ? prev.blindSchedule.slice() : [];
       const atLast = !sched.length || (prev.blindLevel || 0) >= sched.length - 1;
       if (atLast) {
+        const nextLvlNum = appliedLevelNumber(prev) + 1;
         sched.push({
           type: 'level',
           smallBlind: isBombVar ? 0 : sb,
           bigBlind: isBombVar ? 0 : bb,
-          ante: isBombVar ? ante : calcAnteForType(prev.anteType, bb, ante),
+          ante: isBombVar ? ante : calcAnteForType(prev.anteType, bb, ante, prev.bbaEarlyHalfAnte, prev.bbaEarlyHalfAnteLevel, nextLvlNum),
         });
         return { ...prev, blindSchedule: sched };
       }
@@ -1815,6 +1847,7 @@ export default function PokerTracker() {
         inBreak: false,
         levelStartEpoch: Date.now(),
         levelHandsCompleted: 0,
+        levelCount: Math.max(1, prev.players?.length || 1),
       };
     });
   };
@@ -1846,11 +1879,13 @@ export default function PokerTracker() {
         base.pendingLevelIdx = nextIdx < schedule.length ? nextIdx : prev.tLevel;
         base.levelStartEpoch = Date.now();
         base.levelHandsCompleted = 0;
+        base.levelCount = Math.max(1, base.players?.length || 1);
         if (nextLevel && nextLevel.type !== 'break' && nextLevel.type !== 'color_up') {
           const isBombVar = isBombPotVariant(prev.variant);
           const nextBB = isBombVar ? 0 : (parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0);
           const nextSB = isBombVar ? 0 : (parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0);
-          const ante = isBombVar ? (parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
+          const targetLvlNum = appliedLevelNumber({ ...prev, blindLevel: nextIdx });
+          const ante = isBombVar ? (parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, nextBB, nextLevel.ante, prev.bbaEarlyHalfAnte, prev.bbaEarlyHalfAnteLevel, targetLvlNum);
           base.smallBlind = nextSB;
           base.bigBlind = nextBB;
           base.anteAmount = ante;
@@ -1877,7 +1912,7 @@ export default function PokerTracker() {
     setHand((prev) => nudgeLevelTimer(prev, deltaMs));
     setNow(Date.now());
   };
-  const timerCanNudge = hand?.mode === 'tournament' && (hand?.levelConfig?.method || 'minutes') === 'minutes';
+  const timerCanNudge = hand?.mode === 'tournament';
 
   const handleResumeFromBreak = () => {
     setShowBreak(false);
@@ -1897,13 +1932,15 @@ export default function PokerTracker() {
         pendingLevelIdx: nextIdx < schedule.length ? nextIdx : (prev.tLevel || 0) + 1,
         levelStartEpoch: Date.now(),
         levelHandsCompleted: 0,
+        levelCount: Math.max(1, prev.players?.length || 1),
         pendingRace: null,
       };
       if (nextLevel && nextLevel.type !== 'break' && nextLevel.type !== 'color_up') {
         const isBombVar = isBombPotVariant(prev.variant);
         const nextBB = isBombVar ? 0 : (parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0);
         const nextSB = isBombVar ? 0 : (parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0);
-        const ante = isBombVar ? (parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
+        const targetLvlNum = appliedLevelNumber({ ...prev, blindLevel: nextIdx });
+        const ante = isBombVar ? (parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, nextBB, nextLevel.ante, prev.bbaEarlyHalfAnte, prev.bbaEarlyHalfAnteLevel, targetLvlNum);
         base.smallBlind = nextSB;
         base.bigBlind = nextBB;
         base.anteAmount = ante;
@@ -1922,10 +1959,11 @@ export default function PokerTracker() {
     if (sched?.length && !atLast) {
       const nextIdx = Math.min((hand.blindLevel || 0) + 1, sched.length - 1);
       const lvl = sched[nextIdx];
+      const nextLvlNum = appliedLevelNumber({ ...hand, blindLevel: nextIdx });
       setBlindsPrefill({
         smallBlind: isBombVar ? 0 : lvl.smallBlind,
         bigBlind: isBombVar ? 0 : lvl.bigBlind,
-        anteAmount: isBombVar ? (parseAmount(lvl.ante) ?? Number(lvl.ante) ?? hand.anteAmount) : calcAnteForType(hand.anteType, lvl.bigBlind, lvl.ante),
+        anteAmount: isBombVar ? (parseAmount(lvl.ante) ?? Number(lvl.ante) ?? hand.anteAmount) : calcAnteForType(hand.anteType, lvl.bigBlind, lvl.ante, hand.bbaEarlyHalfAnte, hand.bbaEarlyHalfAnteLevel, nextLvlNum),
       });
     } else if (isBombVar) {
       setBlindsPrefill({
@@ -1935,10 +1973,11 @@ export default function PokerTracker() {
       });
     } else {
       const suggestion = suggestNextBlinds(sched || [], hand.chipDenominations || []);
+      const nextLvlNum = appliedLevelNumber(hand) + 1;
       setBlindsPrefill({
         smallBlind: suggestion.smallBlind,
         bigBlind: suggestion.bigBlind,
-        anteAmount: calcAnteForType(hand.anteType, suggestion.bigBlind, 0),
+        anteAmount: calcAnteForType(hand.anteType, suggestion.bigBlind, 0, hand.bbaEarlyHalfAnte, hand.bbaEarlyHalfAnteLevel, nextLvlNum),
       });
     }
     setShowBlinds(true);
@@ -1958,7 +1997,8 @@ export default function PokerTracker() {
         inBreak,
         isColorUp: !!isColorUp,
         levelStartEpoch,
-        levelHandsCompleted,
+        levelHandsCompleted: Number(levelHandsCompleted) || 0,
+        levelCount: Math.max(1, prev.players?.length || 1),
         pendingLevelIdx: targetIdx,
         pauseStart: isPaused ? Date.now() : null,
         pausedMs: isPaused ? 0 : prev.pausedMs,
@@ -1982,7 +2022,8 @@ export default function PokerTracker() {
         const isBombVar = isBombPotVariant(prev.variant);
         const targetBB = isBombVar ? 0 : (parseAmount(targetLevel.bigBlind) ?? Number(targetLevel.bigBlind) ?? 0);
         const targetSB = isBombVar ? 0 : (parseAmount(targetLevel.smallBlind) ?? Number(targetLevel.smallBlind) ?? 0);
-        const ante = isBombVar ? (parseAmount(targetLevel.ante) ?? Number(targetLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, targetBB, targetLevel.ante);
+        const targetLvlNum = appliedLevelNumber({ ...prev, blindLevel: targetIdx });
+        const ante = isBombVar ? (parseAmount(targetLevel.ante) ?? Number(targetLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, targetBB, targetLevel.ante, prev.bbaEarlyHalfAnte, prev.bbaEarlyHalfAnteLevel, targetLvlNum);
         base.smallBlind = targetSB;
         base.bigBlind = targetBB;
         base.anteAmount = ante;
@@ -2003,7 +2044,8 @@ export default function PokerTracker() {
       : (hand?.players || []).find((p) => p.id === pid);
     if (!target) return;
     if (!isAddOn && !isCash && hand?.mode === 'tournament') {
-      const blocked = rebuyBlocker({ ...hand, blindLevel: hand?.blindLevel }, { ...target, stack: isEliminated ? 0 : target.stack }, hand?.levelIndex ?? hand?.blindLevel);
+      const lvlIdx = Math.max(0, appliedLevelNumber(hand) - 1);
+      const blocked = rebuyBlocker({ ...hand, blindLevel: lvlIdx }, { ...target, stack: isEliminated ? 0 : target.stack }, lvlIdx);
       if (blocked) {
         setRuleNotice(`Rebuy blocked: ${blocked}`);
         return;
@@ -2117,7 +2159,7 @@ export default function PokerTracker() {
     if (saved.sessionToken) setSessionToken(saved.sessionToken);
     const savedHistory = restoreSessionHistory(saved.history || [], saved.shareCode || saved.id || getShareCode());
     const resumeFrozen = {};
-    (restoredHand.players || []).forEach((p) => { resumeFrozen[p.seat] = p.stack; });
+    (restoredHand.players || []).forEach((p) => { resumeFrozen[p.seat] = p.initialStack != null ? p.initialStack : p.stack; });
     setFrozenStacks(resumeFrozen);
     sessionStore.set({ config: cfg, hand: saved.hand, gameOver: saved.gameOver || null, history: savedHistory });
     setSavedSession(null);
@@ -2146,7 +2188,7 @@ export default function PokerTracker() {
       if (res.saved?.sessionToken) setSessionToken(res.saved.sessionToken);
       const savedHistory = restoreSessionHistory(res.saved?.history || [], target);
       const resumeFrozen = {};
-      (restoredHand.players || []).forEach((p) => { resumeFrozen[p.seat] = p.stack; });
+      (restoredHand.players || []).forEach((p) => { resumeFrozen[p.seat] = p.initialStack != null ? p.initialStack : p.stack; });
       setFrozenStacks(resumeFrozen);
       sessionStore.set({ config: cfg, hand: restoredHand, gameOver: res.saved.gameOver || null, history: savedHistory });
       setSavedSession(null);
@@ -2302,6 +2344,9 @@ export default function PokerTracker() {
     setFrozenStacks({});
     setFreezeStacks(true);
     setGoPlayerPrefs({});
+    setIsFullScreen(false);
+    setShowAdvanced(false);
+    setShowStacksRow(true);
     navigate('/');
   };
 
@@ -2356,6 +2401,12 @@ export default function PokerTracker() {
   }, [hand, pirateExposed, holeCards]);
   const showDiscardStep = hand && hand.variant === 'crazy_pineapple' && hand.cpNeedsDiscard && !hand.cpDiscarded && hand.currentPlayer === -1 && hand.phase !== 'awarded' && hand.communityCards.length >= 3 && nonFolded.length >= 2 && nonFolded.every((p) => holeCards[p.id] && holeCards[p.id].length === 3);
   const isCash = hand?.mode === 'cash' || config?.mode === 'cash' || gameOver?.mode === 'cash' || (sessionStore.get()?.config?.mode === 'cash');
+  const curLvlNum = hand ? appliedLevelNumber(hand) : 1;
+  const isLateRegOver = Boolean(!hand?.lateRegEnabled || curLvlNum > (Number(hand?.lateRegLevel) || 0));
+  const isReentryOver = Boolean(hand?.tournamentFormat !== 'reentry' || (hand?.lateRegEnabled && curLvlNum > (Number(hand?.lateRegLevel) || 0)));
+  const rebuyTimeExpired = Boolean((hand?.rebuyRules?.timeLimitEnabled ?? true) && curLvlNum > (Number(hand?.rebuyRules?.timeCutoffLevel ?? hand?.rebuyRules?.timeCapLevel) || 4));
+  const hasAvailableAddOn = Boolean(hand?.allowAddOn && (hand?.players || []).some((p) => (p.addOns || 0) < 1));
+  const isRebuyOver = Boolean(hand?.tournamentFormat !== 'rebuy' || (rebuyTimeExpired && !hasAvailableAddOn));
   // Busted players disappear from hand.players, so list them again (negative id) for buy-backs.
   const rebuyCandidates = [
     ...(hand?.players || []),
@@ -2478,8 +2529,8 @@ export default function PokerTracker() {
           onDealNextStreet={handleDealNextGoStreet}
           onOpenSettings={() => setShowSettingsModal(true)}
           onOpenStructureSetup={() => setShowSetup(true)}
-          onOpenRebuy={(isCash || hand?.tournamentFormat === 'rebuy') && !bustRecovery ? () => setShowRebuy(true) : null}
-          onOpenReentry={!isCash && hand?.tournamentFormat === 'reentry' ? () => setShowReentry(true) : null}
+          onOpenRebuy={(isCash || (hand?.tournamentFormat === 'rebuy' && !isRebuyOver)) && !bustRecovery ? () => setShowRebuy(true) : null}
+          onOpenReentry={!isCash && hand?.tournamentFormat === 'reentry' && !isReentryOver ? () => setShowReentry(true) : null}
           onEndSession={() => setShowEndSession(true)}
           showPosition={showPosition}
           onToggleGoMode={() => setShowSwitchModeConfirm('action')}
@@ -2527,292 +2578,347 @@ export default function PokerTracker() {
           />
         </div>
       ) : (
-        <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-4">
-          {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold">{formatSessionName(hand)}</h1>
-            <span className="text-xs text-slate-500 uppercase">{GAME_TYPES[hand.gameType] || 'No Limit'}{hand.doubleBoard ? ' · Double board' : ''}{hand.bombPot ? ' · Bomb pot' : ''}</span>
-            {hand.blindSchedule?.length > 0 && (
-              <span className="text-xs text-slate-400">
-                Level {scheduledLevelNumber(hand)}{hand.inBreak ? ' · Break' : ''}
-              </span>
-            )}
-            {levelTimerState(hand, now).active && (() => {
-              const st = levelTimerState(hand, now);
-              const lvlNum = scheduledLevelNumber(hand);
-              const blindsStr = formatBlinds(hand);
-              return (
-                <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg border flex items-center gap-2 ${
-                  st.expired
-                    ? 'bg-[#3a2020] border-[#c94c4c] text-rose-300'
-                    : st.method === 'minutes' && (st.remainingMs || 0) <= 60000
-                    ? 'bg-[#3a3320] border-[#8a7a3a] text-amber-300'
-                    : 'bg-[#1e2a1e] border-[#4a5a4a] text-emerald-300'
-                }`}>
-                  <span className="font-mono text-sm font-black">{formatTimer(st)}</span>
-                  <span className="text-slate-400">•</span>
-                  <span>{st.phase === 'break' || hand.inBreak ? 'Break' : `Level ${lvlNum}`}</span>
-                  <span className="text-slate-400">•</span>
-                  <span className="font-mono text-emerald-300 font-bold">{blindsStr}</span>
-                </span>
-              );
-            })()}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => goModeSupported(hand?.variant) && setShowSwitchModeConfirm('go')}
-              disabled={!goModeSupported(hand?.variant)}
-              className={`rounded-lg text-white font-bold text-sm px-3 py-2 flex items-center gap-1.5 border transition-all ${
-                goModeSupported(hand?.variant)
-                  ? 'bg-emerald-700 hover:bg-emerald-600 cursor-pointer shadow-md active:scale-95 border-emerald-500/50'
-                  : 'bg-[#2a2f37] border-slate-700/60 opacity-50 cursor-not-allowed'
-              }`}
-              title={goModeSupported(hand?.variant)
-                ? 'Switch to GO Mode (fast live action with automatic card dealing & pot tracking)'
-                : `${variantMeta(hand?.variant).label} is Action Tracking only for now.`}
-            >
-              <Zap size={16} /> GO Mode
-            </button>
-            <button
-              onClick={() => setIsCompactMode(true)}
-              className="rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95"
-              title="Switch to Compact Mode (mobile-optimized, direct action buttons & keyboard shortcuts)"
-            >
-              <Minimize2 size={16} /> Compact Mode
-            </button>
-            <button onClick={handleUndo} disabled={!history.length} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer">
-              <Undo2 size={16} /> Undo
-            </button>
-            <button onClick={() => setShowSettingsModal(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer font-semibold text-amber-300 border border-amber-500/40">
-              <Settings size={16} /> Settings
-            </button>
-            <a href="/tv" target="_blank" rel="noopener noreferrer" className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2">TV view ↗</a>
-            <button onClick={() => setShowShare(true)} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2 flex items-center gap-1 cursor-pointer">
-              <Share2 size={16} /> Share
-            </button>
-            <Link to="/history" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2">Hand history</Link>
-            {isCash && (
-              <Link to="/variant" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2">Variant & side games</Link>
-            )}
-            {isCash && (
-              <button
-                type="button"
-                onClick={() => setShowTempGameModal(true)}
-                className={`rounded-lg text-sm px-3 py-2 font-semibold flex items-center gap-1.5 cursor-pointer border transition-colors shadow ${
-                  hand?.isTemporaryGame
-                    ? 'bg-amber-950/80 border-amber-500 text-amber-200 animate-pulse'
-                    : (hand?.temporaryGames || []).length > 0
-                    ? 'bg-amber-950/40 border-amber-600/60 text-amber-300 hover:bg-amber-900/60'
-                    : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-200 border-slate-700'
-                }`}
-                title="Temporarily change game or schedule temporary games (e.g. PLO6 Bomb pot every 5 hands)"
-              >
-                <Zap size={15} className="text-amber-400" />
-                <span>Temp Game</span>
-                {(hand?.temporaryGames || []).length > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-black font-black font-mono">
-                    {(hand?.temporaryGames || []).length}
+        <div className={isFullScreen ? 'max-w-7xl mx-auto px-4 sm:px-6 pt-2 pb-3 space-y-2' : 'max-w-7xl mx-auto p-4 sm:p-6 space-y-4'}>
+          {!isFullScreen && (
+            <>
+              {/* Header */}
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <h1 className="text-xl font-semibold">{formatSessionName(hand)}</h1>
+                    <span className="text-xs text-slate-500 uppercase">{GAME_TYPES[hand.gameType] || 'No Limit'}{hand.doubleBoard ? ' · Double board' : ''}{hand.bombPot ? ' · Bomb pot' : ''}</span>
+                    {hand.blindSchedule?.length > 0 && (
+                      <span className="text-xs text-slate-400">
+                        Level {scheduledLevelNumber(hand)}{hand.inBreak ? ' · Break' : ''}
+                      </span>
+                    )}
+                    {levelTimerState(hand, now).active && (() => {
+                      const st = levelTimerState(hand, now);
+                      const lvlNum = scheduledLevelNumber(hand);
+                      const blindsStr = formatBlinds(hand);
+                      return (
+                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg border flex items-center gap-2 ${
+                          st.expired
+                            ? 'bg-[#3a2020] border-[#c94c4c] text-rose-300'
+                            : st.method === 'minutes' && (st.remainingMs || 0) <= 60000
+                            ? 'bg-[#3a3320] border-[#8a7a3a] text-amber-300'
+                            : 'bg-[#1e2a1e] border-[#4a5a4a] text-emerald-300'
+                        }`}>
+                          <span className="font-mono text-sm font-black">
+                            {formatTimer(st)}
+                            {st.phase === 'level' && formatTimerLabel(st) ? ` ${formatTimerLabel(st)}` : ''}
+                          </span>
+                          <span className="text-slate-400">•</span>
+                          <span>{st.phase === 'break' || hand.inBreak ? 'Break' : `Level ${lvlNum}`}</span>
+                          <span className="text-slate-400">•</span>
+                          <span className="font-mono text-emerald-300 font-bold">{blindsStr}</span>
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={handleUndo} disabled={!history.length} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer">
+                      <Undo2 size={16} /> Undo
+                    </button>
+                    {isCash ? (
+                      <button onClick={() => setShowRebuy(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">
+                        Rebuy / Cash out
+                      </button>
+                    ) : (
+                      timerPaused ? (
+                        <button onClick={handleResumeTimer} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2 cursor-pointer">
+                          Resume timer
+                        </button>
+                      ) : (
+                        <button onClick={handlePauseTimer} disabled={hand.levelConfig?.method !== 'minutes'} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+                          Pause timer
+                        </button>
+                      )
+                    )}
+                    <Link to="/history" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2">Hand history</Link>
+                    <button onClick={() => setShowSettingsModal(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer font-semibold text-amber-300 border border-amber-500/40">
+                      <Settings size={16} /> Settings
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAdvanced(false);
+                        setIsFullScreen(true);
+                      }}
+                      className="hidden lg:flex rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 items-center gap-1.5 cursor-pointer"
+                      title="Full screen view (hides control menu and settings)"
+                    >
+                      <Maximize2 size={15} />
+                      <span>Full screen</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced((v) => !v)}
+                      className={`rounded-lg text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer border transition-colors ${
+                        showAdvanced
+                          ? 'bg-[#363c45] border-slate-500 text-white font-semibold'
+                          : 'bg-[#2a2f37] hover:bg-[#363c45] border-transparent text-slate-200'
+                      }`}
+                    >
+                      <span>Advanced</span>
+                      {showAdvanced ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                    </button>
+                  </div>
+                </div>
+
+                {showAdvanced && (
+                  <div className="flex flex-wrap gap-2 pt-2 border-t border-[#2a2f37]">
+                    <button
+                      onClick={() => goModeSupported(hand?.variant) && setShowSwitchModeConfirm('go')}
+                      disabled={!goModeSupported(hand?.variant)}
+                      className={`rounded-lg text-white font-bold text-sm px-3 py-2 flex items-center gap-1.5 border transition-all ${
+                        goModeSupported(hand?.variant)
+                          ? 'bg-emerald-700 hover:bg-emerald-600 cursor-pointer shadow-md active:scale-95 border-emerald-500/50'
+                          : 'bg-[#2a2f37] border-slate-700/60 opacity-50 cursor-not-allowed'
+                      }`}
+                      title={goModeSupported(hand?.variant)
+                        ? 'Switch to GO Mode (fast live action with automatic card dealing & pot tracking)'
+                        : `${variantMeta(hand?.variant).label} is Action Tracking only for now.`}
+                    >
+                      <Zap size={16} /> GO Mode
+                    </button>
+                    <button
+                      onClick={() => setIsCompactMode(true)}
+                      className="rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-sm px-3 py-2 flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95"
+                      title="Switch to Compact Mode (mobile-optimized, direct action buttons & keyboard shortcuts)"
+                    >
+                      <Minimize2 size={16} /> Compact Mode
+                    </button>
+                    <button onClick={() => setShowShare(true)} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2 flex items-center gap-1 cursor-pointer">
+                      <Share2 size={16} /> Share & TV
+                    </button>
+                    {isCash && (
+                      <Link to="/variant" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2">Variant & side games</Link>
+                    )}
+                    {isCash && (
+                      <button
+                        type="button"
+                        onClick={() => setShowTempGameModal(true)}
+                        className={`rounded-lg text-sm px-3 py-2 font-semibold flex items-center gap-1.5 cursor-pointer border transition-colors shadow ${
+                          hand?.isTemporaryGame
+                            ? 'bg-amber-950/80 border-amber-500 text-amber-200 animate-pulse'
+                            : (hand?.temporaryGames || []).length > 0
+                            ? 'bg-amber-950/40 border-amber-600/60 text-amber-300 hover:bg-amber-900/60'
+                            : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-200 border-slate-700'
+                        }`}
+                        title="Temporarily change game or schedule temporary games (e.g. PLO6 Bomb pot every 5 hands)"
+                      >
+                        <Zap size={15} className="text-amber-400" />
+                        <span>Temp Game</span>
+                        {(hand?.temporaryGames || []).length > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-black font-black font-mono">
+                            {(hand?.temporaryGames || []).length}
+                          </span>
+                        )}
+                      </button>
+                    )}
+                    {isCash && (
+                      <>
+                        <button
+                          onClick={() => setShowLateEntry(true)}
+                          disabled={(hand?.players?.length || 0) >= 10}
+                          title={(hand?.players?.length || 0) >= 10 ? 'Maximum 10 players in cash game' : undefined}
+                          className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1.5"
+                        >
+                          <UserPlus size={15} className="text-emerald-400" />
+                          Add player
+                        </button>
+                        <button
+                          onClick={() => setShowBombPotModal(true)}
+                          className="rounded-lg bg-amber-900/60 hover:bg-amber-800 text-amber-200 border border-amber-700/60 font-semibold text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 shadow"
+                        >
+                          💣 Bomb pot
+                        </button>
+                      </>
+                    )}
+                    {!isCash && !isLateRegOver && (
+                      <button
+                        onClick={() => setShowLateEntry(true)}
+                        className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer"
+                      >
+                        Late reg
+                      </button>
+                    )}
+                    {!isCash && !isReentryOver && (
+                      <button
+                        onClick={() => setShowReentry(true)}
+                        disabled={!(hand.eliminatedPlayers || []).length}
+                        className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        Re-entry
+                      </button>
+                    )}
+                    {!isCash && !isRebuyOver && (
+                      <button
+                        onClick={() => setShowRebuy(true)}
+                        className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer"
+                      >
+                        {rebuyTimeExpired && hasAvailableAddOn ? 'Add-on' : 'Rebuy'}
+                      </button>
+                    )}
+                    <button onClick={() => setShowSetup(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">
+                      Structure setup
+                    </button>
+                    {/* Clock system control button */}
+                    {!isCash && (hand?.clockConfig?.clockSystem === 'time_banks' ? (
+                      <button
+                        onClick={() => setShotClockEnabled((v) => !v)}
+                        className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors ${
+                          shotClockEnabled
+                            ? 'bg-amber-800 border border-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.25)]'
+                            : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-300'
+                        }`}
+                        title="Turn on/off shot clock"
+                      >
+                        <Clock size={15} />
+                        Shot clock {shotClockEnabled ? 'ON' : 'OFF'}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleCallClock}
+                        disabled={!hand || hand.phase !== 'playing' || hand.currentPlayer < 0}
+                        className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                          calledClockActive
+                            ? 'bg-rose-800 border border-rose-500 text-white animate-pulse'
+                            : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-300'
+                        }`}
+                        title="Call clock on active player"
+                      >
+                        <Clock size={15} />
+                        {calledClockActive ? `Clock: ${actionClockSecondsLeft}s` : 'Call clock'}
+                      </button>
+                    ))}
+                    {!isCash && (
+                      <button
+                        onClick={handleNextLevelClick}
+                        className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer"
+                      >
+                        {hand?.blindSchedule?.length && (hand.blindLevel || 0) >= hand.blindSchedule.length - 1 ? 'Pre-plan next' : 'Next level'}
+                      </button>
+                    )}
+                    {!isCash && hand?.blindSchedule?.length > 0 && (
+                      <button onClick={() => setShowSetLevel(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">
+                        Set level
+                      </button>
+                    )}
+                    {!isCash && (() => {
+                      const isHandNudge = !hand?.inBreak && (hand?.levelConfig?.method || 'minutes') !== 'minutes';
+                      return (
+                        <>
+                          <button onClick={() => handleNudgeTimer(60000)} disabled={!timerCanNudge} title={isHandNudge ? 'Rewind 1 hand' : 'Rewind 1m'} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 cursor-pointer flex items-center gap-1">
+                            <Rewind size={14} /> {isHandNudge ? '1 hand' : '1m'}
+                          </button>
+                          <button onClick={() => handleNudgeTimer(-60000)} disabled={!timerCanNudge} title={isHandNudge ? 'Forward 1 hand' : 'Forward 1m'} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 cursor-pointer flex items-center gap-1">
+                            <FastForward size={14} /> {isHandNudge ? '1 hand' : '1m'}
+                          </button>
+                        </>
+                      );
+                    })()}
+                    <button onClick={handleEndHand} className="rounded-lg bg-[#c94c4c] hover:bg-[#d95959] text-sm px-3 py-2 cursor-pointer">
+                      End hand
+                    </button>
+                    <button onClick={() => setShowEndSession(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 flex items-center gap-1 cursor-pointer">
+                      <Power size={16} /> End session
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Break banner */}
+              {hand.inBreak && (() => {
+                const brk = (hand.blindSchedule || [])[hand.tLevel];
+                const hasRace = !!(brk && brk.race && Number(brk.race.retired) > 0 && Number(brk.race.replacement) > 0);
+                return (
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#6b5a2a] bg-[#3a3320] px-4 py-3">
+                    <span className="text-sm font-semibold text-amber-200">Break</span>
+                    <span className="text-sm font-mono text-amber-300 font-bold">{formatTimer(levelTimerState(hand, now))}</span>
+                    <span className="text-xs text-amber-300/70">{hand.blindsPosted === false ? 'Blinds post when play resumes.' : 'Blinds update when the next hand starts.'}</span>
+                    {hasRace && (
+                      <button
+                        onClick={() => setShowBreak(true)}
+                        className="ml-auto rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer"
+                      >
+                        Run chip race
+                      </button>
+                    )}
+                    <button
+                      onClick={handleResumeFromBreak}
+                      className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-white text-sm px-4 py-2 cursor-pointer"
+                    >
+                      Resume play →
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* Status bar */}
+              <div className="flex flex-wrap gap-4 text-sm text-slate-300">
+                <span>{hand.bombPot ? formatBlinds(hand) : `Blinds: ${formatBlinds(hand)}`}</span>
+                <span>Street: {STREET_LABEL[hand.street]}</span>
+                <span className={saveStatus.ok === false ? 'text-rose-300' : 'text-emerald-300/80'}>{saveStatus.saving ? 'Saving…' : saveStatus.ok === false ? 'Save failed' : saveStatus.at ? 'Auto-saved' : 'Auto-save on'}</span>
+                <span>{nonFolded.length} players in</span>
+                {activeSideGames.length > 0 && (
+                  <span className="flex flex-wrap gap-1.5">
+                    {activeSideGames.map((s) => (
+                      <span key={s} className="rounded bg-[#2a2f37] border border-[#3a4a3a] px-2 py-0.5 text-[11px] text-emerald-300/90">{s}</span>
+                    ))}
                   </span>
                 )}
-              </button>
-            )}
-            {isCash && (
-              <>
-                <button onClick={() => setShowRebuy(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">Rebuy / Cash out</button>
-                <button onClick={() => setShowLateEntry(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5">
-                  <UserPlus size={15} className="text-emerald-400" />
-                  Add player
-                </button>
-                <button
-                  onClick={() => setShowBombPotModal(true)}
-                  className="rounded-lg bg-amber-900/60 hover:bg-amber-800 text-amber-200 border border-amber-700/60 font-semibold text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 shadow"
-                >
-                  💣 Bomb pot
-                </button>
-              </>
-            )}
-            {!isCash && hand?.lateRegEnabled && (
-              <button
-                onClick={() => setShowLateEntry(true)}
-                disabled={(hand.blindLevel || 0) + 1 > (hand.lateRegLevel || 0)}
-                className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-              >
-                Late reg
-              </button>
-            )}
-            {!isCash && hand?.tournamentFormat === 'reentry' && (
-              <button
-                onClick={() => setShowReentry(true)}
-                disabled={!(hand.eliminatedPlayers || []).length}
-                className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-              >
-                Re-entry
-              </button>
-            )}
-            {!isCash && hand?.tournamentFormat === 'rebuy' && (
-              <button
-                onClick={() => setShowRebuy(true)}
-                className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer"
-              >
-                Rebuy
-              </button>
-            )}
-            <button onClick={() => setShowSetup(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">
-              Structure setup
-            </button>
-            {/* Clock system control button */}
-            {!isCash && (hand?.clockConfig?.clockSystem === 'time_banks' ? (
-              <button
-                onClick={() => setShotClockEnabled((v) => !v)}
-                className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors ${
-                  shotClockEnabled
-                    ? 'bg-amber-800 border border-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.25)]'
-                    : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-300'
-                }`}
-                title="Turn on/off shot clock"
-              >
-                <Clock size={15} />
-                Shot clock {shotClockEnabled ? 'ON' : 'OFF'}
-              </button>
-            ) : (
-              <button
-                onClick={handleCallClock}
-                disabled={!hand || hand.phase !== 'playing' || hand.currentPlayer < 0}
-                className={`rounded-lg text-sm px-3 py-2 cursor-pointer flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                  calledClockActive
-                    ? 'bg-rose-800 border border-rose-500 text-white animate-pulse'
-                    : 'bg-[#2a2f37] hover:bg-[#363c45] text-slate-300'
-                }`}
-                title="Call clock on active player"
-              >
-                <Clock size={15} />
-                {calledClockActive ? `Clock: ${actionClockSecondsLeft}s` : 'Call clock'}
-              </button>
-            ))}
-            {!isCash && (
-              <button
-                onClick={handleNextLevelClick}
-                className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer"
-              >
-                {hand?.blindSchedule?.length && (hand.blindLevel || 0) >= hand.blindSchedule.length - 1 ? 'Pre-plan next' : 'Next level'}
-              </button>
-            )}
-            {!isCash && hand?.blindSchedule?.length > 0 && (
-              <button onClick={() => setShowSetLevel(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer">
-                Set level
-              </button>
-            )}
-            {!isCash && (
-              <>
-                {timerPaused ? (
-                  <button onClick={handleResumeTimer} className="rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-sm px-3 py-2 cursor-pointer">
-                    Resume timer
-                  </button>
-                ) : (
-                  <button onClick={handlePauseTimer} disabled={hand.levelConfig?.method !== 'minutes'} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
-                    Pause timer
-                  </button>
-                )}
-                <button onClick={() => handleNudgeTimer(60000)} disabled={!timerCanNudge} title="Rewind 1m" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 cursor-pointer flex items-center gap-1">
-                  <Rewind size={14} /> 1m
-                </button>
-                <button onClick={() => handleNudgeTimer(-60000)} disabled={!timerCanNudge} title="Forward 1m" className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 disabled:opacity-40 cursor-pointer flex items-center gap-1">
-                  <FastForward size={14} /> 1m
-                </button>
-              </>
-            )}
-            <button onClick={handleEndHand} className="rounded-lg bg-[#c94c4c] hover:bg-[#d95959] text-sm px-3 py-2 cursor-pointer">
-              End hand
-            </button>
-            <button onClick={() => setShowEndSession(true)} className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 flex items-center gap-1 cursor-pointer">
-              <Power size={16} /> End session
-            </button>
-          </div>
-        </div>
-
-        {/* Break banner */}
-        {hand.inBreak && (() => {
-          const brk = (hand.blindSchedule || [])[hand.tLevel];
-          const hasRace = !!(brk && brk.race && Number(brk.race.retired) > 0 && Number(brk.race.replacement) > 0);
-          return (
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#6b5a2a] bg-[#3a3320] px-4 py-3">
-              <span className="text-sm font-semibold text-amber-200">Break</span>
-              <span className="text-sm font-mono text-amber-300 font-bold">{formatTimer(levelTimerState(hand, now))}</span>
-              <span className="text-xs text-amber-300/70">{hand.blindsPosted === false ? 'Blinds post when play resumes.' : 'Blinds update when the next hand starts.'}</span>
-              {hasRace && (
-                <button
-                  onClick={() => setShowBreak(true)}
-                  className="ml-auto rounded-lg bg-[#4a5a4a] hover:bg-[#5a6a5a] text-white text-sm px-4 py-2 cursor-pointer"
-                >
-                  Run chip race
-                </button>
-              )}
-              <button
-                onClick={handleResumeFromBreak}
-                className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-white text-sm px-4 py-2 cursor-pointer"
-              >
-                Resume play →
-              </button>
-            </div>
-          );
-        })()}
-
-        {/* Status bar */}
-        <div className="flex flex-wrap gap-4 text-sm text-slate-300">
-          <span>{hand.bombPot ? formatBlinds(hand) : `Blinds: ${formatBlinds(hand)}`}</span>
-          <span>Street: {STREET_LABEL[hand.street]}</span>
-          <span className={saveStatus.ok === false ? 'text-rose-300' : 'text-emerald-300/80'}>{saveStatus.saving ? 'Saving…' : saveStatus.ok === false ? 'Save failed' : saveStatus.at ? 'Auto-saved' : 'Auto-save on'}</span>
-          <span>{nonFolded.length} players in</span>
-          {activeSideGames.length > 0 && (
-            <span className="flex flex-wrap gap-1.5">
-              {activeSideGames.map((s) => (
-                <span key={s} className="rounded bg-[#2a2f37] border border-[#3a4a3a] px-2 py-0.5 text-[11px] text-emerald-300/90">{s}</span>
-              ))}
-            </span>
+              </div>
+            </>
           )}
-        </div>
 
-        {/* Stacks Bar Header with Chip Count / Big Blinds selector */}
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs text-slate-500 uppercase tracking-wider">Stacks</span>
-          <div className="flex items-center gap-1 bg-[#1a1d22] border border-[#2a2f37] rounded-lg p-0.5">
-            <button
-              type="button"
-              onClick={() => setDisplayUnit('chips')}
-              className={`px-2.5 py-0.5 rounded text-xs font-semibold transition-colors cursor-pointer ${
-                displayUnit === 'chips'
-                  ? 'bg-[#363c45] text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Chips
-            </button>
-            <button
-              type="button"
-              onClick={() => setDisplayUnit('bb')}
-              className={`px-2.5 py-0.5 rounded text-xs font-semibold transition-colors cursor-pointer ${
-                displayUnit === 'bb'
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Big Blinds
-            </button>
-          </div>
-        </div>
-        <StacksBar
-          hand={{ ...hand, displayUnit }}
-          players={hand.players}
-          positions={positions(hand)}
-          currency={hand.currency}
-          hideAmounts={hideAmounts}
-          showPosition={showPosition}
-          tableSize={hand.tableSize}
-          freezeStacks={true}
-          frozenStacks={frozenStacks}
-          displayUnit={displayUnit}
-        />
+          {/* Stacks Bar Header with Chip Count / Big Blinds selector */}
+          {showStacksRow && !hideAmounts && (
+            <>
+              <div className={`flex items-center justify-between ${isFullScreen ? 'mb-0.5' : 'mb-1'}`}>
+                <span className="text-xs text-slate-500 uppercase tracking-wider">Stacks</span>
+                {!isFullScreen && (
+                  <div className="flex items-center gap-1 bg-[#1a1d22] border border-[#2a2f37] rounded-lg p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setDisplayUnit('chips')}
+                      className={`px-2.5 py-0.5 rounded text-xs font-semibold transition-colors cursor-pointer ${
+                        displayUnit === 'chips'
+                          ? 'bg-[#363c45] text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Chips
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDisplayUnit('bb')}
+                      className={`px-2.5 py-0.5 rounded text-xs font-semibold transition-colors cursor-pointer ${
+                        displayUnit === 'bb'
+                          ? 'bg-amber-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Big Blinds
+                    </button>
+                  </div>
+                )}
+              </div>
+              <StacksBar
+                hand={{ ...hand, displayUnit }}
+                players={hand.players}
+                positions={positions(hand)}
+                currency={hand.currency}
+                hideAmounts={hideAmounts}
+                showPosition={showPosition}
+                tableSize={hand.tableSize}
+                freezeStacks={true}
+                frozenStacks={frozenStacks}
+                displayUnit={displayUnit}
+              />
+            </>
+          )}
 
         {/* Desktop: Table/List View on left, Action Entry right beside it so no scrolling is needed */}
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px] gap-4 items-start">
@@ -2841,12 +2947,54 @@ export default function PokerTracker() {
             />
           </div>
 
-          <div className="space-y-3">
+          <div className={isFullScreen ? 'space-y-2 lg:max-h-[480px] lg:overflow-y-auto pr-0.5' : 'space-y-3'}>
+            {isFullScreen && (() => {
+              const st = levelTimerState(hand, now);
+              const lvlNum = scheduledLevelNumber(hand);
+              return (
+                <div className="flex items-start justify-between gap-2 pb-1 pt-0.5">
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-300">
+                      {hand.bombPot ? formatBlinds(hand) : `Blinds: ${formatBlinds(hand)}`}
+                    </div>
+                    {st.active && (
+                      <div className={`inline-flex items-center gap-2 text-xs font-semibold px-2.5 py-0.5 rounded-lg border w-fit ${
+                        st.expired
+                          ? 'bg-[#3a2020] border-[#c94c4c] text-rose-300'
+                          : st.method === 'minutes' && (st.remainingMs || 0) <= 60000
+                          ? 'bg-[#3a3320] border-[#8a7a3a] text-amber-300'
+                          : 'bg-[#1e2a1e] border-[#4a5a4a] text-emerald-300'
+                      }`}>
+                        <span className="font-mono text-sm font-black">
+                          {formatTimer(st)}
+                          {st.phase === 'level' && formatTimerLabel(st) ? ` ${formatTimerLabel(st)}` : ''}
+                        </span>
+                        <span className="text-slate-400">•</span>
+                        <span>
+                          {st.phase === 'color_up' ? 'Color Up' : (st.phase === 'break' || hand.inBreak) ? 'Break' : `Level ${lvlNum}`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsFullScreen(false)}
+                    className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 flex items-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Minimize2 size={14} />
+                    <span>Exit full screen</span>
+                  </button>
+                </div>
+              );
+            })()}
             {hand.phase !== 'awarded' ? (
-              <>
+              <div className={isFullScreen ? 'space-y-2' : 'space-y-3'}>
                 {/* 1. Primary Action Buttons right next to Table / List View */}
-                <ActionRecorder hand={hand} onAction={handleAction} onUndo={handleUndo} canUndo={history.length > 0} onSelectRedRiverColor={handleSelectRedRiverColor} />
+                <ActionRecorder hand={hand} onAction={handleAction} onUndo={handleUndo} canUndo={history.length > 0} onSelectRedRiverColor={handleSelectRedRiverColor} compact={isFullScreen} />
                 {actionError && <div className="text-sm text-rose-400">{actionError}</div>}
+
+                {/* Out of Turn directly below betting buttons */}
+                <OutOfTurnRecorder hand={hand} onFoldOutOfTurn={handleFoldOutOfTurn} onRecordOutOfTurn={handleRecordOutOfTurn} />
 
                 {/* 2. Active Clock Banner */}
                 {actionClockSecondsLeft != null && hand?.currentPlayer >= 0 && (
@@ -2938,7 +3086,7 @@ export default function PokerTracker() {
                     onConfirm={handleConfirmExpose}
                   />
                 )}
-              </>
+              </div>
             ) : (
               <div className="rounded-xl border border-[#4a5a4a] bg-[#1e2227] p-4">
                 <div className="text-sm font-semibold text-emerald-300 mb-2">Pots awarded</div>
@@ -2996,7 +3144,7 @@ export default function PokerTracker() {
           </div>
         </div>
 
-        {hand.phase !== 'awarded' && (
+        {hand.phase !== 'awarded' && (showHoleEntry || hand?.clockConfig?.clockSystem === 'time_banks') && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="space-y-3">
               {/* Hole Cards (All-In / Showdown / Showtime) */}
@@ -3085,10 +3233,7 @@ export default function PokerTracker() {
                 </div>
               )}
 
-              {/* Out of Turn Action */}
-              <OutOfTurnRecorder hand={hand} onFoldOutOfTurn={handleFoldOutOfTurn} onRecordOutOfTurn={handleRecordOutOfTurn} />
             </div>
-            <ActionHistory history={hand.actionHistory} hideAmounts={hideAmounts} />
           </div>
         )}
       </div>
@@ -3139,7 +3284,7 @@ export default function PokerTracker() {
         <RebuyDialog
           players={rebuyCandidates}
           hand={hand}
-          currentLevel={hand.blindLevel || 0}
+          currentLevel={curLvlNum - 1}
           rebuyRules={hand.rebuyRules}
           rebuyChips={hand.rebuyChips || hand.startingStack || (Number(hand.bigBlind) || 1) * 100}
           rebuyPrice={hand.rebuyPrice}
@@ -3193,7 +3338,7 @@ export default function PokerTracker() {
           players={hand.players}
           startingStack={hand.startingStack}
           currency={hand.currency}
-          currentLevel={hand.blindLevel || 0}
+          currentLevel={curLvlNum - 1}
           lateRegLevel={hand.lateRegLevel}
           isCash={isCash}
           seatingMode={isCash ? 'players' : 'seats'}
@@ -3244,7 +3389,8 @@ export default function PokerTracker() {
                   const isBombVar = isBombPotVariant(prev.variant);
                   const nextBB = isBombVar ? 0 : (parseAmount(nextLevel.bigBlind) ?? Number(nextLevel.bigBlind) ?? 0);
                   const nextSB = isBombVar ? 0 : (parseAmount(nextLevel.smallBlind) ?? Number(nextLevel.smallBlind) ?? 0);
-                  const ante = isBombVar ? (parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, nextBB, nextLevel.ante);
+                  const targetLvlNum = appliedLevelNumber({ ...prev, blindLevel: nextIdx });
+                  const ante = isBombVar ? (parseAmount(nextLevel.ante) ?? Number(nextLevel.ante) ?? prev.anteAmount) : calcAnteForType(prev.anteType, nextBB, nextLevel.ante, prev.bbaEarlyHalfAnte, prev.bbaEarlyHalfAnteLevel, targetLvlNum);
                   base.smallBlind = nextSB;
                   base.bigBlind = nextBB;
                   base.anteAmount = ante;
@@ -3293,6 +3439,7 @@ export default function PokerTracker() {
         isOpen={showSettingsModal}
         onClose={() => setShowSettingsModal(false)}
         isGoMode={isGoMode}
+        isCompactMode={isCompactMode}
         goPlayerName={goSettingsPlayer?.name || ''}
         goPlayerPrefs={goSettingsPlayer ? (goPlayerPrefs[goSettingsPlayer.id] || {}) : {}}
         takenPins={(hand?.players || [])
@@ -3303,6 +3450,7 @@ export default function PokerTracker() {
         settings={{
           sessionName: hand?.sessionName || config?.sessionName || '',
           hideAmounts,
+          showStacksRow,
           showPosition,
           displayUnit,
           suitColors,
@@ -3317,6 +3465,7 @@ export default function PokerTracker() {
             setHand((prev) => (prev ? { ...prev, sessionName: val } : prev));
           }
           if (newVals.hideAmounts !== undefined) updateHideAmounts(newVals.hideAmounts);
+          if (newVals.showStacksRow !== undefined) setShowStacksRow(Boolean(newVals.showStacksRow));
           if (newVals.showPosition !== undefined) setShowPosition(newVals.showPosition);
           if (newVals.displayUnit !== undefined) setDisplayUnit(newVals.displayUnit);
           if (newVals.suitColors !== undefined) setSuitColors(newVals.suitColors);

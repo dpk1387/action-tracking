@@ -29,7 +29,7 @@ import {
   stepBetAmount,
   getLowestDenomination,
 } from '@/lib/goMode';
-import { levelTimerState, formatTimer } from '@/lib/levelTimer';
+import { levelTimerState, formatTimer, formatTimerLabel } from '@/lib/levelTimer';
 import HandHistoryModal from './HandHistoryModal';
 
 /**
@@ -659,9 +659,11 @@ export default function GoModeView({
           submitGoAction('call');
         }
       } else if (key === 'r') {
-        e.preventDefault();
-        raiseInputRef.current?.focus();
-        raiseInputRef.current?.select();
+        if (canMinRaise) {
+          e.preventDefault();
+          raiseInputRef.current?.focus();
+          raiseInputRef.current?.select();
+        }
       } else if (key === 'm') {
         if (canMinRaise) {
           e.preventDefault();
@@ -714,45 +716,59 @@ export default function GoModeView({
             {hand?.blindSchedule?.length > 0 && (
               <div className="flex items-center gap-1 bg-slate-900/80 border border-slate-700/70 rounded-lg px-2 py-0.5 text-amber-300 font-mono font-bold">
                 <Clock size={12} className="text-amber-400" />
-                <span>{formatTimer(levelTimerState(hand, now))}</span>
-                {hand?.mode === 'tournament' && (
-                  <div className="flex items-center gap-0.5 ml-1 pl-1 border-l border-slate-700">
-                    <button
-                      type="button"
-                      onClick={() => onNudgeTimer?.(60000)}
-                      disabled={!timerCanNudge}
-                      title="Rewind 1 minute"
-                      className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-[10px] text-slate-200 font-sans font-bold flex items-center gap-0.5 cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      <Rewind size={10} />
-                      <span>1m</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => (timerPaused ? onResumeTimer?.() : onPauseTimer?.())}
-                      disabled={!timerCanNudge && !timerPaused}
-                      title={timerPaused ? 'Resume timer' : 'Pause timer'}
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-bold flex items-center gap-0.5 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
-                        timerPaused
-                          ? 'bg-emerald-700 hover:bg-emerald-600 text-white'
-                          : 'bg-slate-800 hover:bg-slate-700 text-amber-300'
-                      }`}
-                    >
-                      {timerPaused ? <Play size={10} /> : <Pause size={10} />}
-                      <span className="hidden sm:inline">{timerPaused ? 'Resume' : 'Pause'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onNudgeTimer?.(-60000)}
-                      disabled={!timerCanNudge}
-                      title="Forward 1 minute"
-                      className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-[10px] text-slate-200 font-sans font-bold flex items-center gap-0.5 cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      <span>1m</span>
-                      <FastForward size={10} />
-                    </button>
-                  </div>
-                )}
+                {(() => {
+                  const tst = levelTimerState(hand, now);
+                  const lbl = formatTimerLabel(tst);
+                  return (
+                    <span>
+                      {formatTimer(tst)}
+                      {tst.phase === 'level' && lbl ? ` ${lbl}` : ''}
+                    </span>
+                  );
+                })()}
+                {hand?.mode === 'tournament' && (() => {
+                  const tst = levelTimerState(hand, now);
+                  const isHandNudge = tst.active && tst.phase === 'level' && tst.method !== 'minutes';
+                  const isMinutesMethod = (hand?.levelConfig?.method || 'minutes') === 'minutes';
+                  return (
+                    <div className="flex items-center gap-0.5 ml-1 pl-1 border-l border-slate-700">
+                      <button
+                        type="button"
+                        onClick={() => onNudgeTimer?.(60000)}
+                        disabled={!timerCanNudge}
+                        title={isHandNudge ? 'Rewind 1 hand' : 'Rewind 1 minute'}
+                        className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-[10px] text-slate-200 font-sans font-bold flex items-center gap-0.5 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <Rewind size={10} />
+                        <span>{isHandNudge ? '1 hand' : '1m'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => (timerPaused ? onResumeTimer?.() : onPauseTimer?.())}
+                        disabled={!isMinutesMethod && !timerPaused}
+                        title={timerPaused ? 'Resume timer' : 'Pause timer'}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-bold flex items-center gap-0.5 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
+                          timerPaused
+                            ? 'bg-emerald-700 hover:bg-emerald-600 text-white'
+                            : 'bg-slate-800 hover:bg-slate-700 text-amber-300'
+                        }`}
+                      >
+                        {timerPaused ? <Play size={10} /> : <Pause size={10} />}
+                        <span className="hidden sm:inline">{timerPaused ? 'Resume' : 'Pause'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onNudgeTimer?.(-60000)}
+                        disabled={!timerCanNudge}
+                        title={isHandNudge ? 'Forward 1 hand' : 'Forward 1 minute'}
+                        className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-[10px] text-slate-200 font-sans font-bold flex items-center gap-0.5 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <span>{isHandNudge ? '1 hand' : '1m'}</span>
+                        <FastForward size={10} />
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
             )}
             {/* Mode Switch Button */}
@@ -1425,7 +1441,7 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={() => submitGoAction('check')}
-                className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-sm cursor-pointer transition-colors shadow-lg"
+                className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-normal text-sm cursor-pointer transition-colors shadow-lg"
                 title="Shortcut: C"
               >
                 Check <span className="kbd-shortcut-hint hidden md:inline text-[10px] text-emerald-200 font-mono font-normal">(C)</span>
@@ -1457,7 +1473,7 @@ export default function GoModeView({
           </div>
 
           {/* Bet / Raise Controls: Shorthand Input + Stepper Buttons */}
-          {goCanRaise && (
+          {canMinRaise && (
             <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
               {/* Stepper Down (- step) */}
               <button
