@@ -1,0 +1,115 @@
+---
+title: "Version History"
+---
+
+### 1.8.0 — 2026-11-17 GO Mode and Degen Variants
+
+- **Added a new GO Mode for pass-and-play poker**
+  - Supports NLH and PLO on a single device.
+  - Players pass the phone during their turns and privately reveal their cards.
+  - Includes opponent-stack rounding, bet shortcuts, fold/check/call controls, and pot tracking.
+- **Added 8 degenerate poker variants**
+  - **Second Best:** the second-best hand wins.
+  - **3-2-1:** a three-card flop, two-card turn, and one-card river.
+  - **Ocean:** adds an extra street after the river.
+  - **Showtime:** folded cards become visible.
+  - **Mandatory 3-Bet:** players cannot limp or call before a 3-bet occurs.
+  - **Red River:** a red river card triggers another river card.
+  - **Win the Button:** each hand winner receives the button.
+  - **Deuces Wild:** all deuces act as wild cards.
+- **Improved card entry**
+  - Added visual rank-and-suit keypads instead of requiring typed card notation.
+  - Prevented the same card from being selected twice.
+  - Improved support for hole cards and boards containing more than five cards.
+- **Improved all-in and showdown handling**
+  - Added clearer win percentages, chop outcomes, dirty outs, and winning-card highlights.
+  - Added a separate all-in view showing players, hole cards, pots, boards, and payouts.
+  - Improved automatic winner determination and pot awards.
+- **Added Firebase account support**
+  - Replaced the temporary login system with Firebase authentication.
+  - Supports Google sign-in, email/password login, account creation, password resets, and sign-out.
+  - Uses Firebase storage for completed sessions and hand histories.
+- **Added completed-session and hand-history tracking**
+  - Sessions can now be marked as completed and reviewed later.
+  - Hand histories show actions, hole cards, board cards, winnings, and net results by street.
+  - Added CSV export and Google Sheets export.
+- **Expanded tournament setup**
+  - Added blind-schedule generation based on starting stack and desired duration.
+  - Added break timing, Turbo/Balanced structures, and color-up breaks.
+  - Added payout generation based on ITM places or a percentage of the field.
+  - Added payout steepness controls and bracketed payout ranges.
+  - Added saved tournament presets that can be stored, loaded, imported, and exported.
+- **Added more display settings**
+  - Chips or big blinds can be used for stack and bet displays.
+  - Cards can use traditional red/black suits or a four-color system.
+  - Player positions and betting amounts can be hidden or shown.
+  - The interface can display every action or only the latest action.
+- **Improved the main session experience**
+  - Added separate tabs for in-progress sessions, completed sessions, and saved hand histories.
+  - Added session names and clearer sign-out controls.
+  - Added a new mode-selection screen for Action Tracker, GO Mode, Tournament Director, and Degen Variants.
+
+### 1.7.0 — 2026-11-05 Tracker features and tournament improvements
+
+- Added **Compact Mode**, with a mobile-friendly hand view, card-entry controls, and keyboard shortcuts for poker actions and undo.
+- Added **temporary game scheduling** for cash games, including recurring or hand-specific variants, bomb pots, overlap checks, and a way to revert to the base game.
+- Added a **Big Blinds display option** for stacks and betting amounts.
+- Added **Google Sheets hand-history export**, including formatted player, card, action, and winner information.
+- Added support for **multiple active tournaments**, with controls to switch between, pause, resume, create, and delete tournaments.
+- Improved tournament setup and management: roster entry can be deferred until the money, rebuy rules are configurable, payout displays reflect chops, and bust recording supports searching and selecting players.
+- Added **color-up breaks** to blind schedules, with chip-race handling.
+- Refined all-in runouts and views for multiple boards, including board-by-board dealing and more detailed winner/equity displays.
+- Updated typography and number formatting
+
+### 1.6.0 — 2026-10-25 Director mode support and new ante structures
+
+- Added support for saving and resuming Tournament Director sessions.
+- Improved director-state filtering so saved tournament data is preserved and restored correctly.
+- Improved director mystery-bounty envelope generation and payout setup behavior.
+- Updated live display labels and tournament UI to reflect the new blind formats.
+- Improved session resume flow for director-mode tournaments and related saved-session handling.
+- Updated preflop minimum-raise calculations to account for live blind amounts.
+- Added **Run It 2x** and **Run It 3x** for eligible cash-game all-ins, with board-by-board dealing.
+- Redesigned the all-in display with more visible player actions, hole cards, outs, equity, and board cards.
+- Updated the TV view with a broadcast-style player layout and display options.
+- Improved spectator view with action history, clearer player action indicators, and visible stack and pot amounts.
+- Refined tournament setup defaults and roster handling, and updated the re-buy interface with eligibility rules.
+
+### 1.5.0-beta — 2026-10-23 Director Mode and blind structure improvements
+
+- Added director-mode support in the base client.
+- Enabled session filtering for director data.
+- Added new blind structures for button ante and small blind half-ante.
+- Extended board-card handling to support triple-board game states.
+
+### 1.4.0-beta — 2026-10-20 Tournament management and variant support
+
+- Added tournament management tools for directors.
+- Added game rule configuration and variant setup.
+- Added mystery-bounty prize tracking.
+- Improved action recording and session cleanup for longer sessions.
+
+### 1.3.0-beta — 2026-10-12 Poker logic and betting refinement
+
+- Refined betting-state checks in action recording and community card input.
+- Improved chip racing behavior with more precise calculations.
+- Updated labels and styling for a clearer game table experience.
+- Improved gameplay stability across the poker tracker.
+
+### 1.2.0-beta — 2026-10-12 Fixes for all-in animation and game-state issues
+
+- Fixed all-in card animation behavior.
+- Resolved multiple game-state issues affecting display and gameplay.
+- Improved the behavior of all-in situations for a smoother experience.
+
+### 1.1.0-beta — 2026-10-12 UI and default-state refinements
+
+- Updated styling and layout for improved readability.
+- Changed the default stack view to Frozen to better align with bet-state behavior.
+- Continued refinements to the tracker UI and interaction flow.
+
+### 1.0.0 — 2026-10-12 Initial stable release
+
+- Created the initial application structure and core files.
+- Established the base poker tracking interface and game logic.
+- Set up the project as a working browser-based poker action tracker.
