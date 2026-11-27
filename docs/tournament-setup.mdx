@@ -1,0 +1,136 @@
+---
+title: "Tournament Setup"
+---
+
+Use this page to configure a tournament before starting play. Set the game format, seating, stacks, blind schedule, and tournament rules, then start tracking the event.
+
+## Variants
+
+Choose the game variant:
+
+- NLH
+- PLO4, PLO5, PLO6, PLO8
+- Pineapple (Pineapple, Crazy Pineapple, Lazy Pineapple are available)
+- Short Deck (6+)
+- Super Hold 'Em
+
+## Seating
+
+The app supports up to 10 seats. Set the number of seats to match the number of players at the table, including players who may join late.
+
+To assign seats:
+
+- Do a seat draw for the tournament table.
+- For any seat that is not occupied, press Occupied to switch it to Empty.
+- For occupied seats, enter the player’s name and starting stack.
+
+## Stacks
+
+Set each player’s starting stack below their name.
+
+Set all stacks:
+
+- Use this option to give every player the same starting stack.
+- This is useful when all players begin with the same buy-in.
+
+Enter stacks in big blinds:
+
+- Toggle this on if you want to enter stack sizes in big blind units instead of raw chip value.
+
+Default stacks:
+
+- If no stack is entered for a player, the app automatically assigns 200 times the smallest chip denomination.
+
+## Ante
+
+Antes are mandatory contributions added to the pot before the hand begins. Blinds are still required even when an ante is enabled.
+
+Choose one of the following:
+
+1. No ante
+2. Traditional ante
+   - Every player contributes an ante.
+   - This is usually around 10–20% of the big blind.
+3. Big Blind Ante (BBA) - default for tournaments
+   - The big blind contributes the ante for the whole table.
+   - This is set to 1 big blind.
+   - Two modifiers are available for the Big Blind to pay a 0.5 BB ante:
+     - Short-hand reduction: If the table has N players or less (default 5)
+     - Level reduction: Big Blind pays a half-ante for the first N levels (default 2)
+4. Button Ante (BA)
+   - The button contributes the ante for the whole table.
+   - This is set to 1 big blind.
+
+## Action Clock
+
+Choose how the tournament handles timing:
+
+1. Call the clock
+   - Default for cash games and tournaments.
+   - If the timer expires, the acting player’s hand is automatically folded if folding is allowed.
+   - If checking is possible, the action may be automatically checked instead.
+   - The default timer is 60 seconds.
+2. Time banks
+   - Give each player a set number of time banks.
+   - By default, each time bank adds 30 seconds.
+   - You can schedule additional time banks with the Add Chip Rule option.
+   - If time banks are enabled, you must also configure the base thinking time.
+   - The default is:
+     - 20 seconds preflop
+     - 40 seconds postflop
+
+## Late Registration
+
+Allow players to join the tournament late.
+
+Set the last level for late registration:
+
+- By default, late registration is allowed until Level 4.
+- After that point, no additional late entries are allowed.
+
+## Tournament Format
+
+Choose from the following tournament formats:
+
+1. Freezeout
+   - If you are eliminated, you are out.
+   - This is the default format.
+2. Re-entry
+   - Players who are eliminated can re-enter the tournament.
+   - By default, the maximum number of re-entries is 1.
+3. Rebuy
+   - Players who have not been eliminated may rebuy chips.
+   - By default, they receive a stack equal to their original starting stack at the cost of the buy-in.
+
+   Allow add-on:
+   - This usually gives a better value for chips.
+   - By default, the add-on costs 1 buy-in for 1.5x the original starting stack.
+   - Any player may purchase an add-on at any time.
+4. Bounty
+   - Each player has a bounty on their head.
+   - Bust a player to collect their bounty.
+5. Mystery Bounty
+   - Starting at the specified time, busting a player opens an envelope and awards the amount inside.
+
+## Chip Denominations
+
+Select all chip denominations used in the tournament.
+
+By default, the selected denominations are 25, 100, 500, 1,000 and 5,000.
+
+## Blind Schedule
+
+Use the Add Level, Add Break, Add Color Up, Remove, and move controls to build the tournament schedule.
+
+Default schedules:
+
+- The default schedule is preloaded for you. Blinds, breaks, and color-ups are pre-planned.
+- By default, levels last 15 minutes and breaks last 10 minutes.
+
+Level timing:
+
+- By default, levels last 15 minutes.
+- You can also time a level by:
+  - hands (default 15)
+  - orbits (default 2)
+- If a level has no specified length, it falls back to the default timing.

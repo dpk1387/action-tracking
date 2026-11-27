@@ -1,0 +1,92 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Poker Action Tracker",
+  "colors": {
+    "primary": "#16A34A",
+    "light": "#07C983",
+    "dark": "#15803D"
+  },
+  "navigation": {
+    "pages": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Action Tracking",
+        "pages": [
+          "cash-game-setup",
+          "tournament-setup",
+          "in-the-game",
+          "go-mode",
+          "degen-variants"
+        ]
+      },
+      {
+        "group": "Tournament Director",
+        "pages": [
+          "tournament-setup-2",
+          "tournament-controls"
+        ]
+      },
+      "version-history"
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Documentation",
+          "href": "https://mintlify.com/docs",
+          "icon": "book-open-cover"
+        },
+        {
+          "anchor": "Blog",
+          "href": "https://mintlify.com/blog",
+          "icon": "newspaper"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/images/aceofspades.jpg",
+    "dark": "/images/aceofspades.jpg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "button",
+      "label": "Poker Action Tracker",
+      "href": "https://livepoker.ai.studio"
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/dpk1387/action-tracking"
+    }
+  },
+  "metadata": {
+    "timestamp": true
+  },
+  "styling": {
+    "codeblocks": "system"
+  },
+  "icons": {
+    "library": "fontawesome"
+  },
+  "appearance": {
+    "default": "light"
+  }
+}
