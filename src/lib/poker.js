@@ -266,6 +266,33 @@ export function formatKWithDec(n, sym = '', sign = '') {
   return `${sign}${sym}${kStr}K`;
 }
 
+/**
+ * Compact stack shorthand for player tags: full number under 1K, one-decimal K
+ * up to 100K, whole K up to 1M, one-decimal M up to 10M, then whole M.
+ */
+export function approxChips(val) {
+  const abs = Math.abs(Number(val) || 0);
+  if (abs < 1000) return abs.toLocaleString('en-US');
+  if (abs < 100000) {
+    const k = Math.round((abs / 1000) * 10) / 10;
+    return `${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}K`;
+  }
+  if (abs < 1000000) {
+    const k = Math.round(abs / 1000);
+    return k >= 1000 ? '1M' : `${k}K`;
+  }
+  if (abs < 10000000) {
+    const m = Math.round((abs / 1000000) * 10) / 10;
+    return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+  }
+  if (abs < 1000000000) {
+    const m = Math.round(abs / 1000000);
+    return m >= 1000 ? '1B' : `${m}M`;
+  }
+  const b = Math.round((abs / 1000000000) * 10) / 10;
+  return `${b % 1 === 0 ? b.toFixed(0) : b.toFixed(1)}B`;
+}
+
 export function formatKM(val) {
   if (val == null || val === '') return '';
   const n = typeof val === 'number' ? val : (parseAmount(val) ?? Number(val));
@@ -352,7 +379,7 @@ export function formatPlayerTagAmount(val, currency = '', hand = null, isSpectat
     return `${sign}${sym}${numStr}`;
   }
 
-  // Below 1K: full number
+  // Below 1K (or small-chip live games): full number
   const smallestChip = getSmallestChipInPlay(hand);
   if (absN < 1000 || smallestChip < 100) {
     const hasDec = !Number.isInteger(absN);
@@ -363,37 +390,7 @@ export function formatPlayerTagAmount(val, currency = '', hand = null, isSpectat
     return `${sign}${sym}${numStr}`;
   }
 
-  // 1K-100K: K, 1 decimal without terminating .0
-  if (absN < 100000) {
-    const k = absN / 1000;
-    const rounded = Math.round(k * 10) / 10;
-    const kStr = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-    return `${sign}${sym}${kStr}K`;
-  }
-
-  // 100K-1M: K, no decimal
-  if (absN < 1000000) {
-    return `${sign}${sym}${Math.round(absN / 1000)}K`;
-  }
-
-  // 1M-100M: M, 1 decimal without terminating .0
-  if (absN < 100000000) {
-    const m = absN / 1000000;
-    const rounded = Math.round(m * 10) / 10;
-    const mStr = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-    return `${sign}${sym}${mStr}M`;
-  }
-
-  // 100M-1B: M, no decimal
-  if (absN < 1000000000) {
-    return `${sign}${sym}${Math.round(absN / 1000000)}M`;
-  }
-
-  // 1B+
-  const b = absN / 1000000000;
-  const rounded = Math.round(b * 10) / 10;
-  const bStr = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-  return `${sign}${sym}${bStr}B`;
+  return `${sign}${sym}${approxChips(absN)}`;
 }
 
 export function formatSidePotAmount(amt, currency = '', hand = null, displayUnit = 'chips') {

@@ -697,24 +697,24 @@ export default function GoModeView({
   })[hand?.variant] || String(hand?.variant || 'NLH').replace(/_/g, ' ').toUpperCase();
 
   return (
-    <div className="min-h-screen bg-[#121417] text-white flex flex-col justify-between p-2 sm:p-4 select-none max-w-2xl mx-auto border-x border-slate-800/80 shadow-2xl relative">
+    <div data-testid="go-shell" className="h-[100dvh] overflow-hidden sm:h-auto sm:min-h-screen sm:overflow-visible bg-[#121417] text-white flex flex-col justify-between p-2 sm:p-4 select-none max-w-2xl mx-auto border-x border-slate-800/80 shadow-2xl relative">
       {/* TOP HEADER: Row 1 (Explicit GO Mode Badge, Level #, Blinds, Clock + Controls, History, Switch Mode, End Session, Structure & Settings), Row 2 (Show Cards) */}
-      <div className="space-y-2">
-        {/* Row 1: Top Control Bar */}
-        <div className="flex items-center justify-between px-3.5 py-2 bg-[#151921] rounded-xl border border-slate-800 text-xs shadow-sm flex-wrap gap-2">
+      <div className="shrink-0 space-y-2">
+        {/* Row 1: Top Control Bar. On phones the level, blinds and clock live in the betting bar instead. */}
+        <div className="flex items-center justify-between px-2 py-1.5 sm:px-3.5 sm:py-2 bg-[#151921] rounded-xl border border-slate-800 text-xs shadow-sm flex-wrap gap-1.5 sm:gap-2">
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 rounded-lg bg-amber-500/25 border border-amber-500/60 text-amber-300 font-black uppercase text-xs tracking-wider shadow">
-              GO Mode · {variantBadge}
+            <span className="px-2 sm:px-2.5 py-1 rounded-lg bg-amber-500/25 border border-amber-500/60 text-amber-300 font-black uppercase text-[10px] sm:text-xs tracking-wider shadow whitespace-nowrap">
+              <span className="hidden sm:inline">GO Mode · </span>{variantBadge}
             </span>
-            <span className="text-slate-600">•</span>
-            <span className="font-mono text-emerald-400 font-extrabold text-xs">
+            <span className="hidden sm:inline text-slate-600">•</span>
+            <span className="hidden sm:inline font-mono text-emerald-400 font-extrabold text-xs">
               Lvl {levelNum} · Blinds: {formatBlinds(hand)}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+          <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
             {hand?.blindSchedule?.length > 0 && (
-              <div className="flex items-center gap-1 bg-slate-900/80 border border-slate-700/70 rounded-lg px-2 py-0.5 text-amber-300 font-mono font-bold">
+              <div className="hidden sm:flex items-center gap-1 bg-slate-900/80 border border-slate-700/70 rounded-lg px-2 py-0.5 text-amber-300 font-mono font-bold">
                 <Clock size={12} className="text-amber-400" />
                 {(() => {
                   const tst = levelTimerState(hand, now);
@@ -776,11 +776,11 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onToggleGoMode}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 transition-colors cursor-pointer shadow"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-lg text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 transition-colors cursor-pointer shadow"
                 title="Switch between GO Mode and Action Tracking Mode"
               >
                 <RefreshCw size={12} />
-                <span>Switch Mode</span>
+                <span className="hidden sm:inline">Switch Mode</span>
               </button>
             )}
 
@@ -789,7 +789,7 @@ export default function GoModeView({
               type="button"
               disabled={isHandActive}
               onClick={() => setShowHandHistoryModal(true)}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+              className={`flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-lg text-xs font-bold border transition-colors ${
                 isHandActive
                   ? 'bg-slate-900 border-slate-800 text-slate-600 opacity-40 cursor-not-allowed'
                   : 'bg-slate-800 hover:bg-slate-700 text-emerald-400 border-emerald-500/30 cursor-pointer shadow'
@@ -797,7 +797,7 @@ export default function GoModeView({
               title={isHandActive ? 'Hand History available between hands' : 'View Session Hand History'}
             >
               <History size={13} />
-              <span>History</span>
+              <span className="hidden sm:inline">History</span>
             </button>
 
             {/* End Session Button */}
@@ -805,11 +805,11 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onEndSession}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-300 transition-colors cursor-pointer shadow"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-lg text-xs font-bold bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-300 transition-colors cursor-pointer shadow"
                 title="End Session (Save / Discard)"
               >
                 <LogOut size={13} />
-                <span>End</span>
+                <span className="hidden sm:inline">End</span>
               </button>
             )}
 
@@ -817,11 +817,11 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onOpenRebuy}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
                 title="Tournament rebuy / add-on"
               >
                 <RotateCcw size={13} />
-                <span>Rebuy</span>
+                <span className="hidden sm:inline">Rebuy</span>
               </button>
             )}
 
@@ -829,11 +829,11 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onOpenReentry}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
                 title="Re-enter a busted player"
               >
                 <UserPlus size={13} />
-                <span>Re-entry</span>
+                <span className="hidden sm:inline">Re-entry</span>
               </button>
             )}
 
@@ -842,7 +842,7 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onOpenStructureSetup}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer font-bold text-xs"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer font-bold text-xs"
                 title="Structure Setup"
               >
                 <SlidersHorizontal size={13} />
@@ -854,7 +854,7 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onOpenSettings}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                className="p-2 sm:p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
                 title="Open Settings"
               >
                 <Settings size={14} />
@@ -864,11 +864,11 @@ export default function GoModeView({
         </div>
 
         {/* Row 2: Show Stacks (Left) and Show Cards (Right) */}
-        <div className="flex items-center justify-between bg-[#151921] px-3 py-1.5 rounded-xl border border-slate-700/80 shadow">
+        <div className="flex items-center justify-between bg-[#151921] px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl border border-slate-700/80 shadow">
           <button
             type="button"
             onClick={() => setShowOpponentStacksModal((v) => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-extrabold text-xs transition-all cursor-pointer border ${
+            className={`flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-1.5 rounded-xl font-extrabold text-[11px] sm:text-xs transition-all cursor-pointer border ${
               showOpponentStacksModal
                 ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
                 : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600/50'
@@ -886,7 +886,7 @@ export default function GoModeView({
             onPointerCancel={peekIsHold ? endHoldPeek : undefined}
             onContextMenu={(e) => e.preventDefault()}
             title={peekIsHold ? 'Hold to peek at your cards' : 'Tap to show your cards'}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-extrabold text-xs transition-all cursor-pointer border ${
+            className={`flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-1.5 rounded-xl font-extrabold text-[11px] sm:text-xs transition-all cursor-pointer border ${
               peekCards
                 ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)] scale-105'
                 : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-amber-500/30'
@@ -1073,12 +1073,12 @@ export default function GoModeView({
         </div>
       )}
 
-      {/* MIDDLE AREA */}
-      <div className="my-auto py-3 space-y-3">
+      {/* MIDDLE AREA: table view. On phones it takes the space left between the header and the betting bar. */}
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col py-1 sm:block sm:flex-none sm:my-auto sm:overflow-visible sm:py-3">
 
         {isAllInSituation ? (
           /* All-In Center Display: Pot, Split/Tie Chance, Community Cards, and Showdown Payouts */
-          <div className="bg-[#151921] p-5 rounded-3xl border border-amber-500/60 shadow-2xl text-center space-y-4">
+          <div className="my-auto bg-[#151921] p-4 sm:p-5 rounded-3xl border border-amber-500/60 shadow-2xl text-center space-y-4">
             <div>
               <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
                 Current Pot
@@ -1147,16 +1147,16 @@ export default function GoModeView({
             )}
           </div>
         ) : cp ? (
-          <div className="bg-[#151921] p-4 sm:p-6 rounded-3xl border border-slate-700/80 shadow-2xl grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+          <div className="my-auto bg-[#151921] p-3 sm:p-6 rounded-3xl border border-slate-700/80 shadow-2xl grid grid-cols-1 md:grid-cols-2 gap-2.5 sm:gap-4 items-center">
             {/* CENTER-LEFT: Player Name, Position, My Stack, Call Amount */}
-            <div className="space-y-3 text-left border-b md:border-b-0 md:border-r border-slate-800 pb-4 md:pb-0 md:pr-4">
+            <div className="space-y-2 sm:space-y-3 text-left border-b md:border-b-0 md:border-r border-slate-800 pb-2.5 md:pb-0 md:pr-4">
               <div className="flex items-center gap-2.5">
                 {cpPos && (
                   <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-black font-extrabold text-xs uppercase tracking-wider shadow">
                     {cpPos}
                   </span>
                 )}
-                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight truncate">{cp.name}</h2>
+                <h2 className="text-xl sm:text-3xl font-black text-white tracking-tight truncate">{cp.name}</h2>
               </div>
 
               {/* My Stack Display (On screen) */}
@@ -1182,7 +1182,7 @@ export default function GoModeView({
             </div>
 
             {/* CENTER-RIGHT: Pot Size + Last Raise Info & Community Board */}
-            <div className="space-y-3 text-center md:text-right md:pl-2">
+            <div className="space-y-2 sm:space-y-3 text-center md:text-right md:pl-2">
               <div className="flex flex-wrap items-start justify-center md:justify-end gap-4">
                 <div>
                   <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
@@ -1257,7 +1257,7 @@ export default function GoModeView({
           </div>
         ) : (
           /* Standard Non-All-In Hand Concluded Screen ([name] wins [amount] + showdown hole cards) */
-          <div className="p-6 bg-[#151921] rounded-3xl border border-slate-800 text-center space-y-4">
+          <div className="my-auto p-5 sm:p-6 bg-[#151921] rounded-3xl border border-slate-800 text-center space-y-4">
             <h2 className="text-2xl font-black text-amber-300">Hand Concluded</h2>
             {aggregatedWinners.length > 0 && (
               <div className="space-y-1.5 bg-[#19202b] p-3 rounded-2xl border border-emerald-500/40">
@@ -1372,7 +1372,7 @@ export default function GoModeView({
 
       {/* BOTTOM ACTION AREA */}
       {hand.inBreak ? (
-        <div className="bg-[#2a2414] border border-amber-600/60 p-4 rounded-2xl shadow-2xl space-y-3 text-center">
+        <div className="shrink-0 bg-[#2a2414] border border-amber-600/60 p-4 rounded-2xl shadow-2xl space-y-3 text-center">
           <div className="text-xs font-black uppercase tracking-widest text-amber-400">
             {hasBreakRace ? 'Chip race break' : 'Tournament break'}
           </div>
@@ -1401,7 +1401,7 @@ export default function GoModeView({
         </div>
       ) : isAllInSituation ? (
         /* In an all-in: deal streets manually until river; on/post river show "Deal Next Hand" */
-        <div className="bg-[#151921] p-3 rounded-2xl border border-slate-700/80 shadow-2xl">
+        <div className="shrink-0 bg-[#151921] p-3 rounded-2xl border border-slate-700/80 shadow-2xl">
           {isShowdownComplete ? (
             <button
               type="button"
@@ -1422,7 +1422,16 @@ export default function GoModeView({
         </div>
       ) : cp ? (
         /* Regular Action Area: If check is available, remove fold and show ONLY Check + All In. If check is not available, show Fold, Call, All In. */
-        <div className="bg-[#151921] p-3 rounded-2xl border border-slate-700/80 space-y-2.5 shadow-2xl">
+        <div className="shrink-0 bg-[#151921] p-2.5 sm:p-3 rounded-2xl border border-slate-700/80 space-y-2 sm:space-y-2.5 shadow-2xl">
+          {/* Phone status line: blinds, level and clock sit in the betting bar's top-right corner. */}
+          <div data-testid="go-betting-status" className="sm:hidden flex items-center justify-end gap-1.5 font-mono text-[10px] leading-none">
+            <span className="font-bold text-white">{formatBlinds(hand)}</span>
+            {levelNum ? <span className="text-slate-500">·</span> : null}
+            <span className="text-slate-400 uppercase tracking-wide">Lvl {levelNum}</span>
+            {hand?.blindSchedule?.length > 0 && (
+              <span className="text-amber-300 font-bold">{formatTimer(levelTimerState(hand, now))}</span>
+            )}
+          </div>
           <div className={`grid ${canCheck ? 'grid-cols-2' : 'grid-cols-3'} gap-2`}>
             {/* If check is NOT available, show Fold button */}
             {!canCheck && (
