@@ -1406,8 +1406,9 @@ export default function PokerTracker() {
         currentHand?.mode === 'cash' ? { ...e, chips: Number(frozenStacks?.[e.seat]) || 0 } : e
       ));
       const plan = buildBustRecovery(currentHand, busted);
-      const isFreezeout = (currentHand?.tournamentFormat || config?.tournamentFormat || 'freezeout') === 'freezeout';
-      if (!isFreezeout && plan.anyAllowed && busted.length > 0) {
+      // Every bust opens the recovery dialog: it offers the allowed re-entry or
+      // rebuy, and a freezeout still lets the host keep the game going.
+      if (busted.length > 0) {
         setBustRecovery({ winner, busted, baseHand: currentHand, appliedHand: res.appliedHand, plan });
       } else {
         endTournament(winner, currentHand);
@@ -2404,9 +2405,12 @@ export default function PokerTracker() {
   const curLvlNum = hand ? appliedLevelNumber(hand) : 1;
   const isLateRegOver = Boolean(!hand?.lateRegEnabled || curLvlNum > (Number(hand?.lateRegLevel) || 0));
   const isReentryOver = Boolean(hand?.tournamentFormat !== 'reentry' || (hand?.lateRegEnabled && curLvlNum > (Number(hand?.lateRegLevel) || 0)));
-  const rebuyTimeExpired = Boolean((hand?.rebuyRules?.timeLimitEnabled ?? true) && curLvlNum > (Number(hand?.rebuyRules?.timeCutoffLevel ?? hand?.rebuyRules?.timeCapLevel) || 4));
+  const rebuyTimeExpired = Boolean((hand?.rebuyRules?.timeLimitEnabled ?? false) && curLvlNum > (Number(hand?.rebuyRules?.timeCutoffLevel ?? hand?.rebuyRules?.timeCapLevel) || 4));
   const hasAvailableAddOn = Boolean(hand?.allowAddOn && (hand?.players || []).some((p) => (p.addOns || 0) < 1));
   const isRebuyOver = Boolean(hand?.tournamentFormat !== 'rebuy' || (rebuyTimeExpired && !hasAvailableAddOn));
+  // A rebuy button belongs on any structure that actually has rebuy chips or an add-on, even when a
+  // saved session predates the format field; the dialog then enforces the structure's rules.
+  const hasRebuyOption = Boolean(isCash || hand?.tournamentFormat === 'rebuy' || Number(hand?.rebuyChips) > 0 || hand?.allowAddOn);
   // Busted players disappear from hand.players, so list them again (negative id) for buy-backs.
   const rebuyCandidates = [
     ...(hand?.players || []),
@@ -2529,8 +2533,8 @@ export default function PokerTracker() {
           onDealNextStreet={handleDealNextGoStreet}
           onOpenSettings={() => setShowSettingsModal(true)}
           onOpenStructureSetup={() => setShowSetup(true)}
-          onOpenRebuy={(isCash || (hand?.tournamentFormat === 'rebuy' && !isRebuyOver)) && !bustRecovery ? () => setShowRebuy(true) : null}
-          onOpenReentry={!isCash && hand?.tournamentFormat === 'reentry' && !isReentryOver ? () => setShowReentry(true) : null}
+          onOpenRebuy={hasRebuyOption && !bustRecovery ? () => setShowRebuy(true) : null}
+          onOpenReentry={!isCash && hand?.tournamentFormat === 'reentry' ? () => setShowReentry(true) : null}
           onEndSession={() => setShowEndSession(true)}
           showPosition={showPosition}
           onToggleGoMode={() => setShowSwitchModeConfirm('action')}
@@ -2744,7 +2748,7 @@ export default function PokerTracker() {
                         Late reg
                       </button>
                     )}
-                    {!isCash && !isReentryOver && (
+                    {!isCash && hand?.tournamentFormat === 'reentry' && (
                       <button
                         onClick={() => setShowReentry(true)}
                         disabled={!(hand.eliminatedPlayers || []).length}
@@ -2753,7 +2757,7 @@ export default function PokerTracker() {
                         Re-entry
                       </button>
                     )}
-                    {!isCash && !isRebuyOver && (
+                    {!isCash && hasRebuyOption && (
                       <button
                         onClick={() => setShowRebuy(true)}
                         className="rounded-lg bg-[#2a2f37] hover:bg-[#363c45] text-sm px-3 py-2 cursor-pointer"

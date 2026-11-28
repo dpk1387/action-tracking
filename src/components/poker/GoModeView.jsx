@@ -12,6 +12,8 @@ import {
   History,
   LogOut,
   RefreshCw,
+  Maximize2,
+  Minimize2,
   Pause,
   Play,
   Rewind,
@@ -133,14 +135,33 @@ export default function GoModeView({
   const [pinFails, setPinFails] = useState(0);
   const [pinLockedUntil, setPinLockedUntil] = useState(0);
   const [pinUnlocked, setPinUnlocked] = useState(false);
+  const [pinPurpose, setPinPurpose] = useState('cards');
+  const [gatePinOk, setGatePinOk] = useState(false);
+  const [confirmAllInOpen, setConfirmAllInOpen] = useState(false);
   const [digitOrder, setDigitOrder] = useState(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
   const [holdProgress, setHoldProgress] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const canUseFullscreen = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen;
   const [showConfirmMuckModal, setShowConfirmMuckModal] = useState(false);
   const [showOpponentStacksModal, setShowOpponentStacksModal] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [wasAllInHand, setWasAllInHand] = useState(false);
 
   const raiseInputRef = useRef(null);
+
+  // Full screen keeps the phone chrome out of the way during a live hand.
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  };
 
   // Update timer clock every second
   useEffect(() => {
@@ -154,6 +175,11 @@ export default function GoModeView({
   const cp = cpIndex >= 0 ? players[cpIndex] : null;
   const cpPrefs = cp ? (goPlayerPrefs[cp.id] || {}) : {};
   const cpPin = String(cpPrefs.pin || '');
+  // Security prefs (Settings → Security): how a turn is opened, plus fat-finger guards.
+  const handoffMode = cpPrefs.handoffMode === 'pin' || cpPrefs.handoffMode === 'both' ? cpPrefs.handoffMode : 'hold';
+  const requireTurnPin = handoffMode !== 'hold' && Boolean(cpPin);
+  const pinSlots = Math.max(2, Math.min(4, cpPin.length || 3));
+  const confirmAllIn = Boolean(cpPrefs.confirmAllIn);
 
   // Every player carries their own display prefs; anything unset falls back to the session defaults.
   const prefFor = (p) => (p ? (goPlayerPrefs[p.id] || {}) : {});
@@ -169,6 +195,9 @@ export default function GoModeView({
     setPinUnlocked(false);
     setPinFails(0);
     setHoldProgress(0);
+    setGatePinOk(false);
+    setPinPurpose('cards');
+    setConfirmAllInOpen(false);
   }, [hand?.handNumber, hand?.street, hand?.currentPlayer, hand?.actionHistory?.length]);
 
   // Reset wasAllInHand on new hand
@@ -369,6 +398,8 @@ export default function GoModeView({
     setPinEntry('');
     setPinError('');
     setPinUnlocked(false);
+    setGatePinOk(false);
+    setConfirmAllInOpen(false);
     onAction(type, amount);
   };
 
@@ -440,17 +471,24 @@ export default function GoModeView({
 
   // 3-digit card PIN: only the hole cards are locked, stacks and bets stay readable.
   const handlePinDigit = (digit) => {
-    if (!cpPin || pinEntry.length >= 3 || pinLocked) return;
+    if (!cpPin || pinEntry.length >= pinSlots || pinLocked) return;
     const next = pinEntry + digit;
     setPinEntry(next);
     setPinError('');
-    if (next.length === 3) {
+    if (next.length === pinSlots) {
       if (next === cpPin) {
         setPinUnlocked(true);
         setPinPromptOpen(false);
         setPinEntry('');
-        setPeekCards(true);
         setPinFails(0);
+        if (pinPurpose === 'turn') {
+          // Opening a turn with the PIN also unlocks that player's own cards.
+          setGatePinOk(true);
+          if (handoffMode === 'pin') setTurnVerified(true);
+          else setPeekCards(true);
+        } else {
+          setPeekCards(true);
+        }
       } else {
         const fails = pinFails + 1;
         setPinFails(fails);
@@ -479,6 +517,7 @@ export default function GoModeView({
   const peekIsHold = cpPrefs.peekMode === 'hold';
   const canPeek = () => {
     if (cpPin && !pinUnlocked) {
+      setPinPurpose('cards');
       setPinPromptOpen(true);
       setPinEntry('');
       setPinError('');
@@ -507,6 +546,7 @@ export default function GoModeView({
       setHoldProgress(0);
       setTurnVerified(false);
       setPinUnlocked(false);
+      setGatePinOk(false);
     };
     document.addEventListener('visibilitychange', hide);
     window.addEventListener('blur', hide);
@@ -771,6 +811,18 @@ export default function GoModeView({
                 })()}
               </div>
             )}
+            {canUseFullscreen && (
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer shadow"
+              >
+                {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                <span className="hidden sm:inline">{isFullscreen ? 'Exit' : 'Full Screen'}</span>
+              </button>
+            )}
+
             {/* Mode Switch Button */}
             {onToggleGoMode && (
               <button
@@ -1184,15 +1236,7 @@ export default function GoModeView({
             {/* CENTER-RIGHT: Pot Size + Last Raise Info & Community Board */}
             <div className="space-y-2 sm:space-y-3 text-center md:text-right md:pl-2">
               <div className="flex flex-wrap items-start justify-center md:justify-end gap-4">
-                <div>
-                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Current Pot
-                  </div>
-                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
-                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
-                  </div>
-                </div>
-                {/* Last Raise / Bet Info (right of the Current Pot) */}
+                {/* Last Raise / Bet Info (left of the Current Pot) */}
                 <div className="bg-[#19202b] border border-slate-700/80 rounded-2xl px-3 py-2 text-left min-w-[130px]">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
                     Last Raise
@@ -1219,6 +1263,14 @@ export default function GoModeView({
                 </div>
               </div>
 
+                <div>
+                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Current Pot
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
+                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
+                  </div>
+                </div>
               {/* Community Cards */}
               <div className="pt-2">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
@@ -1471,7 +1523,7 @@ export default function GoModeView({
             {/* All In / Pot Limit Max Button */}
             <button
               type="button"
-              onClick={() => submitGoAction('raise', effectiveMaxRaise)}
+              onClick={() => (confirmAllIn ? setConfirmAllInOpen(true) : submitGoAction('raise', effectiveMaxRaise))}
               className="py-3 rounded-xl bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white font-black text-sm cursor-pointer transition-all shadow-lg shadow-rose-950/50 border border-rose-500/50"
               title="Shortcut: Shift + A"
             >
@@ -1576,28 +1628,46 @@ export default function GoModeView({
                   Locked again after {idleLockSec}s with no taps.
                 </div>
               )}
-              Hold the button below so a stray tap cannot open someone else&apos;s turn.
+              {requireTurnPin && !gatePinOk
+                ? `Enter ${cp.name}'s PIN to open the turn.`
+                : "Hold the button below so a stray tap cannot open someone else's turn."}
               {cpPin ? ' Hole cards stay hidden until you enter your PIN.' : ' Hole cards stay hidden until you tap Show Cards.'}
             </div>
 
-            <button
-              type="button"
-              onPointerDown={startHold}
-              onPointerUp={cancelHold}
-              onPointerLeave={cancelHold}
-              onPointerCancel={cancelHold}
-              onContextMenu={(e) => e.preventDefault()}
-              className="relative w-full overflow-hidden py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer select-none touch-none"
-            >
-              <span
-                className="absolute inset-y-0 left-0 bg-emerald-400/70 pointer-events-none"
-                style={{ width: `${holdProgress}%` }}
-              />
-              <ShieldCheck size={18} className="relative" />
-              <span className="relative">
-                {holdProgress > 0 ? 'Keep holding…' : `Hold to confirm — ${cp.name}`}
-              </span>
-            </button>
+            {requireTurnPin && !gatePinOk ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setPinPurpose('turn');
+                  setPinEntry('');
+                  setPinError('');
+                  setPinPromptOpen(true);
+                }}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <KeyRound size={18} />
+                Enter PIN to open — {cp.name}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onPointerDown={startHold}
+                onPointerUp={cancelHold}
+                onPointerLeave={cancelHold}
+                onPointerCancel={cancelHold}
+                onContextMenu={(e) => e.preventDefault()}
+                className="relative w-full overflow-hidden py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer select-none touch-none"
+              >
+                <span
+                  className="absolute inset-y-0 left-0 bg-emerald-400/70 pointer-events-none"
+                  style={{ width: `${holdProgress}%` }}
+                />
+                <ShieldCheck size={18} className="relative" />
+                <span className="relative">
+                  {holdProgress > 0 ? 'Keep holding…' : `Hold to confirm — ${cp.name}`}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1610,13 +1680,19 @@ export default function GoModeView({
               <KeyRound size={26} />
             </div>
             <div className="space-y-1">
-              <div className="text-xs font-extrabold text-amber-400 uppercase tracking-widest">Cards Locked</div>
+              <div className="text-xs font-extrabold text-amber-400 uppercase tracking-widest">
+                {pinPurpose === 'turn' ? 'Turn Locked' : 'Cards Locked'}
+              </div>
               <h3 className="text-xl font-black text-white">Enter {cp.name}&apos;s PIN</h3>
-              <p className="text-[11px] text-slate-400">Stacks and bets stay visible; only your hole cards are hidden.</p>
+              <p className="text-[11px] text-slate-400">
+                {pinPurpose === 'turn'
+                  ? 'Only this PIN can open your turn on the shared device.'
+                  : 'Stacks and bets stay visible; only your hole cards are hidden.'}
+              </p>
             </div>
 
             <div className="flex items-center justify-center gap-2">
-              {Array.from({ length: 3 }, (_, slotIdx) => {
+              {Array.from({ length: pinSlots }, (_, slotIdx) => {
                 const char = pinEntry[slotIdx];
                 const isActive = pinEntry.length === slotIdx;
                 return (
@@ -1735,6 +1811,34 @@ export default function GoModeView({
                 className="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-rose-950 text-rose-300 border border-rose-500/40 font-bold text-sm cursor-pointer shadow"
               >
                 Confirm Fold
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ALL-IN CONFIRM (Settings → Security → Confirm All-In) */}
+      {confirmAllInOpen && cp && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in select-none">
+          <div className="bg-[#19202b] border-2 border-rose-500/70 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+            <div className="text-rose-400 font-black text-xl">Confirm All-In?</div>
+            <div className="text-sm text-slate-300">
+              {cp.name}, this puts {formatFullBetAmount(isPotCapped ? effectiveMaxRaise : maxRaise, cur, hand, activeUnit)} in the middle.
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmAllInOpen(false)}
+                className="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-sm cursor-pointer shadow"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={() => submitGoAction('raise', effectiveMaxRaise)}
+                className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white font-black text-sm cursor-pointer shadow"
+              >
+                All In
               </button>
             </div>
           </div>

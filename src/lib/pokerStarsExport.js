@@ -1,7 +1,7 @@
 // PokerStars-hand-history text export.
 // Produces one .txt file per session in the layout PokerStars writes, so the
 // file can be replayed by GTO Wizard, PokerTracker and Holdem Manager.
-import { evalPlayerHand, VARIANTS } from './poker.js';
+import { evalPlayerHand, normCat, VARIANTS } from './poker.js';
 
 const EPS = 1e-6;
 const DEFAULT_TOURNAMENT_ID = '555555555';
@@ -48,11 +48,7 @@ function boardCards(hand) {
 // "(a pair of Aces)", "(a flush, Ace high)", … from an evaluate7-style score.
 export function describeScore(score, shortDeck = false) {
   if (!Array.isArray(score) || !score.length) return '';
-  let cat = score[0];
-  if (shortDeck) {
-    if (cat === 5) cat = 6;
-    else if (cat === 6) cat = 5;
-  }
+  let cat = normCat(score, shortDeck);
   const name = (v) => RANK_WORD[VALUE_TO_RANK[v]] || '';
   const pl = (v) => pluralWord(VALUE_TO_RANK[v]);
   const straightWord = (high) => (high === 5 ? 'Five to Ace' : `${name(high)} to ${name(high - 4)}`);

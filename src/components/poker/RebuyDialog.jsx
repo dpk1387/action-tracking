@@ -21,7 +21,7 @@ export default function RebuyDialog({
   const activeLevelNum = hand ? appliedLevelNumber(hand) : ((currentLevel ?? 0) + 1);
   const rules = rebuyRules || hand?.rebuyRules || {};
 
-  const timeLimitEnabled = rules.timeLimitEnabled ?? true;
+  const timeLimitEnabled = rules.timeLimitEnabled ?? false;
   const cutoffLevel = Number(rules.timeCutoffLevel) || 4;
   const isTimeExpired = timeLimitEnabled && activeLevelNum > cutoffLevel;
 
@@ -35,7 +35,7 @@ export default function RebuyDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const stackCapEnabled = rules.stackCapEnabled ?? true;
+  const stackCapEnabled = rules.stackCapEnabled ?? false;
   const stackCap = stackCapEnabled ? (Number(rules.stackCapAmount) || Number(rebuyChips) || 10000) : Infinity;
 
   const cappedEnabled = rules.cappedRebuysEnabled ?? false;

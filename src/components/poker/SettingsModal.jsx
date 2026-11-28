@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Settings, X, KeyRound, ShieldCheck, Timer, Eye, Lock } from 'lucide-react';
+import { Settings, X, KeyRound, ShieldCheck, Timer, Eye, Lock, Ban } from 'lucide-react';
 
 const shell = 'fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4';
 const card = 'bg-[#181d24] border border-slate-700/80 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-fade-in';
@@ -52,6 +52,8 @@ function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins
   const cardTimeout = Number(goPlayerPrefs.cardTimeout ?? 10);
   const idleLock = Number(goPlayerPrefs.idleLockSec ?? 60);
   const peekMode = goPlayerPrefs.peekMode === 'hold' ? 'hold' : 'tap';
+  const handoffMode = goPlayerPrefs.handoffMode === 'pin' || goPlayerPrefs.handoffMode === 'both' ? goPlayerPrefs.handoffMode : 'hold';
+  const confirmAllIn = Boolean(goPlayerPrefs.confirmAllIn);
   const [pinDraft, setPinDraft] = useState('');
   const [pinMsg, setPinMsg] = useState('');
 
@@ -61,8 +63,8 @@ function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins
   }, [goPlayerName]);
 
   const savePin = () => {
-    if (!/^\d{3}$/.test(pinDraft)) {
-      setPinMsg('Enter exactly 3 digits');
+    if (!/^\d{2,4}$/.test(pinDraft)) {
+      setPinMsg('Enter 2 to 4 digits');
       return;
     }
     if (takenPins.includes(pinDraft)) {
@@ -102,6 +104,34 @@ function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins
           <button type="button" onClick={() => onUpdateGoPlayerPrefs({ suitColors: colors === 4 ? 2 : 4 })} className={toggleClass(colors === 4)}>
             {colors === 4 ? '4 Colors' : '2 Colors'}
           </button>
+        </div>
+
+        <div className={rowBorder}>
+          <div>
+            <div className="font-bold text-white flex items-center gap-1.5">
+              <ShieldCheck size={13} className="text-emerald-400" />
+              Open Turn With
+            </div>
+            <div className="text-[11px] text-slate-400">
+              How the shared device proves it is you before your betting screen opens
+            </div>
+          </div>
+          <div className="flex gap-1">
+            {[
+              { id: 'hold', label: 'Hold' },
+              { id: 'pin', label: 'PIN' },
+              { id: 'both', label: 'Both' },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => onUpdateGoPlayerPrefs({ handoffMode: opt.id })}
+                className={toggleClass(handoffMode === opt.id)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className={rowBorder}>
@@ -161,9 +191,9 @@ function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins
           <div>
             <div className="font-bold text-white flex items-center gap-1.5">
               <KeyRound size={13} className="text-amber-400" />
-              Hole Card PIN
+              Passkey PIN
             </div>
-            <div className="text-[11px] text-slate-400">3 digits. Only your hole cards stay hidden until you enter it.</div>
+            <div className="text-[11px] text-slate-400">2 to 4 digits. Locks your hole cards, and your turn if Open Turn With uses PIN.</div>
           </div>
           <button type="button" onClick={() => onUpdateGoPlayerPrefs({ pin: pin ? '' : 'SET' })} className={toggleClass(Boolean(pin))}>
             {pin ? 'On' : 'Off'}
@@ -173,16 +203,16 @@ function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins
         {Boolean(pin) && (
           <div className="rounded-xl bg-[#12161c] border border-slate-700 p-3 space-y-2">
             <div className="text-[11px] text-slate-400">
-              {pin === 'SET' ? 'Pick a 3-digit PIN.' : 'Current PIN:'} {pin !== 'SET' && <span className="font-mono font-bold text-amber-300">{pin}</span>}
+              {pin === 'SET' ? 'Pick a 2 to 4-digit PIN.' : 'Current PIN:'} {pin !== 'SET' && <span className="font-mono font-bold text-amber-300">{pin}</span>}
             </div>
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 inputMode="numeric"
-                maxLength={3}
+                maxLength={4}
                 value={pinDraft}
                 onChange={(e) => {
-                  setPinDraft(e.target.value.replace(/\D/g, '').slice(0, 3));
+                  setPinDraft(e.target.value.replace(/\D/g, '').slice(0, 4));
                   setPinMsg('');
                 }}
                 className="w-20 bg-[#181d24] border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono font-bold tracking-widest text-center focus:outline-none focus:border-amber-400"
@@ -201,9 +231,22 @@ function GoPlayerSettings({ onClose, goPlayerName, goPlayerPrefs = {}, takenPins
           </div>
         )}
 
+        <div className={rowBorder}>
+          <div>
+            <div className="font-bold text-white flex items-center gap-1.5">
+              <Ban size={13} className="text-rose-400" />
+              Confirm All-In
+            </div>
+            <div className="text-[11px] text-slate-400">Ask once more before your whole stack goes in</div>
+          </div>
+          <button type="button" onClick={() => onUpdateGoPlayerPrefs({ confirmAllIn: !confirmAllIn })} className={toggleClass(confirmAllIn)}>
+            {confirmAllIn ? 'On' : 'Off'}
+          </button>
+        </div>
+
         <div className="flex items-start gap-2 rounded-xl bg-[#12161c] border border-slate-800 px-3 py-2 text-[11px] text-slate-400 leading-relaxed">
           <ShieldCheck size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-          Every turn starts behind a hold-to-open screen, so a stray tap cannot see or act for you. An open turn re-locks itself when it is left alone, cards hide on their own, and three wrong PINs lock the keypad for 30 seconds and reshuffle the digits.
+          Every turn starts behind a locked screen: hold, your PIN, or both. An open turn re-locks itself when it is left alone, cards hide on their own, and three wrong PINs lock the keypad for 30 seconds and reshuffle the digits.
         </div>
       </div>
     </ModalFrame>
