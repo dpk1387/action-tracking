@@ -1,8 +1,6 @@
 // Table rules shared by GO mode and Play Bots: minimum chip per blind level,
 // stack/bet display rounding for the online and live styles, and bet shortcuts.
 
-import { approxChips } from './poker.js';
-
 export const GAME_TYPES = [
   { id: 'online', label: 'Online', desc: 'Exact stacks, pot size shown.' },
   { id: 'live', label: 'Live', desc: 'Live feel: pot hidden, stacks and bets rounded to real chips.' },
@@ -103,9 +101,9 @@ function fmtBb(n) {
 
 /**
  * How a stack is shown at the table.
- * online  - chips in K/M shorthand (5K, 12.5K, 2.3M), big blinds to 0.1
- * live    - bots rounded by depth and then shorthanded, the hero exact (chips)
- *           / 0.1 bb; an all-in stack is always exact so the shove can be counted down.
+ * online  - chips to the nearest 25, big blinds to 0.1
+ * live    - bots rounded by depth, the hero exact (chips) / 0.1 bb; an all-in
+ *           stack is always exact so the shove can be counted down.
  */
 export function displayStack({ value, unit, bb, gameType = 'online', isHero = false, allIn = false, minChip = 25 }) {
   const raw = Math.max(0, Number(value) || 0);
@@ -113,8 +111,8 @@ export function displayStack({ value, unit, bb, gameType = 'online', isHero = fa
   const chips = raw;
   if (gameType !== 'live') {
     if (unit === 'bb') return fmtBb(Math.round((chips / bblind) * 10) / 10);
-    // Chip view online needs no chip rounding; tags use K/M shorthand so they stay narrow.
-    return approxChips(chips);
+    // Chip view online shows the real number: no chip rounding, nothing to hide.
+    return fmtChips(chips);
   }
   if (unit === 'bb') {
     if (isHero || allIn) return fmtBb(Math.round((chips / bblind) * 10) / 10);
@@ -122,10 +120,9 @@ export function displayStack({ value, unit, bb, gameType = 'online', isHero = fa
     const rounded = roundToNearest(chips / bblind, step);
     return decimals ? `${rounded.toFixed(decimals)} bb` : `${Math.round(rounded)} bb`;
   }
-  // Live: the hero's own stack (and an all-in count) stays exact so it can be checked against chips.
   if (isHero || allIn) return fmtChips(chips);
   const { step } = liveStackStep(chips, bblind, 'chips', minChip);
-  return approxChips(roundToNearest(chips, step));
+  return fmtChips(roundToNearest(chips, step));
 }
 
 /** Bet size: exact chips in live play (bets are already rounded), 0.1 bb in bb view. */
