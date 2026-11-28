@@ -90,7 +90,8 @@ export function rebuyBlocker(hand, player, level) {
   const rebuyChips = Number(hand?.rebuyChips) || 0;
   const activeLevel = (Number(level ?? hand?.blindLevel) || 0) + 1;
 
-  const timeLimit = rules.timeLimitEnabled ?? rules.timeCapEnabled;
+  // Rules left out of an older structure mean "no restriction", not "restricted".
+  const timeLimit = rules.timeLimitEnabled ?? rules.timeCapEnabled ?? false;
   const cutoffLevel = Number(rules.timeCutoffLevel ?? rules.timeCapLevel) || 4;
   if (timeLimit && activeLevel > cutoffLevel) {
     return `Cutoff passed (lvl ${cutoffLevel})`;
@@ -266,6 +267,33 @@ export function formatKWithDec(n, sym = '', sign = '') {
   return `${sign}${sym}${kStr}K`;
 }
 
+/**
+ * Compact stack shorthand for player tags: full number under 1K, one-decimal K
+ * up to 100K, whole K up to 1M, one-decimal M up to 10M, then whole M.
+ */
+export function approxChips(val) {
+  const abs = Math.abs(Number(val) || 0);
+  if (abs < 1000) return abs.toLocaleString('en-US');
+  if (abs < 100000) {
+    const k = Math.round((abs / 1000) * 10) / 10;
+    return `${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}K`;
+  }
+  if (abs < 1000000) {
+    const k = Math.round(abs / 1000);
+    return k >= 1000 ? '1M' : `${k}K`;
+  }
+  if (abs < 10000000) {
+    const m = Math.round((abs / 1000000) * 10) / 10;
+    return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+  }
+  if (abs < 1000000000) {
+    const m = Math.round(abs / 1000000);
+    return m >= 1000 ? '1B' : `${m}M`;
+  }
+  const b = Math.round((abs / 1000000000) * 10) / 10;
+  return `${b % 1 === 0 ? b.toFixed(0) : b.toFixed(1)}B`;
+}
+
 export function formatKM(val) {
   if (val == null || val === '') return '';
   const n = typeof val === 'number' ? val : (parseAmount(val) ?? Number(val));
@@ -352,7 +380,7 @@ export function formatPlayerTagAmount(val, currency = '', hand = null, isSpectat
     return `${sign}${sym}${numStr}`;
   }
 
-  // Below 1K: full number
+  // Below 1K (or small-chip live games): full number
   const smallestChip = getSmallestChipInPlay(hand);
   if (absN < 1000 || smallestChip < 100) {
     const hasDec = !Number.isInteger(absN);
@@ -363,37 +391,7 @@ export function formatPlayerTagAmount(val, currency = '', hand = null, isSpectat
     return `${sign}${sym}${numStr}`;
   }
 
-  // 1K-100K: K, 1 decimal without terminating .0
-  if (absN < 100000) {
-    const k = absN / 1000;
-    const rounded = Math.round(k * 10) / 10;
-    const kStr = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-    return `${sign}${sym}${kStr}K`;
-  }
-
-  // 100K-1M: K, no decimal
-  if (absN < 1000000) {
-    return `${sign}${sym}${Math.round(absN / 1000)}K`;
-  }
-
-  // 1M-100M: M, 1 decimal without terminating .0
-  if (absN < 100000000) {
-    const m = absN / 1000000;
-    const rounded = Math.round(m * 10) / 10;
-    const mStr = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-    return `${sign}${sym}${mStr}M`;
-  }
-
-  // 100M-1B: M, no decimal
-  if (absN < 1000000000) {
-    return `${sign}${sym}${Math.round(absN / 1000000)}M`;
-  }
-
-  // 1B+
-  const b = absN / 1000000000;
-  const rounded = Math.round(b * 10) / 10;
-  const bStr = rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
-  return `${sign}${sym}${bStr}B`;
+  return `${sign}${sym}${approxChips(absN)}`;
 }
 
 export function formatSidePotAmount(amt, currency = '', hand = null, displayUnit = 'chips') {
@@ -3266,6 +3264,16 @@ function cmpScore(a, b) {
   return 0;
 }
 
+// 6+ uses its own category numbers (straight < trips < full house < flush);
+// map them back to the standard scale before labeling or reasoning about a hand.
+const SHORT_DECK_CAT = { 4: 4, 5: 3, 6: 6, 7: 5, 8: 7, 9: 8 };
+
+export function normCat(score, shortDeck) {
+  const c = score[0];
+  if (shortDeck && SHORT_DECK_CAT[c] != null) return SHORT_DECK_CAT[c];
+  return c;
+}
+
 export function evaluate7(cards, shortDeck = false) {
   const vals = cards.map((c) => RV[c.rank]).sort((a, b) => b - a);
   const suitCount = { s: 0, h: 0, d: 0, c: 0 };
@@ -3281,35 +3289,39 @@ export function evaluate7(cards, shortDeck = false) {
   const groups = Object.entries(rc).map(([r, c]) => [Number(r), c]);
   groups.sort((a, b) => b[1] - a[1] || b[0] - a[0]);
 
+  // Short deck (6+) keeps a 36-card deck, so A-6-7-8-9 is the low straight.
   function straightHigh(rankArr) {
     const u = [...new Set(rankArr)].sort((a, b) => b - a);
-    const arr = u.includes(14) ? [...u, 1] : u;
+    const arr = !shortDeck && u.includes(14) ? [...u, 1] : u;
     for (let i = 0; i <= arr.length - 5; i++) {
       if (arr[i] - arr[i + 4] === 4) return arr[i];
+    }
+    if (shortDeck) {
+      const s = new Set(u);
+      if ([14, 9, 8, 7, 6].every((v) => s.has(v))) return 9;
     }
     return 0;
   }
 
   if (flushSuit) {
     const sf = straightHigh(suitRanks[flushSuit]);
-    if (sf) return [8, sf];
+    if (sf) return [shortDeck ? 9 : 8, sf];
   }
   if (groups[0][1] === 4) {
     const k = vals.find((v) => v !== groups[0][0]);
-    return [7, groups[0][0], k];
+    return [shortDeck ? 8 : 7, groups[0][0], k];
   }
-  if (groups[0][1] === 3 && groups[1] && groups[1][1] >= 2) {
-    return [shortDeck ? 5 : 6, groups[0][0], groups[1][0]];
-  }
-  if (flushSuit) {
-    const fv = suitRanks[flushSuit].slice().sort((a, b) => b - a).slice(0, 5);
-    return [shortDeck ? 6 : 5, ...fv];
-  }
+  const isFullHouse = groups[0][1] === 3 && groups[1] && groups[1][1] >= 2;
+  const flushRanks = flushSuit ? suitRanks[flushSuit].slice().sort((a, b) => b - a).slice(0, 5) : null;
+  // 6+ ranking: straight < trips < full house < flush. Standard ranking: full house < flush.
+  if (isFullHouse) return [6, groups[0][0], groups[1][0]];
+  if (flushRanks && !shortDeck) return [5, ...flushRanks];
+  if (flushRanks) return [7, ...flushRanks];
   const sh = straightHigh(vals);
   if (sh) return [4, sh];
   if (groups[0][1] === 3) {
     const k = vals.filter((v) => v !== groups[0][0]).slice(0, 2);
-    return [3, groups[0][0], ...k];
+    return [shortDeck ? 5 : 3, groups[0][0], ...k];
   }
   if (groups[0][1] === 2 && groups[1] && groups[1][1] === 2) {
     const k = vals.find((v) => v !== groups[0][0] && v !== groups[1][0]);
@@ -3844,7 +3856,7 @@ export function calculateAllInOuts(hand, holeCards) {
 
   const isValidDirtyOut = (myHole, curBoard, card, myCandidateScore) => {
     if (lowGame || !myCandidateScore) return false;
-    const cat = myCandidateScore[0];
+    const cat = normCat(myCandidateScore, meta.deck === 'short');
     // Rule A (Board-Pair Trap): Card C pairs the board AND Hero's best hand is only One Pair -> brick
     const pairsBoard = curBoard.some((b) => b && !b.hidden && b.rank === card.rank);
     if (pairsBoard && cat === 1) return false;
@@ -3857,8 +3869,8 @@ export function calculateAllInOuts(hand, holeCards) {
     const isShort = meta.deck === 'short';
     const holeRankVals = new Set((myHole || []).filter(Boolean).map((c) => RV[c.rank]));
     const boardRankVals = new Set(candidateBoard.filter(Boolean).map((c) => RV[c.rank]));
-    const fullHouseCat = isShort ? 5 : 6;
-    const flushCat = isShort ? 6 : 5;
+    const fullHouseCat = 6;
+    const flushCat = 5;
 
     if (meta.group === 'omaha') {
       if (cat === 3 || cat === 7) return holeRankVals.has(myCandidateScore[1]);
@@ -4187,7 +4199,8 @@ export function evaluateWinners(eligible, holeCards, board, variant = 'nlh', hol
   const accepts = (pid) => {
     const c = holeCards[pid];
     if (!c) return false;
-    if (variant === 'lazy_pineapple' && c.length >= 2 && c.length <= 3) return true;
+    // Pineapple games hold three cards until the discard, then two.
+    if (['pineapple', 'crazy_pineapple', 'lazy_pineapple'].includes(variant) && c.length >= 2 && c.length <= 3) return true;
     return c.length === hs;
   };
   const scoreable = eligible.filter((pid) => accepts(pid));
@@ -4363,15 +4376,6 @@ function preflopLabel(cards) {
   if (entries[0][1] === 2) return `Pair of ${shp(entries[0][0])}`;
   const high = cards.slice().sort((a, b) => RV[b.rank] - RV[a.rank])[0];
   return `${sh(high.rank)}-high`;
-}
-
-function normCat(score, shortDeck) {
-  const c = score[0];
-  if (shortDeck) {
-    if (c === 5) return 6;
-    if (c === 6) return 5;
-  }
-  return c;
 }
 
 function labelFromScore(score, hole, bestCards, shortDeck) {

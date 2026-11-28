@@ -12,6 +12,8 @@ import {
   History,
   LogOut,
   RefreshCw,
+  Maximize2,
+  Minimize2,
   Pause,
   Play,
   Rewind,
@@ -133,14 +135,33 @@ export default function GoModeView({
   const [pinFails, setPinFails] = useState(0);
   const [pinLockedUntil, setPinLockedUntil] = useState(0);
   const [pinUnlocked, setPinUnlocked] = useState(false);
+  const [pinPurpose, setPinPurpose] = useState('cards');
+  const [gatePinOk, setGatePinOk] = useState(false);
+  const [confirmAllInOpen, setConfirmAllInOpen] = useState(false);
   const [digitOrder, setDigitOrder] = useState(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
   const [holdProgress, setHoldProgress] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const canUseFullscreen = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen;
   const [showConfirmMuckModal, setShowConfirmMuckModal] = useState(false);
   const [showOpponentStacksModal, setShowOpponentStacksModal] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [wasAllInHand, setWasAllInHand] = useState(false);
 
   const raiseInputRef = useRef(null);
+
+  // Full screen keeps the phone chrome out of the way during a live hand.
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  };
 
   // Update timer clock every second
   useEffect(() => {
@@ -154,6 +175,11 @@ export default function GoModeView({
   const cp = cpIndex >= 0 ? players[cpIndex] : null;
   const cpPrefs = cp ? (goPlayerPrefs[cp.id] || {}) : {};
   const cpPin = String(cpPrefs.pin || '');
+  // Security prefs (Settings → Security): how a turn is opened, plus fat-finger guards.
+  const handoffMode = cpPrefs.handoffMode === 'pin' || cpPrefs.handoffMode === 'both' ? cpPrefs.handoffMode : 'hold';
+  const requireTurnPin = handoffMode !== 'hold' && Boolean(cpPin);
+  const pinSlots = Math.max(2, Math.min(4, cpPin.length || 3));
+  const confirmAllIn = Boolean(cpPrefs.confirmAllIn);
 
   // Every player carries their own display prefs; anything unset falls back to the session defaults.
   const prefFor = (p) => (p ? (goPlayerPrefs[p.id] || {}) : {});
@@ -169,6 +195,9 @@ export default function GoModeView({
     setPinUnlocked(false);
     setPinFails(0);
     setHoldProgress(0);
+    setGatePinOk(false);
+    setPinPurpose('cards');
+    setConfirmAllInOpen(false);
   }, [hand?.handNumber, hand?.street, hand?.currentPlayer, hand?.actionHistory?.length]);
 
   // Reset wasAllInHand on new hand
@@ -369,6 +398,8 @@ export default function GoModeView({
     setPinEntry('');
     setPinError('');
     setPinUnlocked(false);
+    setGatePinOk(false);
+    setConfirmAllInOpen(false);
     onAction(type, amount);
   };
 
@@ -440,17 +471,24 @@ export default function GoModeView({
 
   // 3-digit card PIN: only the hole cards are locked, stacks and bets stay readable.
   const handlePinDigit = (digit) => {
-    if (!cpPin || pinEntry.length >= 3 || pinLocked) return;
+    if (!cpPin || pinEntry.length >= pinSlots || pinLocked) return;
     const next = pinEntry + digit;
     setPinEntry(next);
     setPinError('');
-    if (next.length === 3) {
+    if (next.length === pinSlots) {
       if (next === cpPin) {
         setPinUnlocked(true);
         setPinPromptOpen(false);
         setPinEntry('');
-        setPeekCards(true);
         setPinFails(0);
+        if (pinPurpose === 'turn') {
+          // Opening a turn with the PIN also unlocks that player's own cards.
+          setGatePinOk(true);
+          if (handoffMode === 'pin') setTurnVerified(true);
+          else setPeekCards(true);
+        } else {
+          setPeekCards(true);
+        }
       } else {
         const fails = pinFails + 1;
         setPinFails(fails);
@@ -479,6 +517,7 @@ export default function GoModeView({
   const peekIsHold = cpPrefs.peekMode === 'hold';
   const canPeek = () => {
     if (cpPin && !pinUnlocked) {
+      setPinPurpose('cards');
       setPinPromptOpen(true);
       setPinEntry('');
       setPinError('');
@@ -507,6 +546,7 @@ export default function GoModeView({
       setHoldProgress(0);
       setTurnVerified(false);
       setPinUnlocked(false);
+      setGatePinOk(false);
     };
     document.addEventListener('visibilitychange', hide);
     window.addEventListener('blur', hide);
@@ -697,24 +737,24 @@ export default function GoModeView({
   })[hand?.variant] || String(hand?.variant || 'NLH').replace(/_/g, ' ').toUpperCase();
 
   return (
-    <div className="min-h-screen bg-[#121417] text-white flex flex-col justify-between p-2 sm:p-4 select-none max-w-2xl mx-auto border-x border-slate-800/80 shadow-2xl relative">
+    <div data-testid="go-shell" className="h-[100dvh] overflow-hidden sm:h-auto sm:min-h-screen sm:overflow-visible bg-[#121417] text-white flex flex-col justify-between p-2 sm:p-4 select-none max-w-2xl mx-auto border-x border-slate-800/80 shadow-2xl relative">
       {/* TOP HEADER: Row 1 (Explicit GO Mode Badge, Level #, Blinds, Clock + Controls, History, Switch Mode, End Session, Structure & Settings), Row 2 (Show Cards) */}
-      <div className="space-y-2">
-        {/* Row 1: Top Control Bar */}
-        <div className="flex items-center justify-between px-3.5 py-2 bg-[#151921] rounded-xl border border-slate-800 text-xs shadow-sm flex-wrap gap-2">
+      <div className="shrink-0 space-y-2">
+        {/* Row 1: Top Control Bar. On phones the level, blinds and clock live in the betting bar instead. */}
+        <div className="flex items-center justify-between px-2 py-1.5 sm:px-3.5 sm:py-2 bg-[#151921] rounded-xl border border-slate-800 text-xs shadow-sm flex-wrap gap-1.5 sm:gap-2">
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 rounded-lg bg-amber-500/25 border border-amber-500/60 text-amber-300 font-black uppercase text-xs tracking-wider shadow">
-              GO Mode · {variantBadge}
+            <span className="px-2 sm:px-2.5 py-1 rounded-lg bg-amber-500/25 border border-amber-500/60 text-amber-300 font-black uppercase text-[10px] sm:text-xs tracking-wider shadow whitespace-nowrap">
+              <span className="hidden sm:inline">GO Mode · </span>{variantBadge}
             </span>
-            <span className="text-slate-600">•</span>
-            <span className="font-mono text-emerald-400 font-extrabold text-xs">
+            <span className="hidden sm:inline text-slate-600">•</span>
+            <span className="hidden sm:inline font-mono text-emerald-400 font-extrabold text-xs">
               Lvl {levelNum} · Blinds: {formatBlinds(hand)}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+          <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
             {hand?.blindSchedule?.length > 0 && (
-              <div className="flex items-center gap-1 bg-slate-900/80 border border-slate-700/70 rounded-lg px-2 py-0.5 text-amber-300 font-mono font-bold">
+              <div className="hidden sm:flex items-center gap-1 bg-slate-900/80 border border-slate-700/70 rounded-lg px-2 py-0.5 text-amber-300 font-mono font-bold">
                 <Clock size={12} className="text-amber-400" />
                 {(() => {
                   const tst = levelTimerState(hand, now);
@@ -771,16 +811,28 @@ export default function GoModeView({
                 })()}
               </div>
             )}
+            {canUseFullscreen && (
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer shadow"
+              >
+                {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                <span className="hidden sm:inline">{isFullscreen ? 'Exit' : 'Full Screen'}</span>
+              </button>
+            )}
+
             {/* Mode Switch Button */}
             {onToggleGoMode && (
               <button
                 type="button"
                 onClick={onToggleGoMode}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 transition-colors cursor-pointer shadow"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-lg text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 transition-colors cursor-pointer shadow"
                 title="Switch between GO Mode and Action Tracking Mode"
               >
                 <RefreshCw size={12} />
-                <span>Switch Mode</span>
+                <span className="hidden sm:inline">Switch Mode</span>
               </button>
             )}
 
@@ -789,7 +841,7 @@ export default function GoModeView({
               type="button"
               disabled={isHandActive}
               onClick={() => setShowHandHistoryModal(true)}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+              className={`flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-lg text-xs font-bold border transition-colors ${
                 isHandActive
                   ? 'bg-slate-900 border-slate-800 text-slate-600 opacity-40 cursor-not-allowed'
                   : 'bg-slate-800 hover:bg-slate-700 text-emerald-400 border-emerald-500/30 cursor-pointer shadow'
@@ -797,7 +849,7 @@ export default function GoModeView({
               title={isHandActive ? 'Hand History available between hands' : 'View Session Hand History'}
             >
               <History size={13} />
-              <span>History</span>
+              <span className="hidden sm:inline">History</span>
             </button>
 
             {/* End Session Button */}
@@ -805,11 +857,11 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onEndSession}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-300 transition-colors cursor-pointer shadow"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1 rounded-lg text-xs font-bold bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-300 transition-colors cursor-pointer shadow"
                 title="End Session (Save / Discard)"
               >
                 <LogOut size={13} />
-                <span>End</span>
+                <span className="hidden sm:inline">End</span>
               </button>
             )}
 
@@ -817,11 +869,11 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onOpenRebuy}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
                 title="Tournament rebuy / add-on"
               >
                 <RotateCcw size={13} />
-                <span>Rebuy</span>
+                <span className="hidden sm:inline">Rebuy</span>
               </button>
             )}
 
@@ -829,11 +881,11 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onOpenReentry}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-700/60 transition-colors cursor-pointer font-bold text-xs"
                 title="Re-enter a busted player"
               >
                 <UserPlus size={13} />
-                <span>Re-entry</span>
+                <span className="hidden sm:inline">Re-entry</span>
               </button>
             )}
 
@@ -842,7 +894,7 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onOpenStructureSetup}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer font-bold text-xs"
+                className="flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer font-bold text-xs"
                 title="Structure Setup"
               >
                 <SlidersHorizontal size={13} />
@@ -854,7 +906,7 @@ export default function GoModeView({
               <button
                 type="button"
                 onClick={onOpenSettings}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                className="p-2 sm:p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
                 title="Open Settings"
               >
                 <Settings size={14} />
@@ -864,11 +916,11 @@ export default function GoModeView({
         </div>
 
         {/* Row 2: Show Stacks (Left) and Show Cards (Right) */}
-        <div className="flex items-center justify-between bg-[#151921] px-3 py-1.5 rounded-xl border border-slate-700/80 shadow">
+        <div className="flex items-center justify-between bg-[#151921] px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl border border-slate-700/80 shadow">
           <button
             type="button"
             onClick={() => setShowOpponentStacksModal((v) => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-extrabold text-xs transition-all cursor-pointer border ${
+            className={`flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-1.5 rounded-xl font-extrabold text-[11px] sm:text-xs transition-all cursor-pointer border ${
               showOpponentStacksModal
                 ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
                 : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600/50'
@@ -886,7 +938,7 @@ export default function GoModeView({
             onPointerCancel={peekIsHold ? endHoldPeek : undefined}
             onContextMenu={(e) => e.preventDefault()}
             title={peekIsHold ? 'Hold to peek at your cards' : 'Tap to show your cards'}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-extrabold text-xs transition-all cursor-pointer border ${
+            className={`flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-1.5 rounded-xl font-extrabold text-[11px] sm:text-xs transition-all cursor-pointer border ${
               peekCards
                 ? 'bg-amber-400 text-black border-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.5)] scale-105'
                 : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-amber-500/30'
@@ -1073,12 +1125,12 @@ export default function GoModeView({
         </div>
       )}
 
-      {/* MIDDLE AREA */}
-      <div className="my-auto py-3 space-y-3">
+      {/* MIDDLE AREA: table view. On phones it takes the space left between the header and the betting bar. */}
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col py-1 sm:block sm:flex-none sm:my-auto sm:overflow-visible sm:py-3">
 
         {isAllInSituation ? (
           /* All-In Center Display: Pot, Split/Tie Chance, Community Cards, and Showdown Payouts */
-          <div className="bg-[#151921] p-5 rounded-3xl border border-amber-500/60 shadow-2xl text-center space-y-4">
+          <div className="my-auto bg-[#151921] p-4 sm:p-5 rounded-3xl border border-amber-500/60 shadow-2xl text-center space-y-4">
             <div>
               <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
                 Current Pot
@@ -1147,16 +1199,16 @@ export default function GoModeView({
             )}
           </div>
         ) : cp ? (
-          <div className="bg-[#151921] p-4 sm:p-6 rounded-3xl border border-slate-700/80 shadow-2xl grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+          <div className="my-auto bg-[#151921] p-3 sm:p-6 rounded-3xl border border-slate-700/80 shadow-2xl grid grid-cols-1 md:grid-cols-2 gap-2.5 sm:gap-4 items-center">
             {/* CENTER-LEFT: Player Name, Position, My Stack, Call Amount */}
-            <div className="space-y-3 text-left border-b md:border-b-0 md:border-r border-slate-800 pb-4 md:pb-0 md:pr-4">
+            <div className="space-y-2 sm:space-y-3 text-left border-b md:border-b-0 md:border-r border-slate-800 pb-2.5 md:pb-0 md:pr-4">
               <div className="flex items-center gap-2.5">
                 {cpPos && (
                   <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-black font-extrabold text-xs uppercase tracking-wider shadow">
                     {cpPos}
                   </span>
                 )}
-                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight truncate">{cp.name}</h2>
+                <h2 className="text-xl sm:text-3xl font-black text-white tracking-tight truncate">{cp.name}</h2>
               </div>
 
               {/* My Stack Display (On screen) */}
@@ -1182,17 +1234,9 @@ export default function GoModeView({
             </div>
 
             {/* CENTER-RIGHT: Pot Size + Last Raise Info & Community Board */}
-            <div className="space-y-3 text-center md:text-right md:pl-2">
+            <div className="space-y-2 sm:space-y-3 text-center md:text-right md:pl-2">
               <div className="flex flex-wrap items-start justify-center md:justify-end gap-4">
-                <div>
-                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Current Pot
-                  </div>
-                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
-                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
-                  </div>
-                </div>
-                {/* Last Raise / Bet Info (right of the Current Pot) */}
+                {/* Last Raise / Bet Info (left of the Current Pot) */}
                 <div className="bg-[#19202b] border border-slate-700/80 rounded-2xl px-3 py-2 text-left min-w-[130px]">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">
                     Last Raise
@@ -1219,6 +1263,14 @@ export default function GoModeView({
                 </div>
               </div>
 
+                <div>
+                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Current Pot
+                  </div>
+                  <div className="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight drop-shadow-md">
+                    {formatPotAmount(potTotal, cur, hand, activeUnit)}
+                  </div>
+                </div>
               {/* Community Cards */}
               <div className="pt-2">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
@@ -1257,7 +1309,7 @@ export default function GoModeView({
           </div>
         ) : (
           /* Standard Non-All-In Hand Concluded Screen ([name] wins [amount] + showdown hole cards) */
-          <div className="p-6 bg-[#151921] rounded-3xl border border-slate-800 text-center space-y-4">
+          <div className="my-auto p-5 sm:p-6 bg-[#151921] rounded-3xl border border-slate-800 text-center space-y-4">
             <h2 className="text-2xl font-black text-amber-300">Hand Concluded</h2>
             {aggregatedWinners.length > 0 && (
               <div className="space-y-1.5 bg-[#19202b] p-3 rounded-2xl border border-emerald-500/40">
@@ -1372,7 +1424,7 @@ export default function GoModeView({
 
       {/* BOTTOM ACTION AREA */}
       {hand.inBreak ? (
-        <div className="bg-[#2a2414] border border-amber-600/60 p-4 rounded-2xl shadow-2xl space-y-3 text-center">
+        <div className="shrink-0 bg-[#2a2414] border border-amber-600/60 p-4 rounded-2xl shadow-2xl space-y-3 text-center">
           <div className="text-xs font-black uppercase tracking-widest text-amber-400">
             {hasBreakRace ? 'Chip race break' : 'Tournament break'}
           </div>
@@ -1401,7 +1453,7 @@ export default function GoModeView({
         </div>
       ) : isAllInSituation ? (
         /* In an all-in: deal streets manually until river; on/post river show "Deal Next Hand" */
-        <div className="bg-[#151921] p-3 rounded-2xl border border-slate-700/80 shadow-2xl">
+        <div className="shrink-0 bg-[#151921] p-3 rounded-2xl border border-slate-700/80 shadow-2xl">
           {isShowdownComplete ? (
             <button
               type="button"
@@ -1422,7 +1474,16 @@ export default function GoModeView({
         </div>
       ) : cp ? (
         /* Regular Action Area: If check is available, remove fold and show ONLY Check + All In. If check is not available, show Fold, Call, All In. */
-        <div className="bg-[#151921] p-3 rounded-2xl border border-slate-700/80 space-y-2.5 shadow-2xl">
+        <div className="shrink-0 bg-[#151921] p-2.5 sm:p-3 rounded-2xl border border-slate-700/80 space-y-2 sm:space-y-2.5 shadow-2xl">
+          {/* Phone status line: blinds, level and clock sit in the betting bar's top-right corner. */}
+          <div data-testid="go-betting-status" className="sm:hidden flex items-center justify-end gap-1.5 font-mono text-[10px] leading-none">
+            <span className="font-bold text-white">{formatBlinds(hand)}</span>
+            {levelNum ? <span className="text-slate-500">·</span> : null}
+            <span className="text-slate-400 uppercase tracking-wide">Lvl {levelNum}</span>
+            {hand?.blindSchedule?.length > 0 && (
+              <span className="text-amber-300 font-bold">{formatTimer(levelTimerState(hand, now))}</span>
+            )}
+          </div>
           <div className={`grid ${canCheck ? 'grid-cols-2' : 'grid-cols-3'} gap-2`}>
             {/* If check is NOT available, show Fold button */}
             {!canCheck && (
@@ -1462,7 +1523,7 @@ export default function GoModeView({
             {/* All In / Pot Limit Max Button */}
             <button
               type="button"
-              onClick={() => submitGoAction('raise', effectiveMaxRaise)}
+              onClick={() => (confirmAllIn ? setConfirmAllInOpen(true) : submitGoAction('raise', effectiveMaxRaise))}
               className="py-3 rounded-xl bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white font-black text-sm cursor-pointer transition-all shadow-lg shadow-rose-950/50 border border-rose-500/50"
               title="Shortcut: Shift + A"
             >
@@ -1567,28 +1628,46 @@ export default function GoModeView({
                   Locked again after {idleLockSec}s with no taps.
                 </div>
               )}
-              Hold the button below so a stray tap cannot open someone else&apos;s turn.
+              {requireTurnPin && !gatePinOk
+                ? `Enter ${cp.name}'s PIN to open the turn.`
+                : "Hold the button below so a stray tap cannot open someone else's turn."}
               {cpPin ? ' Hole cards stay hidden until you enter your PIN.' : ' Hole cards stay hidden until you tap Show Cards.'}
             </div>
 
-            <button
-              type="button"
-              onPointerDown={startHold}
-              onPointerUp={cancelHold}
-              onPointerLeave={cancelHold}
-              onPointerCancel={cancelHold}
-              onContextMenu={(e) => e.preventDefault()}
-              className="relative w-full overflow-hidden py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer select-none touch-none"
-            >
-              <span
-                className="absolute inset-y-0 left-0 bg-emerald-400/70 pointer-events-none"
-                style={{ width: `${holdProgress}%` }}
-              />
-              <ShieldCheck size={18} className="relative" />
-              <span className="relative">
-                {holdProgress > 0 ? 'Keep holding…' : `Hold to confirm — ${cp.name}`}
-              </span>
-            </button>
+            {requireTurnPin && !gatePinOk ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setPinPurpose('turn');
+                  setPinEntry('');
+                  setPinError('');
+                  setPinPromptOpen(true);
+                }}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <KeyRound size={18} />
+                Enter PIN to open — {cp.name}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onPointerDown={startHold}
+                onPointerUp={cancelHold}
+                onPointerLeave={cancelHold}
+                onPointerCancel={cancelHold}
+                onContextMenu={(e) => e.preventDefault()}
+                className="relative w-full overflow-hidden py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 text-black font-black text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer select-none touch-none"
+              >
+                <span
+                  className="absolute inset-y-0 left-0 bg-emerald-400/70 pointer-events-none"
+                  style={{ width: `${holdProgress}%` }}
+                />
+                <ShieldCheck size={18} className="relative" />
+                <span className="relative">
+                  {holdProgress > 0 ? 'Keep holding…' : `Hold to confirm — ${cp.name}`}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1601,13 +1680,19 @@ export default function GoModeView({
               <KeyRound size={26} />
             </div>
             <div className="space-y-1">
-              <div className="text-xs font-extrabold text-amber-400 uppercase tracking-widest">Cards Locked</div>
+              <div className="text-xs font-extrabold text-amber-400 uppercase tracking-widest">
+                {pinPurpose === 'turn' ? 'Turn Locked' : 'Cards Locked'}
+              </div>
               <h3 className="text-xl font-black text-white">Enter {cp.name}&apos;s PIN</h3>
-              <p className="text-[11px] text-slate-400">Stacks and bets stay visible; only your hole cards are hidden.</p>
+              <p className="text-[11px] text-slate-400">
+                {pinPurpose === 'turn'
+                  ? 'Only this PIN can open your turn on the shared device.'
+                  : 'Stacks and bets stay visible; only your hole cards are hidden.'}
+              </p>
             </div>
 
             <div className="flex items-center justify-center gap-2">
-              {Array.from({ length: 3 }, (_, slotIdx) => {
+              {Array.from({ length: pinSlots }, (_, slotIdx) => {
                 const char = pinEntry[slotIdx];
                 const isActive = pinEntry.length === slotIdx;
                 return (
@@ -1726,6 +1811,34 @@ export default function GoModeView({
                 className="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-rose-950 text-rose-300 border border-rose-500/40 font-bold text-sm cursor-pointer shadow"
               >
                 Confirm Fold
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ALL-IN CONFIRM (Settings → Security → Confirm All-In) */}
+      {confirmAllInOpen && cp && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in select-none">
+          <div className="bg-[#19202b] border-2 border-rose-500/70 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+            <div className="text-rose-400 font-black text-xl">Confirm All-In?</div>
+            <div className="text-sm text-slate-300">
+              {cp.name}, this puts {formatFullBetAmount(isPotCapped ? effectiveMaxRaise : maxRaise, cur, hand, activeUnit)} in the middle.
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmAllInOpen(false)}
+                className="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-sm cursor-pointer shadow"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={() => submitGoAction('raise', effectiveMaxRaise)}
+                className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white font-black text-sm cursor-pointer shadow"
+              >
+                All In
               </button>
             </div>
           </div>

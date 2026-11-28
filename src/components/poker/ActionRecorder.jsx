@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { bettingFrozen, mandatoryCallBlocker, money, parseAmount } from '@/lib/poker';
+import BetKeypadGrid from '@/components/poker/BetKeypadGrid';
 
 function KeyBadge({ label }) {
   return (
@@ -101,16 +102,6 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
   const straddleLabel = straddlePutsAllIn
     ? `All-in ${money((cp?.currentBet || 0) + (cp?.stack || 0), cur)}`
     : `Straddle ${money(straddleAmt, cur)}`;
-
-  const playerStack = cp ? cp.stack : 0;
-  const showKeypadK = playerStack >= 1000;
-  const showKeypadM = playerStack >= 1000000;
-  const keypadKeys = [
-    '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.',
-    ...(showKeypadK ? ['K'] : []),
-    ...(showKeypadM ? ['M'] : []),
-    '⌫',
-  ];
 
   const handleKeypadPress = (key) => {
     if (key === '⌫') {
@@ -385,6 +376,16 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
           )
         ) : (
           <>
+            {showMinRaise && !mustAllinToCall && (
+              <button
+                onClick={submitMinRaise}
+                title={minRaiseLabel}
+                className="rounded-lg bg-[#3a4a3a] hover:bg-[#4a5a4a] text-white text-sm px-3 py-2 flex items-center cursor-pointer"
+              >
+                <span>Min</span>
+                <KeyBadge label="M" />
+              </button>
+            )}
             {!mustAllinToCall && canMinRaise && !ootPassiveBound && (
               <div className="flex flex-col gap-1 w-full sm:w-auto">
                 <div className="flex items-center gap-2">
@@ -414,24 +415,9 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
                     <KeyBadge label="R" />
                   </button>
                 </div>
-                {/* Mobile Keypad row for chips text box */}
-                <div className="flex items-center gap-1 overflow-x-auto py-1 sm:hidden">
-                  {keypadKeys.map((k) => (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => handleKeypadPress(k)}
-                      className={`h-8 min-w-[28px] px-2 rounded-md text-xs font-bold transition-colors shrink-0 flex items-center justify-center cursor-pointer ${
-                        k === 'K' || k === 'M'
-                          ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 active:bg-emerald-800'
-                          : k === '⌫'
-                          ? 'bg-rose-950/70 text-rose-300 border border-rose-800/60 active:bg-rose-900'
-                          : 'bg-[#2a2f37] text-white border border-[#3b434e] active:bg-[#3f4754]'
-                      }`}
-                    >
-                      {k}
-                    </button>
-                  ))}
+                {/* Numeric keypad for the chips box (phones only) */}
+                <div className="sm:hidden">
+                  <BetKeypadGrid onKey={handleKeypadPress} />
                 </div>
                 {isPL && overLimit && (
                   <div className="text-[10px] text-rose-400">
@@ -439,15 +425,6 @@ export default function ActionRecorder({ hand, onAction, onUndo, canUndo = false
                   </div>
                 )}
               </div>
-            )}
-            {showMinRaise && !mustAllinToCall && (
-              <button
-                onClick={submitMinRaise}
-                className="rounded-lg bg-[#3a4a3a] hover:bg-[#4a5a4a] text-white text-sm px-3 py-2 flex items-center cursor-pointer"
-              >
-                <span>{minRaiseLabel}</span>
-                <KeyBadge label="M" />
-              </button>
             )}
             {canStraddle && !mustAllinToCall && !ootPassiveBound && (
               <button
